@@ -1,0 +1,47 @@
+[project]
+name = "engineering-platform-backend"
+dynamic = ["version"]
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn>=0.34",
+  "pydantic>=2.10",
+  "pydantic-settings>=2.7",
+  "sqlalchemy>=2.0.36",
+  "alembic>=1.14",
+  "psycopg[binary]>=3.2",
+]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3",
+  "httpx>=0.28",
+  "ruff>=0.9",
+  "mypy>=1.14",
+  "import-linter>=2.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "control_plane/app/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["control_plane"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+strict = true
+files = ["control_plane", "scripts", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: 需要真实 PostgreSQL"]
