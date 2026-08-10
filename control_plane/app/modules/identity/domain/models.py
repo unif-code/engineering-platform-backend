@@ -1,12 +1,12 @@
-from control_plane.app.shared.api.camel import CamelModel
+from pydantic import BaseModel
 
 
-class Principal(CamelModel):
+class Principal(BaseModel):
     employee_id: str
     name: str
 
 
-class NavigationItem(CamelModel):
+class NavigationItem(BaseModel):
     route_key: str
     name: str
     order: int
