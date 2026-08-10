@@ -1,0 +1,141 @@
+{
+  "components": {
+    "schemas": {
+      "NavigationItemDto": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "order": {
+            "title": "Order",
+            "type": "integer"
+          },
+          "routeKey": {
+            "title": "Routekey",
+            "type": "string"
+          }
+        },
+        "required": [
+          "routeKey",
+          "name",
+          "order"
+        ],
+        "title": "NavigationItemDto",
+        "type": "object"
+      },
+      "PrincipalDto": {
+        "properties": {
+          "employeeId": {
+            "title": "Employeeid",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "employeeId",
+          "name"
+        ],
+        "title": "PrincipalDto",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "内部研发平台 Control Plane API。\n\n全局约定：JSON 一律 camelCase；ID 一律 string；错误统一 application/problem+json（RFC 9457）；\n分页 cursor 型 {items, nextCursor}；写并发 If-Match/ETag；变更命令 Idempotency-Key——\n后三者自 V0.2 首个真实接口起强制执行。",
+    "title": "engineering-platform-control-plane",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/me": {
+      "get": {
+        "description": "V0.1 技术性 stub：无认证语义，V0.2 起由真实 Session 与服务端授权判定原地替换。",
+        "operationId": "identity_me",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrincipalDto"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Me",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/v1/navigation": {
+      "get": {
+        "description": "V0.1 技术性 stub：无认证语义，V0.2 起由真实 Session 与服务端授权判定原地替换。",
+        "operationId": "identity_navigation",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/NavigationItemDto"
+                  },
+                  "title": "Response Identity Navigation",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Navigation",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "system_healthz",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response System Healthz",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Healthz"
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "system_readyz",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Readyz"
+      }
+    }
+  }
+}
