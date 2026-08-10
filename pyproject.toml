@@ -49,3 +49,55 @@ markers = ["integration: 需要真实 PostgreSQL"]
 filterwarnings = [
   'ignore:Using `httpx` with `starlette\.testclient` is deprecated:starlette.exceptions.StarletteDeprecationWarning',
 ]
+
+[tool.importlinter]
+root_packages = ["control_plane"]
+
+[[tool.importlinter.contracts]]
+name = "模块分层单向：api → application → ports → domain"
+type = "layers"
+layers = ["api", "application", "ports", "domain"]
+containers = [
+  "control_plane.app.modules.identity",
+  "control_plane.app.modules.audit",
+]
+exhaustive = false
+
+[[tool.importlinter.contracts]]
+name = "identity 不得进入 audit 内部（仅公开 Facade）"
+type = "forbidden"
+source_modules = ["control_plane.app.modules.identity"]
+forbidden_modules = [
+  "control_plane.app.modules.audit.api",
+  "control_plane.app.modules.audit.application",
+  "control_plane.app.modules.audit.domain",
+  "control_plane.app.modules.audit.ports",
+  "control_plane.app.modules.audit.adapters",
+]
+
+[[tool.importlinter.contracts]]
+name = "audit 不得进入 identity 内部（仅公开 Facade）"
+type = "forbidden"
+source_modules = ["control_plane.app.modules.audit"]
+forbidden_modules = [
+  "control_plane.app.modules.identity.api",
+  "control_plane.app.modules.identity.application",
+  "control_plane.app.modules.identity.domain",
+  "control_plane.app.modules.identity.ports",
+  "control_plane.app.modules.identity.adapters",
+]
+
+[[tool.importlinter.contracts]]
+name = "shared 不依赖 modules（shared 无业务）"
+type = "forbidden"
+source_modules = ["control_plane.app.shared"]
+forbidden_modules = ["control_plane.app.modules"]
+
+[[tool.importlinter.contracts]]
+name = "domain 不依赖 shared.api（传输概念不进最内层）"
+type = "forbidden"
+source_modules = [
+  "control_plane.app.modules.identity.domain",
+  "control_plane.app.modules.audit.domain",
+]
+forbidden_modules = ["control_plane.app.shared.api"]
