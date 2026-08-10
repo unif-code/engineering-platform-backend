@@ -26,8 +26,9 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     # 联合返回类型无法推导 response_model（就绪走 dict，未就绪走 problem+json），显式关闭推导。
+    # 同步定义：ping 是阻塞 IO，由 FastAPI 放入线程池执行，不阻塞事件循环。
     @app.get("/readyz", operation_id="system_readyz", response_model=None)
-    async def readyz() -> JSONResponse | dict[str, str]:
+    def readyz() -> JSONResponse | dict[str, str]:
         if ping(runtime_engine()):
             return {"status": "ready"}
         return problem_response(503, "Not ready", detail="database unreachable")
