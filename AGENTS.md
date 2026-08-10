@@ -36,6 +36,14 @@ UPDATE/DELETE；Alembic 用 owner 账号执行 DDL，应用运行时只用受限
 CI 将构件与 SHA-256 附到 GitHub Release；breaking 变更必须升 major（前端仓
 `openapi:check` 以 git 基线强制）。
 
+## 容器镜像发布
+
+main push 触发 CI `publish-image`：构建 `linux/amd64` 镜像推
+`ghcr.io/unif-code/engineering-platform-backend:sha-<short-sha>`，digest 写入 job
+summary，gitops 仓按 digest 引用部署。镜像同时承载 API 与迁移 Job（含
+`migrations/` 与 `alembic.ini`，Job 执行 `alembic upgrade head`），非 root 运行。
+本地验证：`docker build -t backend-dev . && docker run --rm -p 8000:8000 backend-dev`。
+
 ## 提交与 Pull Request 规范
 
 线性历史、Conventional Commits（如 `feat(identity): ...`），每次提交单一主题。
