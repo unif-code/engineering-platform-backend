@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 
 from control_plane.app import __version__
+from control_plane.app.modules.identity.api.routes import router as identity_router
 from control_plane.app.shared.api.problem import register_problem_handlers
 
 API_DESCRIPTION = """内部研发平台 Control Plane API。
@@ -21,5 +22,7 @@ def create_app() -> FastAPI:
     @app.get("/healthz", operation_id="system_healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    app.include_router(identity_router)
 
     return app
