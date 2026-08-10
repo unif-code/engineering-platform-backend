@@ -33,12 +33,18 @@ def test_record_persists_via_rw_role(rw_engine: Engine) -> None:
 
 
 def test_update_is_denied_by_role(rw_engine: Engine) -> None:
+    # 谓词限定单行：表级 ACL 先于行谓词求值，拒绝证明不变，但授权一旦放宽也毁不掉数据。
     with rw_engine.connect() as conn:
         with pytest.raises(ProgrammingError, match="permission denied"):
-            conn.execute(text("UPDATE audit.audit_event SET result = 'TAMPERED'"))
+            conn.execute(
+                text("UPDATE audit.audit_event SET result = 'TAMPERED' WHERE id = :id"),
+                {"id": _envelope().id},
+            )
 
 
 def test_delete_is_denied_by_role(rw_engine: Engine) -> None:
     with rw_engine.connect() as conn:
         with pytest.raises(ProgrammingError, match="permission denied"):
-            conn.execute(text("DELETE FROM audit.audit_event"))
+            conn.execute(
+                text("DELETE FROM audit.audit_event WHERE id = :id"), {"id": _envelope().id}
+            )
