@@ -45,3 +45,7 @@ files = ["control_plane", "tests"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = ["integration: 需要真实 PostgreSQL"]
+# 上游告警：starlette 1.x 的 TestClient 期望 httpx2，与本仓锁定的 httpx 组合触发，非本仓代码问题。
+filterwarnings = [
+  'ignore:Using `httpx` with `starlette\.testclient` is deprecated:starlette.exceptions.StarletteDeprecationWarning',
+]

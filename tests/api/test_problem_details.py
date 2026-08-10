@@ -1,5 +1,4 @@
 from fastapi.testclient import TestClient
-from pydantic import BaseModel
 
 from control_plane.app.bootstrap.app import create_app
 
@@ -13,11 +12,15 @@ def test_unknown_route_is_problem_json(client: TestClient) -> None:
     assert body["title"]
 
 
+def test_method_not_allowed_keeps_allow_header(client: TestClient) -> None:
+    resp = client.post("/healthz")
+    assert resp.status_code == 405
+    assert resp.headers["content-type"].startswith("application/problem+json")
+    assert "GET" in resp.headers["allow"]
+
+
 def test_validation_error_maps_to_422_problem() -> None:
     app = create_app()
-
-    class Probe(BaseModel):
-        count: int
 
     @app.get("/test-only/probe")
     async def probe(count: int) -> dict[str, int]:  # pragma: no cover - 仅供本测试
