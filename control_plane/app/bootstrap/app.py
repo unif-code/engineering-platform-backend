@@ -1,8 +1,10 @@
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from control_plane.app import __version__
 from control_plane.app.modules.identity.api.routes import router as identity_router
-from control_plane.app.shared.api.problem import register_problem_handlers
+from control_plane.app.shared.api.problem import problem_response, register_problem_handlers
+from control_plane.app.shared.db.engine import ping, runtime_engine
 
 API_DESCRIPTION = """内部研发平台 Control Plane API。
 
@@ -22,6 +24,13 @@ def create_app() -> FastAPI:
     @app.get("/healthz", operation_id="system_healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    # 联合返回类型无法推导 response_model（就绪走 dict，未就绪走 problem+json），显式关闭推导。
+    @app.get("/readyz", operation_id="system_readyz", response_model=None)
+    async def readyz() -> JSONResponse | dict[str, str]:
+        if ping(runtime_engine()):
+            return {"status": "ready"}
+        return problem_response(503, "Not ready", detail="database unreachable")
 
     app.include_router(identity_router)
 
