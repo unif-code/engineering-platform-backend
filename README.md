@@ -4,16 +4,17 @@
 
 ## 仓库拓扑与架构事实源
 
-平台由三个同级仓库组成，建议克隆到同一父目录（跨仓联调与文档引用都按同级相对路径约定，如前端 OpenAPI 锁定走 `file:../engineering-platform-backend/openapi.json`）：
+平台由四个同级仓库组成，建议克隆到同一父目录（跨仓联调与文档引用都按同级相对路径约定，如前端 OpenAPI 锁定走 `file:../engineering-platform-backend/openapi.json`）：
 
 ```
 <workspace>/
-├── engineering-platform/          # 前端 + 平台架构文档（治理基线所在地）
+├── engineering-platform-docs/     # 平台架构文档 + 基线治理（唯一事实源）
+├── engineering-platform/          # 前端（Umi Max）
 ├── engineering-platform-backend/  # 本仓：Control Plane 后端
 └── engineering-platform-gitops/   # 集群清单、部署与运维 runbook
 ```
 
-平台架构的唯一事实源是 `engineering-platform/docs/architecture/`（00–12 共 13 篇 + `appendix-parameters.md`，基线号与文档 SHA-256 由 `baseline-manifest.json` 治理）。**不要把架构文档复制进本仓**——复制件脱离基线治理必然漂移，按上述拓扑就近查阅。与本仓关系最密的几篇：
+平台架构的唯一事实源是 `engineering-platform-docs/architecture/`（00–12 共 13 篇 + `appendix-parameters.md`，基线号与文档 SHA-256 由 `baseline-manifest.json` 治理）。**不要把架构文档复制进本仓**——复制件脱离基线治理必然漂移，按上述拓扑就近查阅。与本仓关系最密的几篇：
 
 - `06-platform-application-integration.md`：应用结构与集成契约（本仓分层以此为准）
 - `07-data-messaging-storage.md`：数据、消息与存储（audit 追加式、StorageBinding 等）

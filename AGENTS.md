@@ -3,7 +3,8 @@
 ## 项目结构与模块组织
 
 本仓是内部研发平台的 Python Control Plane（模块化单体），结构以
-`engineering-platform` 仓 `docs/architecture/06-platform-application-integration.md` 为准：
+`engineering-platform-docs` 仓 `architecture/06-platform-application-integration.md` 为准
+（架构文档已独立成仓，与本仓同级克隆）：
 `control_plane/app/bootstrap/` 负责装配，`control_plane/app/shared/{api,db}/`
 是无业务基建（`observability`：结构化日志、request-id，随 V0.2 落地），
 领域模块在 `control_plane/app/modules/<module>/`，模块内固定五层
