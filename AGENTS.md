@@ -12,6 +12,10 @@
 边界由 import-linter 契约强制（`uv run lint-imports`），禁止绕过。迁移在 `migrations/`
 按模块分目录；测试在 `tests/`（集成测试标记 `integration`）。
 
+治理例外**先登记后引用**：任何 `DEV-xxx` 编号必须先存在于 `engineering-platform-docs`
+仓 `architecture/deviations.md` 的登记条目，才可在本仓代码注释、文档或提交信息中引用；
+铸造新编号的一方负责在同一工作批次内完成 docs 仓登记。
+
 ## 构建、测试与开发命令
 
 - `uv sync`：安装依赖（CI 使用 `--locked`）。
