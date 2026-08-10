@@ -54,9 +54,11 @@ filterwarnings = [
 root_packages = ["control_plane"]
 
 [[tool.importlinter.contracts]]
-name = "模块分层单向：api → application → ports → domain"
+name = "模块分层单向：api → adapters → application → ports → domain"
 type = "layers"
-layers = ["api", "application", "ports", "domain"]
+# adapters 置于 api 之下、application 之上：允许 api 边缘装配 adapters，
+# 禁止 application/ports/domain 反向依赖 adapters。
+layers = ["api", "adapters", "application", "ports", "domain"]
 containers = [
   "control_plane.app.modules.identity",
   "control_plane.app.modules.audit",
@@ -74,6 +76,8 @@ forbidden_modules = [
   "control_plane.app.modules.audit.ports",
   "control_plane.app.modules.audit.adapters",
 ]
+# Facade 再导出是合法路径：只禁直连深层，不禁经由公开入口 __init__ 的间接链。
+allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
 name = "audit 不得进入 identity 内部（仅公开 Facade）"
@@ -86,6 +90,8 @@ forbidden_modules = [
   "control_plane.app.modules.identity.ports",
   "control_plane.app.modules.identity.adapters",
 ]
+# Facade 再导出是合法路径：只禁直连深层，不禁经由公开入口 __init__ 的间接链。
+allow_indirect_imports = true
 
 [[tool.importlinter.contracts]]
 name = "shared 不依赖 modules（shared 无业务）"
