@@ -24,7 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync --frozen
+      - run: uv sync --locked
       - run: uv run ruff format --check .
       - run: uv run ruff check .
       - run: uv run mypy .
@@ -42,11 +42,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync --frozen
+      - run: uv sync --locked
+      - env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          V=$(uv run python -c "from control_plane.app import __version__; print(__version__)")
+          [ "$TAG" = "api-v$V" ] || { echo "tag $TAG != api-v$V" >&2; exit 1; }
       - run: uv run python scripts/export_openapi.py --check
       - env:
           TAG: ${{ github.ref_name }}
           GH_TOKEN: ${{ github.token }}
         run: |
           shasum -a 256 openapi.json > openapi.json.sha256
-          gh release create "$TAG" openapi.json openapi.json.sha256 --title "$TAG" --notes "OpenAPI Artifact $TAG"
+          gh release create "$TAG" openapi.json openapi.json.sha256 --title "$TAG" --notes "OpenAPI Artifact $TAG" \
+            || gh release upload "$TAG" openapi.json openapi.json.sha256 --clobber

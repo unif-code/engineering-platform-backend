@@ -4,15 +4,16 @@
 
 本仓是内部研发平台的 Python Control Plane（模块化单体），结构以
 `engineering-platform` 仓 `docs/architecture/06-platform-application-integration.md` 为准：
-`control_plane/app/bootstrap/` 负责装配，`control_plane/app/shared/{api,db,observability}/`
-是无业务基建，领域模块在 `control_plane/app/modules/<module>/`，模块内固定五层
+`control_plane/app/bootstrap/` 负责装配，`control_plane/app/shared/{api,db}/`
+是无业务基建（`observability`：结构化日志、request-id，随 V0.2 落地），
+领域模块在 `control_plane/app/modules/<module>/`，模块内固定五层
 `api/ application/ domain/ ports/ adapters/`。模块间只允许使用对方包根的公开 Facade；
 边界由 import-linter 契约强制（`uv run lint-imports`），禁止绕过。迁移在 `migrations/`
 按模块分目录；测试在 `tests/`（集成测试标记 `integration`）。
 
 ## 构建、测试与开发命令
 
-- `uv sync`：安装依赖（CI 使用 `--frozen`）。
+- `uv sync`：安装依赖（CI 使用 `--locked`）。
 - `docker compose up -d`：启动本地 PostgreSQL 18。
 - `uv run alembic upgrade head`：执行迁移。
 - `uv run uvicorn control_plane.app.bootstrap.app:create_app --factory --reload`：本地起服务。

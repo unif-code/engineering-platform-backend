@@ -1,12 +1,13 @@
 """${message}"""
-from alembic import op
-import sqlalchemy as sa
-${imports if imports else ""}
+% if imports:
 
-revision = ${repr(up_revision)}
-down_revision = ${repr(down_revision)}
-branch_labels = ${repr(branch_labels)}
-depends_on = ${repr(depends_on)}
+${imports}
+% endif
+
+revision = ${repr(up_revision).replace("'", '"')}
+down_revision = ${repr(down_revision).replace("'", '"')}
+branch_labels = ${repr(branch_labels).replace("'", '"')}
+depends_on = ${repr(depends_on).replace("'", '"')}
 
 
 def upgrade() -> None:
