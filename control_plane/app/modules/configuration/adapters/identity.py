@@ -67,10 +67,11 @@ class IdentityPolicyOwner:
         )
 
     def catalog(self, namespace: str) -> list[PolicyKey]:
-        return [
-            PolicyKey.model_validate(item.model_dump())
-            for item in policy_catalog(self.db, namespace)
-        ]
+        try:
+            owned = policy_catalog(self.db, namespace)
+        except OwnedPolicySnapshotUnavailable as exc:
+            raise PolicySnapshotUnavailable(namespace) from exc
+        return [PolicyKey.model_validate(item.model_dump()) for item in owned]
 
     def active_snapshot(self, namespace: str) -> PolicySnapshot:
         try:

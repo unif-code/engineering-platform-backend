@@ -6,9 +6,11 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import Connection, Engine, text
 
 from control_plane.app.modules.configuration import ConfigurationDependencies
+from tests.configuration.policy_helpers import temporary_policy_key_default
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("configuration_seed")]
 
@@ -237,6 +239,166 @@ def test_active_snapshot_fails_closed_when_owner_catalog_metadata_drifts(
             active_snapshot(db, "identity")
 
 
+@pytest.mark.parametrize(
+    ("key", "column", "metadata"),
+    [
+        (
+            "identity.login_backoff",
+            "default_value",
+            {
+                "failureThreshold": 5.0,
+                "initialDelaySeconds": 30,
+                "maximumDelaySeconds": 900,
+                "resetAfterHours": 24,
+            },
+        ),
+        (
+            "identity.login_backoff",
+            "default_value",
+            {
+                "failureThreshold": True,
+                "initialDelaySeconds": 30,
+                "maximumDelaySeconds": 900,
+                "resetAfterHours": 24,
+            },
+        ),
+        (
+            "identity.login_backoff",
+            "default_value",
+            {
+                "failureThreshold": "5",
+                "initialDelaySeconds": 30,
+                "maximumDelaySeconds": 900,
+                "resetAfterHours": 24,
+            },
+        ),
+        (
+            "identity.password_max_age",
+            "enum_values",
+            ["NEVER", 90.0, 180],
+        ),
+        (
+            "identity.password_max_age",
+            "enum_values",
+            ["NEVER", True, 180],
+        ),
+    ],
+)
+def test_active_snapshot_rejects_recursive_catalog_json_type_drift(
+    configuration_owner_engine: Engine,
+    key: str,
+    column: str,
+    metadata: object,
+) -> None:
+    from control_plane.app.modules.configuration import (
+        PolicySnapshotUnavailable,
+        active_snapshot,
+    )
+
+    assert column in {"default_value", "enum_values"}
+    with _rollback(configuration_owner_engine) as db:
+        db.execute(
+            text(
+                f"UPDATE identity.policy_key SET {column}=CAST(:metadata AS JSONB) WHERE key=:key"
+            ),
+            {"key": key, "metadata": json.dumps(metadata, separators=(",", ":"))},
+        )
+        with pytest.raises(PolicySnapshotUnavailable):
+            active_snapshot(db, "identity")
+
+
+def test_catalog_drift_fails_closed_across_all_public_policy_consumers(
+    configuration_rw_engine: Engine,
+    configuration_owner_engine: Engine,
+) -> None:
+    from control_plane.app.bootstrap.app import create_app
+    from control_plane.app.modules.configuration import (
+        PolicySnapshotUnavailable,
+        catalog,
+        create_draft,
+        validate_draft,
+    )
+    from control_plane.app.modules.configuration.adapters import IdentityEffectivePolicy
+
+    drifted_default = {
+        "failureThreshold": 5.0,
+        "initialDelaySeconds": 30,
+        "maximumDelaySeconds": 900,
+        "resetAfterHours": 24,
+    }
+    with _rollback(configuration_rw_engine) as db:
+        dependencies = _dependencies()
+        created = create_draft(
+            db,
+            namespace="identity",
+            values={},
+            actor_id="admin-catalog-drift",
+            dependencies=dependencies,
+        )
+        before = db.execute(
+            text(
+                "SELECT "
+                "(SELECT version FROM identity.active_pointer "
+                " WHERE namespace='identity' AND scope='PLATFORM'), "
+                "(SELECT count(*) FROM identity.version "
+                " WHERE namespace='identity' AND scope='PLATFORM')"
+            )
+        ).one()
+
+        with temporary_policy_key_default(
+            configuration_owner_engine,
+            key="identity.login_backoff",
+            default_value=drifted_default,
+        ):
+            with pytest.raises(PolicySnapshotUnavailable):
+                catalog(db, "identity")
+            with pytest.raises(PolicySnapshotUnavailable):
+                create_draft(
+                    db,
+                    namespace="identity",
+                    values={},
+                    actor_id="admin-catalog-drift",
+                    dependencies=dependencies,
+                )
+            with pytest.raises(PolicySnapshotUnavailable):
+                validate_draft(
+                    db,
+                    namespace="identity",
+                    draft_id=created.id,
+                    actor_id="admin-catalog-drift",
+                    expected_revision=created.revision,
+                    dependencies=dependencies,
+                )
+            with pytest.raises(PolicySnapshotUnavailable):
+                IdentityEffectivePolicy().get_identity_policy(db)
+            response = TestClient(create_app()).get(
+                "/readyz",
+                headers={"X-Request-ID": "req-catalogdrift"},
+            )
+            draft_count = db.execute(
+                text("SELECT count(*) FROM identity.draft WHERE owner_id='admin-catalog-drift'")
+            ).scalar_one()
+            after = db.execute(
+                text(
+                    "SELECT "
+                    "(SELECT version FROM identity.active_pointer "
+                    " WHERE namespace='identity' AND scope='PLATFORM'), "
+                    "(SELECT count(*) FROM identity.version "
+                    " WHERE namespace='identity' AND scope='PLATFORM')"
+                )
+            ).one()
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "title": "Not ready",
+        "status": 503,
+        "requestId": "req-catalogdrift",
+    }
+    assert "5.0" not in response.text
+    assert draft_count == 1
+    assert before == after == (1, 1)
+
+
 def test_draft_create_and_update_use_revision_etags_and_full_canonical_content(
     configuration_rw_engine: Engine,
 ) -> None:
@@ -391,3 +553,82 @@ def test_draft_validation_observes_identity_owner_schema_without_a_local_rule_co
             "message": "Policy key is not registered.",
         }
     ]
+
+
+@pytest.mark.parametrize(
+    ("values", "issue_path"),
+    [
+        (
+            {"identity.temp_credential_ttl": 10**20},
+            "identity.temp_credential_ttl",
+        ),
+        (
+            {
+                "identity.login_backoff": {
+                    "failureThreshold": 5,
+                    "initialDelaySeconds": 30,
+                    "maximumDelaySeconds": 10**20,
+                    "resetAfterHours": 24,
+                }
+            },
+            "identity.login_backoff.maximumDelaySeconds",
+        ),
+    ],
+)
+def test_draft_validation_rejects_values_the_runtime_policy_cannot_materialize(
+    configuration_rw_engine: Engine,
+    values: dict[str, object],
+    issue_path: str,
+) -> None:
+    from control_plane.app.modules.configuration import create_draft, validate_draft
+
+    with _rollback(configuration_rw_engine) as db:
+        dependencies = _dependencies()
+        before = db.execute(
+            text(
+                "SELECT "
+                "(SELECT version FROM identity.active_pointer "
+                " WHERE namespace='identity' AND scope='PLATFORM'), "
+                "(SELECT count(*) FROM identity.version "
+                " WHERE namespace='identity' AND scope='PLATFORM')"
+            )
+        ).one()
+        created = create_draft(
+            db,
+            namespace="identity",
+            values=values,
+            actor_id="admin-runtime-representation",
+            dependencies=dependencies,
+        )
+        result = validate_draft(
+            db,
+            namespace="identity",
+            draft_id=created.id,
+            actor_id="admin-runtime-representation",
+            expected_revision=created.revision,
+            dependencies=dependencies,
+        )
+        persisted_evidence = db.execute(
+            text("SELECT validation_evidence FROM identity.draft WHERE id=:draft_id"),
+            {"draft_id": created.id},
+        ).scalar_one()
+        after = db.execute(
+            text(
+                "SELECT "
+                "(SELECT version FROM identity.active_pointer "
+                " WHERE namespace='identity' AND scope='PLATFORM'), "
+                "(SELECT count(*) FROM identity.version "
+                " WHERE namespace='identity' AND scope='PLATFORM')"
+            )
+        ).one()
+
+    expected_issue = {
+        "code": "UNREPRESENTABLE_VALUE",
+        "key": issue_path,
+        "message": "Value cannot be represented by the runtime policy type.",
+    }
+    assert result.valid is False
+    assert [issue.model_dump() for issue in result.issues] == [expected_issue]
+    assert persisted_evidence == {"valid": False, "issues": [expected_issue]}
+    assert before == after == (1, 1)
+    assert str(10**20) not in json.dumps(persisted_evidence)

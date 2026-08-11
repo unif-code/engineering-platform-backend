@@ -138,6 +138,21 @@ def _integer_issue(
     return None
 
 
+def _exact_json_equal(left: Any, right: Any) -> bool:
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, list):
+        return len(left) == len(right) and all(
+            _exact_json_equal(left_item, right_item)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+    if isinstance(left, dict):
+        return set(left) == set(right) and all(
+            _exact_json_equal(left[key], right[key]) for key in left
+        )
+    return bool(left == right)
+
+
 def validate_identity_policy_catalog(
     catalog: list[OwnedPolicyKey],
 ) -> list[OwnedPolicyValidationIssue]:
@@ -157,10 +172,10 @@ def validate_identity_policy_catalog(
             or item.schema_revision != IDENTITY_POLICY_SCHEMA_REVISION
             or item.value_type != definition.value_type
             or item.unit != definition.unit
-            or item.default_value != definition.default_value
-            or item.min_value != definition.min_value
-            or item.max_value != definition.max_value
-            or item.enum_values != definition.enum_values
+            or not _exact_json_equal(item.default_value, definition.default_value)
+            or not _exact_json_equal(item.min_value, definition.min_value)
+            or not _exact_json_equal(item.max_value, definition.max_value)
+            or not _exact_json_equal(item.enum_values, definition.enum_values)
             or item.effect_semantics != definition.effect_semantics
         ):
             return [
@@ -173,7 +188,7 @@ def validate_identity_policy_catalog(
     return []
 
 
-def validate_identity_policy_candidate(
+def _validate_identity_policy_candidate_structure(
     schema_revision: int,
     values: dict[str, Any],
 ) -> list[OwnedPolicyValidationIssue]:
@@ -240,24 +255,77 @@ def validate_identity_policy_candidate(
     return sorted(issues, key=lambda issue: (issue.key, issue.code))
 
 
+class _PolicyMaterializationFailure(Exception):
+    def __init__(self, path: str) -> None:
+        self.path = path
+
+
+def _duration(path: str, **parts: int) -> timedelta:
+    try:
+        return timedelta(**parts)
+    except (OverflowError, TypeError) as exc:
+        raise _PolicyMaterializationFailure(path) from exc
+
+
 def identity_policy_from_candidate(values: dict[str, Any]) -> EffectiveIdentityPolicy:
-    return EffectiveIdentityPolicy(
-        temp_credential_ttl=timedelta(hours=values["identity.temp_credential_ttl"]),
-        password_max_age=(
-            None
-            if values["identity.password_max_age"] == "NEVER"
-            else timedelta(days=values["identity.password_max_age"])
-        ),
-        session_cap=values["identity.session_cap"],
-        session_idle_timeout=timedelta(minutes=values["identity.session_idle_timeout"]),
-        backoff_threshold=values["identity.login_backoff"]["failureThreshold"],
-        backoff_initial_delay=timedelta(
-            seconds=values["identity.login_backoff"]["initialDelaySeconds"]
-        ),
-        backoff_max_delay=timedelta(
-            seconds=values["identity.login_backoff"]["maximumDelaySeconds"]
-        ),
-        backoff_reset_after=timedelta(hours=values["identity.login_backoff"]["resetAfterHours"]),
-        totp_attempt_cap=values["identity.totp_attempt_cap"],
-        draft_archive_after=timedelta(days=values["identity.draft_archive_after"]),
-    )
+    try:
+        return EffectiveIdentityPolicy(
+            temp_credential_ttl=_duration(
+                "identity.temp_credential_ttl",
+                hours=values["identity.temp_credential_ttl"],
+            ),
+            password_max_age=(
+                None
+                if values["identity.password_max_age"] == "NEVER"
+                else _duration(
+                    "identity.password_max_age",
+                    days=values["identity.password_max_age"],
+                )
+            ),
+            session_cap=values["identity.session_cap"],
+            session_idle_timeout=_duration(
+                "identity.session_idle_timeout",
+                minutes=values["identity.session_idle_timeout"],
+            ),
+            backoff_threshold=values["identity.login_backoff"]["failureThreshold"],
+            backoff_initial_delay=_duration(
+                "identity.login_backoff.initialDelaySeconds",
+                seconds=values["identity.login_backoff"]["initialDelaySeconds"],
+            ),
+            backoff_max_delay=_duration(
+                "identity.login_backoff.maximumDelaySeconds",
+                seconds=values["identity.login_backoff"]["maximumDelaySeconds"],
+            ),
+            backoff_reset_after=_duration(
+                "identity.login_backoff.resetAfterHours",
+                hours=values["identity.login_backoff"]["resetAfterHours"],
+            ),
+            totp_attempt_cap=values["identity.totp_attempt_cap"],
+            draft_archive_after=_duration(
+                "identity.draft_archive_after",
+                days=values["identity.draft_archive_after"],
+            ),
+        )
+    except _PolicyMaterializationFailure:
+        raise
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        raise _PolicyMaterializationFailure("$policy") from exc
+
+
+def validate_and_materialize_identity_policy(
+    schema_revision: int,
+    values: dict[str, Any],
+) -> tuple[list[OwnedPolicyValidationIssue], EffectiveIdentityPolicy | None]:
+    issues = _validate_identity_policy_candidate_structure(schema_revision, values)
+    if issues:
+        return issues, None
+    try:
+        return [], identity_policy_from_candidate(values)
+    except _PolicyMaterializationFailure as error:
+        return [
+            _issue(
+                "UNREPRESENTABLE_VALUE",
+                error.path,
+                "Value cannot be represented by the runtime policy type.",
+            )
+        ], None

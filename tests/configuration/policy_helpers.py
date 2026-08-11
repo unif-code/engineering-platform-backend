@@ -103,3 +103,41 @@ def temporary_active_snapshot(
                 ),
                 {"version": original["version"]},
             )
+
+
+@contextmanager
+def temporary_policy_key_default(
+    owner_engine: Engine,
+    *,
+    key: str,
+    default_value: object,
+) -> Iterator[None]:
+    with owner_engine.begin() as db:
+        original = db.execute(
+            text("SELECT default_value FROM identity.policy_key WHERE key=:key"),
+            {"key": key},
+        ).scalar_one()
+        db.execute(
+            text(
+                "UPDATE identity.policy_key SET default_value=CAST(:default_value AS JSONB) "
+                "WHERE key=:key"
+            ),
+            {
+                "key": key,
+                "default_value": json.dumps(default_value, separators=(",", ":")),
+            },
+        )
+    try:
+        yield
+    finally:
+        with owner_engine.begin() as db:
+            db.execute(
+                text(
+                    "UPDATE identity.policy_key "
+                    "SET default_value=CAST(:default_value AS JSONB) WHERE key=:key"
+                ),
+                {
+                    "key": key,
+                    "default_value": json.dumps(original, separators=(",", ":")),
+                },
+            )

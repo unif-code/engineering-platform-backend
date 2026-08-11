@@ -9,8 +9,7 @@ from control_plane.app.modules.identity.domain.configuration_policy import (
     OwnedPolicySnapshot,
     OwnedPolicySnapshotUnavailable,
     OwnedPolicyValidationIssue,
-    identity_policy_from_candidate,
-    validate_identity_policy_candidate,
+    validate_and_materialize_identity_policy,
     validate_identity_policy_catalog,
 )
 from control_plane.app.modules.identity.domain.policy import EffectiveIdentityPolicy
@@ -23,7 +22,10 @@ def policy_catalog(
     repository: IdentityPolicyOwnerRepository,
     namespace: str,
 ) -> list[OwnedPolicyKey]:
-    return repository.catalog(namespace)
+    catalog = repository.catalog(namespace)
+    if validate_identity_policy_catalog(catalog):
+        raise OwnedPolicySnapshotUnavailable(namespace)
+    return catalog
 
 
 def claim_configuration_idempotency(
@@ -128,12 +130,12 @@ def _active_policy_and_effective(
         raise OwnedPolicySnapshotUnavailable(namespace)
     if validate_identity_policy_catalog(repository.catalog(namespace)):
         raise OwnedPolicySnapshotUnavailable(namespace)
-    if validate_identity_policy_candidate(snapshot.schema_revision, snapshot.values):
+    issues, policy = validate_and_materialize_identity_policy(
+        snapshot.schema_revision,
+        snapshot.values,
+    )
+    if issues or policy is None:
         raise OwnedPolicySnapshotUnavailable(namespace)
-    try:
-        policy = identity_policy_from_candidate(snapshot.values)
-    except (KeyError, TypeError, ValueError, OverflowError) as exc:
-        raise OwnedPolicySnapshotUnavailable(namespace) from exc
     return snapshot, policy
 
 
@@ -154,7 +156,8 @@ def validate_policy_candidate(
     catalog_issues = validate_identity_policy_catalog(repository.catalog(namespace))
     if catalog_issues:
         return catalog_issues
-    return validate_identity_policy_candidate(schema_revision, values)
+    issues, _policy = validate_and_materialize_identity_policy(schema_revision, values)
+    return issues
 
 
 def effective_identity_policy(
