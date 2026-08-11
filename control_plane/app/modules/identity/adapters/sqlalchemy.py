@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from typing import Any
 
@@ -30,6 +31,72 @@ class SqlAlchemyIdentityRepository:
             text("SELECT id FROM identity.account WHERE id=:account_id FOR UPDATE"),
             {"account_id": account_id},
         )
+
+    def claim_idempotency(self, **values: Any) -> bool:
+        result = self.db.execute(
+            text(
+                "INSERT INTO identity.idempotency_record "
+                "(id, actor, operation, idempotency_key, request_fingerprint, state, "
+                "created_at, updated_at) VALUES "
+                "(:id, :actor, :operation, :idempotency_key, :request_fingerprint, "
+                "'IN_PROGRESS', :now, :now) "
+                "ON CONFLICT (actor, operation, idempotency_key) DO NOTHING RETURNING id"
+            ),
+            values,
+        )
+        return result.scalar_one_or_none() is not None
+
+    def idempotency_by_scope(
+        self,
+        actor: str,
+        operation: str,
+        idempotency_key: str,
+        *,
+        for_update: bool = False,
+    ) -> Any:
+        suffix = " FOR UPDATE" if for_update else ""
+        return (
+            self.db.execute(
+                text(
+                    "SELECT * FROM identity.idempotency_record "
+                    "WHERE actor=:actor AND operation=:operation "
+                    f"AND idempotency_key=:idempotency_key{suffix}"
+                ),
+                {
+                    "actor": actor,
+                    "operation": operation,
+                    "idempotency_key": idempotency_key,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def complete_idempotency(
+        self,
+        record_id: str,
+        *,
+        http_status: int,
+        result_metadata: dict[str, object],
+        sealed_response: bytes,
+        now: datetime,
+    ) -> bool:
+        result = self.db.execute(
+            text(
+                "UPDATE identity.idempotency_record SET state='COMPLETED', "
+                "http_status=:http_status, result_metadata=CAST(:result_metadata AS JSONB), "
+                "sealed_response=:sealed_response, completed_at=:now, updated_at=:now "
+                "WHERE id=:id AND state='IN_PROGRESS'"
+            ),
+            {
+                "id": record_id,
+                "http_status": http_status,
+                "result_metadata": json.dumps(result_metadata, separators=(",", ":")),
+                "sealed_response": sealed_response,
+                "now": now,
+            },
+        )
+        return result.rowcount == 1
 
     def insert_account(self, **values: Any) -> None:
         try:

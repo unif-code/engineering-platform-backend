@@ -35,7 +35,14 @@ PROBLEM_RESPONSES: dict[int, dict[str, object]] = {
     404: _problem_response_declaration("Not Found"),
     409: _problem_response_declaration("Conflict"),
     422: _problem_response_declaration("Validation failed"),
+    429: _problem_response_declaration("Too Many Requests"),
     500: _problem_response_declaration("Internal server error"),
+}
+PROBLEM_RESPONSES[429]["headers"] = {
+    "Retry-After": {
+        "description": "Seconds before another authentication attempt",
+        "schema": {"type": "integer", "minimum": 1},
+    }
 }
 
 SERVICE_UNAVAILABLE_RESPONSE = _problem_response_declaration("Not ready")

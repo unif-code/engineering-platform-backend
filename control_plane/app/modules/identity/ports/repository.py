@@ -15,6 +15,27 @@ class IdentityRepository(Protocol):
 
     def lock_account_lifecycle(self, account_id: str) -> None: ...
 
+    def claim_idempotency(self, **values: Any) -> bool: ...
+
+    def idempotency_by_scope(
+        self,
+        actor: str,
+        operation: str,
+        idempotency_key: str,
+        *,
+        for_update: bool = False,
+    ) -> Any: ...
+
+    def complete_idempotency(
+        self,
+        record_id: str,
+        *,
+        http_status: int,
+        result_metadata: dict[str, object],
+        sealed_response: bytes,
+        now: datetime,
+    ) -> bool: ...
+
     def insert_account(self, **values: Any) -> None: ...
 
     def account_by_id(self, account_id: str, *, for_update: bool = False) -> Any: ...
