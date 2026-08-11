@@ -5,7 +5,7 @@ from typing import Any, cast
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
-from sqlalchemy import Engine
+from sqlalchemy import Engine, text
 
 from control_plane.app.modules.identity import (
     AuthChallengeState,
@@ -45,6 +45,9 @@ from control_plane.app.modules.identity.application.idempotency import (
     IdempotentResponse,
     canonical_request_fingerprint,
     execute_idempotent,
+)
+from control_plane.app.modules.identity.application.security_change import (
+    identity_change_source,
 )
 from control_plane.app.modules.identity.domain.errors import AuthenticationFailed
 from control_plane.app.shared.api.camel import CamelModel
@@ -185,21 +188,30 @@ def _execute(
 ) -> JSONResponse:
     try:
         with runtime.engine.begin() as db:
-            repository = runtime.dependencies.repository_factory(db)
-            execution = execute_idempotent(
-                repository,
+            source_transaction_id = str(
+                db.execute(text("SELECT pg_current_xact_id()")).scalar_one()
+            )
+            with identity_change_source(
                 actor=actor,
                 operation=operation,
-                key=key,
-                fingerprint=_fingerprint(
-                    operation,
-                    path,
-                    body,
-                    runtime.dependencies.secret_manager.load().idempotency_sealing_key,
-                ),
-                command=lambda: command(db),
-                dependencies=runtime.dependencies,
-            )
+                idempotency_key=key,
+                source_transaction_id=source_transaction_id,
+            ):
+                repository = runtime.dependencies.repository_factory(db)
+                execution = execute_idempotent(
+                    repository,
+                    actor=actor,
+                    operation=operation,
+                    key=key,
+                    fingerprint=_fingerprint(
+                        operation,
+                        path,
+                        body,
+                        runtime.dependencies.secret_manager.load().idempotency_sealing_key,
+                    ),
+                    command=lambda: command(db),
+                    dependencies=runtime.dependencies,
+                )
     except IdempotencyConflict:
         return problem_response(409, "Idempotency conflict")
     except IdempotencyReplayUnavailable:

@@ -4,12 +4,15 @@ import pytest
 from sqlalchemy import Engine, text
 
 from control_plane.app.modules.authorization import (
+    AuthorizationUnavailable,
     DecisionCode,
     DecisionDependencies,
     Scope,
     authorize,
     grant,
     mark_fence,
+    principal_has_capability,
+    revoke,
 )
 from control_plane.app.modules.authorization.adapters import (
     SqlAlchemyIdentitySessionValidator,
@@ -250,3 +253,74 @@ def test_workspace_scope_requires_exact_grant_and_current_membership(
             ),
         )
     assert projection_failure.code is DecisionCode.UNAVAILABLE
+
+
+def test_resource_guard_rechecks_version_after_revoke_commits(
+    clean_authorization_db: None,
+    authorization_rw_engine: Engine,
+    authorization_identity_engine: Engine,
+    authorization_owner_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _secret, token = _initialize_account(
+        authorization_identity_engine,
+        identity_dependencies(),
+        monkeypatch,
+    )
+    with authorization_owner_engine.connect() as db:
+        account_id = str(db.execute(text("SELECT id FROM identity.account")).scalar_one())
+    deps = authorization_dependencies()
+    actor = SessionPrincipal(
+        account_id=account_id,
+        employee_no="00000001",
+        display_name="Alice",
+        session_kind=SessionKind.FULL,
+        is_super_admin=False,
+    )
+    with authorization_rw_engine.begin() as db:
+        created = grant(
+            db,
+            principal_id=account_id,
+            capability="platform.workspace.manage",
+            scope=Scope.workspace("workspace-1"),
+            actor=actor,
+            reason="initial workspace access",
+            dependencies=deps,
+        )
+    with authorization_rw_engine.begin() as db:
+        resolved = authorize(
+            db,
+            raw_token=token,
+            capability="platform.workspace.manage",
+            scope=Scope.workspace("workspace-1"),
+            dependencies=deps,
+            decision_dependencies=_decision_dependencies(
+                authorization_identity_engine,
+                Membership(),
+            ),
+        )
+    assert resolved.principal is not None
+
+    # The revoke commits after principal resolution and before the resource guard.
+    with authorization_rw_engine.begin() as db:
+        revoke(
+            db,
+            grant_id=created.id,
+            expected_version=1,
+            actor=actor,
+            reason="remove access before resource mutation",
+            dependencies=deps,
+        )
+    with authorization_rw_engine.begin() as db:
+        with pytest.raises(AuthorizationUnavailable):
+            principal_has_capability(
+                db,
+                principal=resolved.principal,
+                capability="platform.workspace.manage",
+                scope=Scope.workspace("workspace-1"),
+                dependencies=deps,
+                decision_dependencies=_decision_dependencies(
+                    authorization_identity_engine,
+                    Membership(),
+                ),
+            )

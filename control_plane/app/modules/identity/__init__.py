@@ -29,6 +29,11 @@ from control_plane.app.modules.identity.application.auth import (
     login_totp_step as _login_totp_step,
 )
 from control_plane.app.modules.identity.application.dependencies import IdentityDependencies
+from control_plane.app.modules.identity.application.security_change import (
+    IdentityChangeSource,
+    current_identity_change_source,
+    identity_change_source,
+)
 from control_plane.app.modules.identity.application.sessions import logout as _logout
 from control_plane.app.modules.identity.application.sessions import (
     revoke_sessions_for as _revoke_sessions_for,
@@ -294,6 +299,7 @@ __all__ = [
     "EffectiveIdentityPolicy",
     "EffectivePolicyPort",
     "IdentityDependencies",
+    "IdentityChangeSource",
     "IdentityRepositoryFactory",
     "InvalidAccountTransition",
     "IssuedSession",
@@ -310,12 +316,14 @@ __all__ = [
     "TotpEnrollment",
     "complete_password_setup",
     "confirm_totp",
+    "current_identity_change_source",
     "consume_temp_password",
     "create_account",
     "enroll_totp",
     "ensure_account_transition_allowed",
     "ensure_effective_super_admin_remains",
     "issue_temp_password",
+    "identity_change_source",
     "get_organization_account",
     "login_password_step",
     "login_totp_step",

@@ -1,10 +1,16 @@
 from collections.abc import Callable
-from typing import Any, Protocol
+from typing import Annotated, Any, Protocol
 
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, HTTPException, Request, Security
+from fastapi.security import APIKeyCookie
 from sqlalchemy import Connection, Engine
 
 PLATFORM = object()
+EP_SESSION_COOKIE = APIKeyCookie(
+    name="ep_session",
+    scheme_name="EpSessionCookie",
+    auto_error=False,
+)
 ScopeResolver = object | Callable[[Request], object]
 
 
@@ -28,8 +34,7 @@ CapabilityResolver = Callable[
 ]
 
 
-def _raw_token(request: Request) -> str:
-    token = request.cookies.get("ep_session")
+def _raw_token(token: str | None) -> str:
     if not token:
         raise HTTPException(status_code=401, detail="Authentication required")
     return token
@@ -52,11 +57,20 @@ def current_principal(
     runtime_provider: Callable[[], AuthorizationRuntime],
     resolver: PrincipalResolver,
 ) -> Callable[[Request], Any]:
-    def dependency(request: Request) -> Any:
-        raw_token = _raw_token(request)
-        runtime = runtime_provider()
-        with runtime.engine.begin() as db:
-            decision = resolver(runtime, db, raw_token)
+    def dependency(
+        request: Request,
+        cookie_token: Annotated[str | None, Security(EP_SESSION_COOKIE)] = None,
+    ) -> Any:
+        raw_token = _raw_token(cookie_token)
+        try:
+            runtime = runtime_provider()
+            with runtime.engine.begin() as db:
+                decision = resolver(runtime, db, raw_token)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Authorization unavailable",
+            ) from exc
         return _principal_or_problem(decision)
 
     return dependency
@@ -69,18 +83,27 @@ def require_capability(
     runtime_provider: Callable[[], AuthorizationRuntime],
     resolver: CapabilityResolver,
 ) -> object:
-    def dependency(request: Request) -> Any:
-        raw_token = _raw_token(request)
-        runtime = runtime_provider()
-        resolved_scope = scope(request) if callable(scope) else scope
-        with runtime.engine.begin() as db:
-            decision = resolver(
-                runtime,
-                db,
-                raw_token,
-                capability,
-                resolved_scope,
-            )
+    def dependency(
+        request: Request,
+        cookie_token: Annotated[str | None, Security(EP_SESSION_COOKIE)] = None,
+    ) -> Any:
+        raw_token = _raw_token(cookie_token)
+        try:
+            runtime = runtime_provider()
+            resolved_scope = scope(request) if callable(scope) else scope
+            with runtime.engine.begin() as db:
+                decision = resolver(
+                    runtime,
+                    db,
+                    raw_token,
+                    capability,
+                    resolved_scope,
+                )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Authorization unavailable",
+            ) from exc
         return _principal_or_problem(decision)
 
     return Depends(dependency)
@@ -90,6 +113,7 @@ __all__ = [
     "AuthorizationRuntime",
     "CapabilityResolver",
     "DecisionView",
+    "EP_SESSION_COOKIE",
     "PLATFORM",
     "PrincipalResolver",
     "ScopeResolver",

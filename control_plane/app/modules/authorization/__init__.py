@@ -39,6 +39,7 @@ from control_plane.app.modules.authorization.application.grants import (
 from control_plane.app.modules.authorization.application.grants import revoke as _revoke
 from control_plane.app.modules.authorization.application.orchestration import (
     SecurityChangeOrchestrator,
+    SecurityChangeSource,
     SecurityChangeTicket,
 )
 from control_plane.app.modules.authorization.domain import (
@@ -221,6 +222,7 @@ def principal_has_capability(
     capability: str,
     scope: Scope,
     dependencies: AuthorizationDependencies,
+    decision_dependencies: DecisionDependencies | None = None,
 ) -> bool:
     return _principal_has_capability(
         dependencies.repository_factory(db),
@@ -228,6 +230,7 @@ def principal_has_capability(
         capability=capability,
         scope=scope,
         dependencies=dependencies,
+        decision_dependencies=decision_dependencies,
     )
 
 
@@ -248,6 +251,7 @@ __all__ = [
     "Scope",
     "ScopedCapability",
     "SecurityChangeOrchestrator",
+    "SecurityChangeSource",
     "SecurityChangeTicket",
     "ScopeType",
     "StaleGrantVersion",

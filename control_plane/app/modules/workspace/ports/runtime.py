@@ -12,7 +12,20 @@ class RandomPort(Protocol):
 
 
 class SecurityChangePort(Protocol):
-    def begin(self, *, reason: str, account_ids: Sequence[str] | None = None) -> Any: ...
+    def begin(
+        self,
+        *,
+        reason: str,
+        source_module: str,
+        actor: str,
+        operation: str,
+        idempotency_key: str,
+        source_transaction_id: str | None = None,
+        account_ids: Sequence[str] | None = None,
+        affected_account_ids: Sequence[str] = (),
+        affected_workspace_ids: Sequence[str] = (),
+        recompute_membership: bool = False,
+    ) -> Any: ...
 
     def complete(
         self,

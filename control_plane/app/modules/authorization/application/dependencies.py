@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from control_plane.app.modules.audit import TransactionalAuditAppender
@@ -24,3 +25,4 @@ class AuthorizationDependencies:
 class DecisionDependencies:
     identity: IdentitySessionPort
     workspace: WorkspaceMembershipPort
+    reconcile: Callable[[str], bool] | None = None

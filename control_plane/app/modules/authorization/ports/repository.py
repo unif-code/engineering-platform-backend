@@ -66,6 +66,58 @@ class AuthorizationRepository(Protocol):
 
     def principal_ids(self) -> list[str]: ...
 
+    def lock_convergence_source(
+        self,
+        source_module: str,
+        actor: str,
+        operation: str,
+        idempotency_key: str,
+    ) -> None: ...
+
+    def convergence_work_by_source(
+        self,
+        source_module: str,
+        actor: str,
+        operation: str,
+        idempotency_key: str,
+        *,
+        for_update: bool = False,
+    ) -> Any: ...
+
+    def convergence_work_by_id(
+        self,
+        work_id: str,
+        *,
+        for_update: bool = False,
+    ) -> Any: ...
+
+    def insert_convergence_work(self, **values: Any) -> Any: ...
+
+    def source_transaction_status(self, source_transaction_id: str) -> str: ...
+
+    def update_convergence_effects(
+        self,
+        work_id: str,
+        *,
+        affected_account_ids: list[str],
+        affected_workspace_ids: list[str],
+        recompute_membership: bool,
+        now: datetime,
+    ) -> Any: ...
+
+    def update_convergence_phase(
+        self,
+        work_id: str,
+        phase: str,
+        now: datetime,
+    ) -> None: ...
+
+    def complete_convergence_work(self, work_id: str, now: datetime) -> None: ...
+
+    def cancel_convergence_work(self, work_id: str, now: datetime) -> None: ...
+
+    def pending_convergence_for_account(self, account_id: str) -> list[str]: ...
+
     def route_registry(self) -> list[Any]: ...
 
 

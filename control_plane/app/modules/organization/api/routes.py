@@ -4,7 +4,7 @@ from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
 from fastapi.responses import JSONResponse
-from sqlalchemy import Engine
+from sqlalchemy import Engine, text
 
 from control_plane.app.modules.identity import Principal
 from control_plane.app.modules.organization import (
@@ -160,14 +160,24 @@ def create_organization_router(
             idempotency_sealing_key=material.idempotency_sealing_key,
         )
         security_changes = runtime.security_changes
-        ticket = (
-            security_changes.begin(reason="organization structure change")
-            if security_changes is not None
-            else None
-        )
+        ticket = None
         response: Response
         try:
             with runtime.engine.begin() as db:
+                if security_changes is not None:
+                    source_transaction_id = str(
+                        db.execute(text("SELECT pg_current_xact_id()")).scalar_one()
+                    )
+                    ticket = security_changes.begin(
+                        reason="organization structure change",
+                        source_module="organization",
+                        actor=_actor_id(principal),
+                        operation="org_set_superior",
+                        idempotency_key=preflight.idempotency_key,
+                        source_transaction_id=source_transaction_id,
+                        affected_account_ids=(account_id,),
+                        recompute_membership=True,
+                    )
                 execution = execute_idempotent(
                     runtime.dependencies.repository_factory(db),
                     actor=_actor_id(principal),
@@ -200,11 +210,7 @@ def create_organization_router(
             assert security_changes is not None
             if 200 <= response.status_code < 300:
                 try:
-                    security_changes.complete(
-                        ticket,
-                        affected_account_ids=(account_id,),
-                        recompute_membership=True,
-                    )
+                    security_changes.complete(ticket)
                 except Exception:
                     return problem_response(503, "Authorization convergence unavailable")
             else:

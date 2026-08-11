@@ -61,7 +61,7 @@ def test_fresh_database_upgrade_heads_installs_all_visible_module_heads(
             "0004_identity_bootstrap_totp_cap",
             "0001_organization_base",
             "0001_workspace_base",
-            "0001_authorization_base",
+            "0003_authorization_source_xid",
         }
         # Alembic replaces dependency heads in the version table with the revision
         # that depends on them; the organization and workspace heads remain visible
@@ -69,6 +69,7 @@ def test_fresh_database_upgrade_heads_installs_all_visible_module_heads(
         assert installed_heads == {
             "0005_audit_authz_grant",
             "0004_identity_bootstrap_totp_cap",
+            "0003_authorization_source_xid",
         }
         assert set(inspect(engine).get_table_names(schema="organization")) == {
             "idempotency_record",

@@ -2,7 +2,7 @@ from collections.abc import Callable
 from functools import lru_cache
 from typing import Any, Literal, cast
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy import Engine, create_engine
 
@@ -30,7 +30,11 @@ from control_plane.app.modules.authorization.api import (
     create_authorization_router,
 )
 from control_plane.app.modules.authorization.api.dependencies import current_principal
-from control_plane.app.modules.identity import IdentityDependencies, SessionPrincipal
+from control_plane.app.modules.identity import (
+    IdentityDependencies,
+    SessionPrincipal,
+    current_identity_change_source,
+)
 from control_plane.app.modules.identity.adapters.policy import DefaultEffectivePolicy
 from control_plane.app.modules.identity.adapters.runtime import (
     SystemClock,
@@ -128,7 +132,14 @@ def authorization_runtime_engine() -> Engine:
 
 
 def _identity_authorization_change(account_id: str) -> None:
-    security_change_orchestrator().identity_change(account_id)
+    source = current_identity_change_source()
+    security_change_orchestrator().identity_change(
+        account_id,
+        actor=source.actor if source is not None else None,
+        operation=source.operation if source is not None else None,
+        idempotency_key=source.idempotency_key if source is not None else None,
+        source_transaction_id=(source.source_transaction_id if source is not None else None),
+    )
 
 
 @lru_cache(maxsize=1)
@@ -230,6 +241,7 @@ def authorization_http_runtime() -> AuthorizationHttpRuntime:
                 identity_dependencies(),
             ),
             workspace=workspace_membership,
+            reconcile=security_change_orchestrator().reconcile_for_account,
         ),
         organization_summary=SqlAlchemyOrganizationSummary(
             organization_runtime_engine(),
@@ -260,11 +272,6 @@ def workspace_http_runtime() -> WorkspaceHttpRuntime:
     )
 
 
-def authorization_principal(request: Request) -> AuthorizationPrincipal:
-    dependency = current_principal(authorization_http_runtime)
-    return cast(AuthorizationPrincipal, dependency(request))
-
-
 def authorization_capability_guard(
     principal: Any,
     capability: str,
@@ -273,14 +280,21 @@ def authorization_capability_guard(
     resolved = cast(AuthorizationPrincipal, principal)
     scope = Scope.workspace(workspace_id) if workspace_id is not None else Scope.platform()
     runtime = authorization_http_runtime()
-    with runtime.engine.begin() as db:
-        allowed = principal_has_capability(
-            db,
-            principal=resolved,
-            capability=capability,
-            scope=scope,
-            dependencies=runtime.dependencies,
-        )
+    try:
+        with runtime.engine.begin() as db:
+            allowed = principal_has_capability(
+                db,
+                principal=resolved,
+                capability=capability,
+                scope=scope,
+                dependencies=runtime.dependencies,
+                decision_dependencies=runtime.decision_dependencies,
+            )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Authorization unavailable",
+        ) from exc
     if not allowed:
         raise HTTPException(status_code=403, detail="Forbidden")
 
@@ -320,17 +334,18 @@ def create_app(
 
     app.include_router(create_auth_router(identity_runtime_provider))
     app.include_router(create_authorization_router(authorization_http_runtime))
+    protected_principal = current_principal(authorization_http_runtime)
     app.include_router(
         create_organization_router(
             organization_http_runtime,
-            cast(Callable[[], Any], authorization_principal),
+            cast(Callable[[], Any], protected_principal),
             authorization_capability_guard,
         )
     )
     app.include_router(
         create_workspace_router(
             workspace_http_runtime,
-            cast(Callable[[], SessionPrincipal], authorization_principal),
+            cast(Callable[[], SessionPrincipal], protected_principal),
             authorization_capability_guard,
         )
     )

@@ -909,6 +909,13 @@
         "title": "WorkspaceResponseDto",
         "type": "object"
       }
+    },
+    "securitySchemes": {
+      "EpSessionCookie": {
+        "in": "cookie",
+        "name": "ep_session",
+        "type": "apiKey"
+      }
     }
   },
   "info": {
@@ -1021,6 +1028,11 @@
             "description": "Not ready"
           }
         },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
         "summary": "Organization Set Superior",
         "tags": [
           "organization"
@@ -1112,6 +1124,11 @@
             "description": "Not ready"
           }
         },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
         "summary": "Grants List",
         "tags": [
           "authorization"
@@ -1227,6 +1244,11 @@
             "description": "Not ready"
           }
         },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
         "summary": "Grants Create",
         "tags": [
           "authorization"
@@ -1367,6 +1389,11 @@
             "description": "Not ready"
           }
         },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
         "summary": "Grants Revoke",
         "tags": [
           "authorization"
@@ -1448,6 +1475,11 @@
             "description": "Not ready"
           }
         },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
         "summary": "Organization Tree",
         "tags": [
           "organization"
@@ -1527,8 +1559,23 @@
               }
             },
             "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
           }
         },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
         "summary": "Workspace List",
         "tags": [
           "workspace"
@@ -1632,8 +1679,23 @@
               }
             },
             "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
           }
         },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
         "summary": "Workspace Create",
         "tags": [
           "workspace"
@@ -1762,8 +1824,23 @@
               }
             },
             "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
           }
         },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
         "summary": "Workspace Invite Leader",
         "tags": [
           "workspace"
@@ -1901,8 +1978,23 @@
               }
             },
             "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
           }
         },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
         "summary": "Workspace Remove Leader",
         "tags": [
           "workspace"
@@ -1993,8 +2085,23 @@
               }
             },
             "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
           }
         },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
         "summary": "Workspace Members",
         "tags": [
           "workspace"
@@ -2123,8 +2230,23 @@
               }
             },
             "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
           }
         },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
         "summary": "Workspace Transfer Owner",
         "tags": [
           "workspace"
@@ -2908,6 +3030,11 @@
             "description": "Not ready"
           }
         },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
         "summary": "Me",
         "tags": [
           "authorization"
@@ -3003,6 +3130,11 @@
             "description": "Not ready"
           }
         },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
         "summary": "Navigation",
         "tags": [
           "authorization"

@@ -95,7 +95,8 @@ def authorization_identity_engine() -> Iterator[Engine]:
 @pytest.fixture
 def clean_authorization_db(authorization_owner_engine: Engine) -> Iterator[None]:
     tables = (
-        '"authorization".idempotency_record, "authorization"."grant", '
+        '"authorization".convergence_work, "authorization".idempotency_record, '
+        '"authorization"."grant", '
         '"authorization".principal_version, identity.idempotency_record, '
         "identity.auth_challenge, identity.session, identity.temp_credential, "
         "identity.login_backoff, identity.account, audit.audit_event"

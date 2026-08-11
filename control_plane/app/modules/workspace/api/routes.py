@@ -4,7 +4,7 @@ from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
 from fastapi.responses import JSONResponse
-from sqlalchemy import Engine
+from sqlalchemy import Engine, text
 
 from control_plane.app.modules.identity import SessionPrincipal
 from control_plane.app.modules.workspace import (
@@ -34,7 +34,11 @@ from control_plane.app.modules.workspace.api.dto import (
 from control_plane.app.modules.workspace.ports import SecurityChangePort
 from control_plane.app.shared.api.concurrency import entity_tag, require_if_match
 from control_plane.app.shared.api.idempotency import require_idempotency_key
-from control_plane.app.shared.api.problem import PROBLEM_RESPONSES, problem_response
+from control_plane.app.shared.api.problem import (
+    PROBLEM_RESPONSES,
+    SERVICE_UNAVAILABLE_RESPONSE,
+    problem_response,
+)
 from control_plane.app.shared.idempotency import (
     IdempotencyConflict,
     IdempotencyReplayUnavailable,
@@ -48,7 +52,10 @@ WORKSPACE_READ_CAPABILITY = "platform.workspace.read"
 WORKSPACE_MANAGE_CAPABILITY = "platform.workspace.manage"
 _RESPONSES = cast(
     dict[int | str, dict[str, Any]],
-    {status: PROBLEM_RESPONSES[status] for status in (401, 403, 404, 409, 422, 500)},
+    {
+        **{status: PROBLEM_RESPONSES[status] for status in (401, 403, 404, 409, 422, 500)},
+        503: SERVICE_UNAVAILABLE_RESPONSE,
+    },
 )
 
 
@@ -170,6 +177,8 @@ def _execute(
     path: str,
     body: dict[str, object],
     command: Callable[[Any], IdempotentResponse],
+    affected_account_ids: tuple[str, ...] = (),
+    affected_workspace_ids: tuple[str, ...] = (),
 ) -> Response:
     material = runtime.dependencies.secret_manager.load()
     fingerprint = canonical_request_fingerprint(
@@ -180,14 +189,24 @@ def _execute(
         idempotency_sealing_key=material.idempotency_sealing_key,
     )
     security_changes = runtime.security_changes
-    ticket = (
-        security_changes.begin(reason=f"{operation} security change")
-        if security_changes is not None
-        else None
-    )
+    ticket = None
     response: Response
     try:
         with runtime.engine.begin() as db:
+            if security_changes is not None:
+                source_transaction_id = str(
+                    db.execute(text("SELECT pg_current_xact_id()")).scalar_one()
+                )
+                ticket = security_changes.begin(
+                    reason=f"{operation} security change",
+                    source_module="workspace",
+                    actor=principal.account_id,
+                    operation=operation,
+                    idempotency_key=key,
+                    source_transaction_id=source_transaction_id,
+                    affected_account_ids=affected_account_ids,
+                    affected_workspace_ids=affected_workspace_ids,
+                )
             execution = execute_idempotent(
                 runtime.dependencies.repository_factory(db),
                 actor=principal.account_id,
@@ -290,6 +309,7 @@ def create_workspace_router(
             path=request.url.path,
             body=body_data,
             command=command,
+            affected_account_ids=(body.owner_id,),
         )
 
     @router.post(
@@ -340,6 +360,8 @@ def create_workspace_router(
             path=request.url.path,
             body=body_data,
             command=command,
+            affected_account_ids=(body.account_id,),
+            affected_workspace_ids=(workspace_id,),
         )
 
     @router.delete(
@@ -391,6 +413,8 @@ def create_workspace_router(
             path=request.url.path,
             body=body_data,
             command=command,
+            affected_account_ids=(account_id,),
+            affected_workspace_ids=(workspace_id,),
         )
 
     @router.post(
@@ -441,6 +465,8 @@ def create_workspace_router(
             path=request.url.path,
             body=body_data,
             command=command,
+            affected_account_ids=(body.new_owner_id,),
+            affected_workspace_ids=(workspace_id,),
         )
 
     @router.get(

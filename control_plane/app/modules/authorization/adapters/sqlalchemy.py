@@ -257,6 +257,179 @@ class SqlAlchemyAuthorizationRepository:
             ).scalars()
         ]
 
+    def lock_convergence_source(
+        self,
+        source_module: str,
+        actor: str,
+        operation: str,
+        idempotency_key: str,
+    ) -> None:
+        source_identity = "\x1f".join((source_module, actor, operation, idempotency_key))
+        self.db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:identity, 0))"),
+            {"identity": source_identity},
+        )
+
+    def convergence_work_by_source(
+        self,
+        source_module: str,
+        actor: str,
+        operation: str,
+        idempotency_key: str,
+        *,
+        for_update: bool = False,
+    ) -> Any:
+        suffix = " FOR UPDATE" if for_update else ""
+        return (
+            self.db.execute(
+                text(
+                    'SELECT * FROM "authorization".convergence_work '
+                    "WHERE source_module=:source_module AND actor=:actor "
+                    "AND operation=:operation AND idempotency_key=:idempotency_key" + suffix
+                ),
+                {
+                    "source_module": source_module,
+                    "actor": actor,
+                    "operation": operation,
+                    "idempotency_key": idempotency_key,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def convergence_work_by_id(
+        self,
+        work_id: str,
+        *,
+        for_update: bool = False,
+    ) -> Any:
+        suffix = " FOR UPDATE" if for_update else ""
+        return (
+            self.db.execute(
+                text('SELECT * FROM "authorization".convergence_work WHERE id=:id' + suffix),
+                {"id": work_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def insert_convergence_work(self, **values: Any) -> Any:
+        parameters = {
+            **values,
+            "generation_map": json.dumps(values["generation_map"], separators=(",", ":")),
+            "affected_account_ids": json.dumps(
+                values["affected_account_ids"], separators=(",", ":")
+            ),
+            "affected_workspace_ids": json.dumps(
+                values["affected_workspace_ids"], separators=(",", ":")
+            ),
+        }
+        return (
+            self.db.execute(
+                text(
+                    'INSERT INTO "authorization".convergence_work '
+                    "(id, source_module, actor, operation, idempotency_key, reason, "
+                    "source_transaction_id, "
+                    "generation_map, affected_account_ids, affected_workspace_ids, "
+                    "recompute_membership, status, phase, created_at, updated_at) VALUES "
+                    "(:id, :source_module, :actor, :operation, :idempotency_key, :reason, "
+                    ":source_transaction_id, "
+                    "CAST(:generation_map AS JSONB), CAST(:affected_account_ids AS JSONB), "
+                    "CAST(:affected_workspace_ids AS JSONB), :recompute_membership, "
+                    "'PENDING', 'SOURCE_REGISTERED', :now, :now) RETURNING *"
+                ),
+                parameters,
+            )
+            .mappings()
+            .one()
+        )
+
+    def source_transaction_status(self, source_transaction_id: str) -> str:
+        return str(
+            self.db.execute(
+                text("SELECT pg_xact_status(CAST(:source_xid AS xid8))"),
+                {"source_xid": source_transaction_id},
+            ).scalar_one()
+        )
+
+    def update_convergence_effects(
+        self,
+        work_id: str,
+        *,
+        affected_account_ids: list[str],
+        affected_workspace_ids: list[str],
+        recompute_membership: bool,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    'UPDATE "authorization".convergence_work SET '
+                    "affected_account_ids=CAST(:accounts AS JSONB), "
+                    "affected_workspace_ids=CAST(:workspaces AS JSONB), "
+                    "recompute_membership=:recompute_membership, updated_at=:now "
+                    "WHERE id=:id AND status='PENDING' RETURNING *"
+                ),
+                {
+                    "id": work_id,
+                    "accounts": json.dumps(affected_account_ids, separators=(",", ":")),
+                    "workspaces": json.dumps(affected_workspace_ids, separators=(",", ":")),
+                    "recompute_membership": recompute_membership,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def update_convergence_phase(
+        self,
+        work_id: str,
+        phase: str,
+        now: datetime,
+    ) -> None:
+        self.db.execute(
+            text(
+                'UPDATE "authorization".convergence_work '
+                "SET phase=:phase, updated_at=:now WHERE id=:id AND status='PENDING'"
+            ),
+            {"id": work_id, "phase": phase, "now": now},
+        )
+
+    def complete_convergence_work(self, work_id: str, now: datetime) -> None:
+        self.db.execute(
+            text(
+                "UPDATE \"authorization\".convergence_work SET status='COMPLETED', "
+                "phase='DONE', completed_at=:now, updated_at=:now "
+                "WHERE id=:id AND status='PENDING'"
+            ),
+            {"id": work_id, "now": now},
+        )
+
+    def cancel_convergence_work(self, work_id: str, now: datetime) -> None:
+        self.db.execute(
+            text(
+                "UPDATE \"authorization\".convergence_work SET status='CANCELLED', "
+                "phase='CANCELLED', cancelled_at=:now, updated_at=:now "
+                "WHERE id=:id AND status='PENDING'"
+            ),
+            {"id": work_id, "now": now},
+        )
+
+    def pending_convergence_for_account(self, account_id: str) -> list[str]:
+        return [
+            str(value)
+            for value in self.db.execute(
+                text(
+                    'SELECT id FROM "authorization".convergence_work '
+                    "WHERE status='PENDING' AND generation_map ? :account_id "
+                    "ORDER BY created_at, id"
+                ),
+                {"account_id": account_id},
+            ).scalars()
+        ]
+
     def route_registry(self) -> list[Any]:
         return list(
             self.db.execute(

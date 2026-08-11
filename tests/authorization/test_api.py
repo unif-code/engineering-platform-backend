@@ -6,12 +6,12 @@ from threading import Event, Lock
 from typing import Any, cast
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from httpx import Response as HttpxResponse
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, create_engine, text
 
-from control_plane.app.modules.authorization import Scope, grant
+from control_plane.app.modules.authorization import AuthorizationPrincipal, Scope, grant
 from control_plane.app.modules.authorization.adapters import (
     SqlAlchemyAuthorizationRepository,
     SqlAlchemyIdentitySessionValidator,
@@ -651,3 +651,153 @@ def test_grant_write_preflight_rejects_before_session_validation(
     )
     assert response.status_code in {403, 422}
     assert calls == []
+
+
+@pytest.mark.parametrize(
+    "failure_point,path",
+    [
+        ("principal_version", "/api/v1/me"),
+        ("exact_grant", "/api/v1/admin/grants"),
+        ("capability_projection", "/api/v1/me"),
+    ],
+)
+def test_authorization_repository_read_failures_are_safe_503(
+    clean_authorization_db: None,
+    authorization_rw_engine: Engine,
+    authorization_identity_engine: Engine,
+    authorization_owner_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_point: str,
+    path: str,
+) -> None:
+    request_id = f"req-{failure_point.replace('_', '')}"
+    client, account_id = _management_client(
+        authorization_engine=authorization_rw_engine,
+        identity_engine=authorization_identity_engine,
+        owner_engine=authorization_owner_engine,
+        monkeypatch=monkeypatch,
+    )
+    token = client.cookies.get("ep_session")
+    assert token is not None
+
+    class FailingReadRepository(SqlAlchemyAuthorizationRepository):
+        def principal_version(self, account_id: str, *, for_update: bool = False) -> Any:
+            if failure_point == "principal_version":
+                raise RuntimeError("SELECT principal_version FROM secret_dsn")
+            return super().principal_version(account_id, for_update=for_update)
+
+        def effective_grants(self, **values: Any) -> list[Any]:
+            if failure_point == "exact_grant" and values["capability"] is not None:
+                raise RuntimeError("SELECT exact grant FROM secret_dsn")
+            if failure_point == "capability_projection" and values["capability"] is None:
+                raise RuntimeError("SELECT projection FROM secret_dsn")
+            return super().effective_grants(**values)
+
+    runtime = _runtime(
+        authorization_rw_engine,
+        authorization_identity_engine,
+        AlwaysMember(),
+        replace(
+            authorization_dependencies(),
+            repository_factory=FailingReadRepository,
+        ),
+    )
+    client = _client(lambda: runtime)
+    client.cookies.set("ep_session", token)
+    response = client.get(path, headers={"X-Request-ID": request_id})
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "title": "Authorization unavailable",
+        "status": 503,
+        "requestId": request_id,
+    }
+    assert "secret_dsn" not in response.text
+    with authorization_owner_engine.connect() as db:
+        audit_count = db.execute(
+            text(
+                "SELECT count(*) FROM audit.audit_event "
+                "WHERE action='authorization.decision' "
+                "AND correlation_id=:request_id AND result='UNAVAILABLE'"
+            ),
+            {"request_id": request_id},
+        ).scalar_one()
+    assert audit_count == 1
+    assert account_id
+
+
+def test_authorization_engine_connection_failure_is_safe_503_without_details() -> None:
+    unavailable_engine = create_engine(
+        "postgresql+psycopg://authorization_rw:redacted@127.0.0.1:59999/platform?connect_timeout=1",
+        pool_pre_ping=True,
+    )
+    runtime = AuthorizationHttpRuntime(
+        engine=unavailable_engine,
+        dependencies=authorization_dependencies(),
+        decision_dependencies=DecisionDependencies(
+            identity=RecordingIdentityForUnavailableEngine(),
+            workspace=AlwaysMember(),
+        ),
+        organization_summary=lambda _account_id: None,
+        workspace_summaries=lambda _account_id: [],
+    )
+    try:
+        client = _client(lambda: runtime)
+        client.cookies.set("ep_session", "not-a-real-session-secret")
+        response = client.get(
+            "/api/v1/me",
+            headers={"X-Request-ID": "req-engineunavailable"},
+        )
+    finally:
+        unavailable_engine.dispose()
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "title": "Authorization unavailable",
+        "status": 503,
+        "requestId": "req-engineunavailable",
+    }
+    assert "59999" not in response.text
+    assert "redacted" not in response.text
+
+
+class RecordingIdentityForUnavailableEngine:
+    def validate(self, raw_token: str) -> None:
+        raise AssertionError(f"identity must not be reached: {raw_token}")
+
+
+def test_resource_guard_engine_failure_is_safe_503(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import control_plane.app.bootstrap.app as bootstrap
+
+    class UnavailableEngine:
+        def begin(self) -> None:
+            raise RuntimeError("postgresql://secret-resource-guard")
+
+    runtime = AuthorizationHttpRuntime(
+        engine=cast(Any, UnavailableEngine()),
+        dependencies=authorization_dependencies(),
+        decision_dependencies=DecisionDependencies(
+            identity=RecordingIdentityForUnavailableEngine(),
+            workspace=AlwaysMember(),
+        ),
+        organization_summary=lambda _account_id: None,
+        workspace_summaries=lambda _account_id: [],
+    )
+    monkeypatch.setattr(bootstrap, "authorization_http_runtime", lambda: runtime)
+    with pytest.raises(HTTPException) as captured:
+        bootstrap.authorization_capability_guard(
+            AuthorizationPrincipal(
+                account_id="account-1",
+                employee_id="00000001",
+                name="Alice",
+                is_super_admin=False,
+                authorization_version=1,
+                capabilities=(),
+            ),
+            "platform.workspace.manage",
+            None,
+        )
+    assert captured.value.status_code == 503
+    assert captured.value.detail == "Authorization unavailable"

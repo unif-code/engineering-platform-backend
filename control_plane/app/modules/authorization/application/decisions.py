@@ -15,6 +15,7 @@ from control_plane.app.modules.authorization.domain import (
     ScopedCapability,
     ScopeType,
 )
+from control_plane.app.modules.authorization.domain.errors import AuthorizationUnavailable
 from control_plane.app.modules.authorization.ports import AuthorizationRepository
 
 
@@ -69,6 +70,31 @@ def _denial(
     return AuthorizationDecision(allowed=False, code=code)
 
 
+def _unavailable(
+    repository: AuthorizationRepository,
+    *,
+    dependencies: AuthorizationDependencies,
+    actor: str,
+    capability: str,
+    scope: Scope,
+    version: int | None,
+    reason: str,
+) -> AuthorizationDecision:
+    try:
+        return _denial(
+            repository,
+            dependencies=dependencies,
+            actor=actor,
+            capability=capability,
+            scope=scope,
+            code=DecisionCode.UNAVAILABLE,
+            version=version,
+            reason=reason,
+        )
+    except Exception:
+        return AuthorizationDecision(allowed=False, code=DecisionCode.UNAVAILABLE)
+
+
 def _principal_capabilities(
     repository: AuthorizationRepository,
     *,
@@ -109,50 +135,83 @@ def authorize(
     try:
         session = decision_dependencies.identity.validate(raw_token)
     except Exception:
-        return _denial(
+        return _unavailable(
             repository,
             dependencies=dependencies,
             actor="SYSTEM",
             capability=capability,
             scope=scope,
-            code=DecisionCode.UNAVAILABLE,
             version=None,
             reason="identity projection unavailable",
         )
     if session is None or str(getattr(session, "session_kind", "")) != "FULL":
         return AuthorizationDecision(allowed=False, code=DecisionCode.UNAUTHENTICATED)
     account_id = str(session.account_id)
-    state_row = repository.principal_version(account_id)
-    if state_row is None:
-        return _denial(
+    try:
+        state_row = repository.principal_version(account_id)
+    except Exception:
+        return _unavailable(
             repository,
             dependencies=dependencies,
             actor=account_id,
             capability=capability,
             scope=scope,
-            code=DecisionCode.UNAVAILABLE,
+            version=None,
+            reason="authorization version unavailable",
+        )
+    if state_row is None:
+        return _unavailable(
+            repository,
+            dependencies=dependencies,
+            actor=account_id,
+            capability=capability,
+            scope=scope,
             version=None,
             reason="authorization version unknown",
         )
     state = principal_version_dto(state_row)
     if state.dirty_generation is not None:
-        return _denial(
+        reconciled = False
+        if decision_dependencies.reconcile is not None:
+            try:
+                reconciled = decision_dependencies.reconcile(account_id)
+            except Exception:
+                reconciled = False
+        if reconciled:
+            try:
+                state_row = repository.principal_version(account_id)
+            except Exception:
+                state_row = None
+            if state_row is not None:
+                state = principal_version_dto(state_row)
+        if state.dirty_generation is not None:
+            return _unavailable(
+                repository,
+                dependencies=dependencies,
+                actor=account_id,
+                capability=capability,
+                scope=scope,
+                version=state.version,
+                reason="authorization convergence pending",
+            )
+    try:
+        matching = repository.effective_grants(
+            principal_id=account_id,
+            capability=capability,
+            scope_type=scope.scope_type.value,
+            scope_id=scope.scope_id,
+            now=dependencies.clock.now(),
+        )
+    except Exception:
+        return _unavailable(
             repository,
             dependencies=dependencies,
             actor=account_id,
             capability=capability,
             scope=scope,
-            code=DecisionCode.UNAVAILABLE,
             version=state.version,
-            reason="authorization convergence pending",
+            reason="exact grant unavailable",
         )
-    matching = repository.effective_grants(
-        principal_id=account_id,
-        capability=capability,
-        scope_type=scope.scope_type.value,
-        scope_id=scope.scope_id,
-        now=dependencies.clock.now(),
-    )
     if not matching:
         return _denial(
             repository,
@@ -172,13 +231,12 @@ def authorize(
                 account_id,
             )
         except Exception:
-            return _denial(
+            return _unavailable(
                 repository,
                 dependencies=dependencies,
                 actor=account_id,
                 capability=capability,
                 scope=scope,
-                code=DecisionCode.UNAVAILABLE,
                 version=state.version,
                 reason="workspace membership unavailable",
             )
@@ -201,13 +259,12 @@ def authorize(
             dependencies=dependencies,
         )
     except Exception:
-        return _denial(
+        return _unavailable(
             repository,
             dependencies=dependencies,
             actor=account_id,
             capability=capability,
             scope=scope,
-            code=DecisionCode.UNAVAILABLE,
             version=state.version,
             reason="effective capability projection unavailable",
         )
@@ -237,13 +294,12 @@ def resolve_principal(
     try:
         session = decision_dependencies.identity.validate(raw_token)
     except Exception:
-        return _denial(
+        return _unavailable(
             repository,
             dependencies=dependencies,
             actor="SYSTEM",
             capability="authorization.principal.resolve",
             scope=Scope.platform(),
-            code=DecisionCode.UNAVAILABLE,
             version=None,
             reason="identity projection unavailable",
         )
@@ -251,30 +307,53 @@ def resolve_principal(
         return AuthorizationDecision(allowed=False, code=DecisionCode.UNAUTHENTICATED)
 
     account_id = str(session.account_id)
-    state_row = repository.principal_version(account_id)
-    if state_row is None:
-        return _denial(
+    try:
+        state_row = repository.principal_version(account_id)
+    except Exception:
+        return _unavailable(
             repository,
             dependencies=dependencies,
             actor=account_id,
             capability="authorization.principal.resolve",
             scope=Scope.platform(),
-            code=DecisionCode.UNAVAILABLE,
+            version=None,
+            reason="authorization version unavailable",
+        )
+    if state_row is None:
+        return _unavailable(
+            repository,
+            dependencies=dependencies,
+            actor=account_id,
+            capability="authorization.principal.resolve",
+            scope=Scope.platform(),
             version=None,
             reason="authorization version unknown",
         )
     state = principal_version_dto(state_row)
     if state.dirty_generation is not None:
-        return _denial(
-            repository,
-            dependencies=dependencies,
-            actor=account_id,
-            capability="authorization.principal.resolve",
-            scope=Scope.platform(),
-            code=DecisionCode.UNAVAILABLE,
-            version=state.version,
-            reason="authorization convergence pending",
-        )
+        reconciled = False
+        if decision_dependencies.reconcile is not None:
+            try:
+                reconciled = decision_dependencies.reconcile(account_id)
+            except Exception:
+                reconciled = False
+        if reconciled:
+            try:
+                state_row = repository.principal_version(account_id)
+            except Exception:
+                state_row = None
+            if state_row is not None:
+                state = principal_version_dto(state_row)
+        if state.dirty_generation is not None:
+            return _unavailable(
+                repository,
+                dependencies=dependencies,
+                actor=account_id,
+                capability="authorization.principal.resolve",
+                scope=Scope.platform(),
+                version=state.version,
+                reason="authorization convergence pending",
+            )
     try:
         capabilities = _principal_capabilities(
             repository,
@@ -283,13 +362,12 @@ def resolve_principal(
             dependencies=dependencies,
         )
     except Exception:
-        return _denial(
+        return _unavailable(
             repository,
             dependencies=dependencies,
             actor=account_id,
             capability="authorization.principal.resolve",
             scope=Scope.platform(),
-            code=DecisionCode.UNAVAILABLE,
             version=state.version,
             reason="effective capability projection unavailable",
         )
@@ -314,10 +392,40 @@ def principal_has_capability(
     capability: str,
     scope: Scope,
     dependencies: AuthorizationDependencies,
+    decision_dependencies: DecisionDependencies | None = None,
 ) -> bool:
-    if any(
-        item.capability == capability and item.scope == scope for item in principal.capabilities
-    ):
+    try:
+        state_row = repository.principal_version(principal.account_id)
+    except Exception as exc:
+        raise AuthorizationUnavailable("authorization version unavailable") from exc
+    if state_row is None:
+        raise AuthorizationUnavailable("authorization version unknown")
+    state = principal_version_dto(state_row)
+    if state.dirty_generation is not None or state.version != principal.authorization_version:
+        raise AuthorizationUnavailable("authorization principal changed")
+    try:
+        matching = repository.effective_grants(
+            principal_id=principal.account_id,
+            capability=capability,
+            scope_type=scope.scope_type.value,
+            scope_id=scope.scope_id,
+            now=dependencies.clock.now(),
+        )
+    except Exception as exc:
+        raise AuthorizationUnavailable("exact grant unavailable") from exc
+    if matching and scope.scope_type is ScopeType.WORKSPACE:
+        if decision_dependencies is None or scope.scope_id is None:
+            raise AuthorizationUnavailable("workspace membership unavailable")
+        try:
+            member = decision_dependencies.workspace.is_formal_member(
+                scope.scope_id,
+                principal.account_id,
+            )
+        except Exception as exc:
+            raise AuthorizationUnavailable("workspace membership unavailable") from exc
+        if not member:
+            matching = []
+    if matching:
         return True
     _decision_audit(
         repository,
@@ -327,6 +435,6 @@ def principal_has_capability(
         scope=scope,
         result="DENY",
         version=principal.authorization_version,
-        reason="grant missing or inactive",
+        reason="grant missing, inactive, or outside current membership",
     )
     return False
