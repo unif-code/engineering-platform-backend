@@ -35,7 +35,9 @@ class SuperAdminPermissionDenied(IdentityError):
 
 
 class SuperAdminRecoveryDenied(IdentityError):
-    pass
+    def __init__(self, reason_code: str) -> None:
+        super().__init__("Super Admin recovery denied")
+        self.reason_code = reason_code
 
 
 class PasswordFloorViolation(IdentityError):

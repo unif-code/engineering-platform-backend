@@ -42,6 +42,17 @@ from control_plane.app.shared.security import unseal, verify_totp
 SYSTEM_BOOTSTRAP = Principal(employee_id="SYSTEM_BOOTSTRAP", name="System Bootstrap")
 SYSTEM_RECOVERY = Principal(employee_id="SYSTEM_RECOVERY", name="System Recovery")
 SUPER_ADMIN_RECOVERY_SCOPE = "SUPER_ADMIN_AUTHENTICATION"
+_RECOVERY_DENIAL_CODES = frozenset(
+    {
+        "INVALID_EXPIRY",
+        "INVALID_REASON",
+        "INVALID_SCOPE",
+        "OTHER_SUPER_ADMIN_AUTHENTICATING",
+        "TARGET_CHANGED",
+        "TARGET_NOT_SUPER_ADMIN",
+        "TARGET_STILL_USABLE",
+    }
+)
 _CHALLENGE_TTL = timedelta(minutes=5)
 SuperAdminOperation = Literal["ADD", "REMOVE"]
 
@@ -415,23 +426,23 @@ def recover_super_admin(
 ) -> tuple[AccountDto, str]:
     normalized_reason = reason.strip()
     if not normalized_reason:
-        raise SuperAdminRecoveryDenied("recovery reason is required")
+        raise SuperAdminRecoveryDenied("INVALID_REASON")
     if scope != SUPER_ADMIN_RECOVERY_SCOPE:
-        raise SuperAdminRecoveryDenied("recovery scope is not permitted")
+        raise SuperAdminRecoveryDenied("INVALID_SCOPE")
     now = dependencies.clock.now()
     expiry = expires_at
     policy = dependencies.policy.get_identity_policy(repository.db)
     if expiry.tzinfo is None or not now < expiry <= now + policy.temp_credential_ttl:
-        raise SuperAdminRecoveryDenied("recovery expiry is outside the permitted window")
+        raise SuperAdminRecoveryDenied("INVALID_EXPIRY")
 
     repository.lock_super_admin_invariant()
     target = repository.account_by_employee_no(employee_no, for_update=True)
     if target is None or not bool(target["is_super_admin"]):
-        raise SuperAdminRecoveryDenied("target must be an existing Super Admin")
+        raise SuperAdminRecoveryDenied("TARGET_NOT_SUPER_ADMIN")
     if target["status"] != AccountStatus.DISABLED.value and not credentials_lost:
-        raise SuperAdminRecoveryDenied("target is not unavailable")
+        raise SuperAdminRecoveryDenied("TARGET_STILL_USABLE")
     if not credentials_lost and repository.effective_super_admins_except(str(target["id"])) != 0:
-        raise SuperAdminRecoveryDenied("another Super Admin can authenticate normally")
+        raise SuperAdminRecoveryDenied("OTHER_SUPER_ADMIN_AUTHENTICATING")
 
     account_id = str(target["id"])
     temporary_password = _issue_temp(
@@ -444,7 +455,7 @@ def recover_super_admin(
     )
     updated = repository.reset_recovery_state(account_id, now)
     if updated is None:
-        raise SuperAdminRecoveryDenied("recovery target changed concurrently")
+        raise SuperAdminRecoveryDenied("TARGET_CHANGED")
     revoked = repository.revoke_sessions(account_id, now, "SUPER_ADMIN_RECOVERY")
     finalize_session_revocations(
         repository,
@@ -487,6 +498,30 @@ def recover_super_admin(
     )
     notify_identity_change(dependencies.on_auth_change, account_id)
     return _dto(updated), temporary_password
+
+
+def record_super_admin_recovery_denial(
+    repository: IdentityRepository,
+    *,
+    employee_no: str,
+    reason_code: str,
+    correlation_id: str,
+    dependencies: IdentityDependencies,
+) -> None:
+    if reason_code not in _RECOVERY_DENIAL_CODES:
+        raise ValueError("unsupported Super Admin recovery denial code")
+    target_id = employee_no if len(employee_no) == 8 and employee_no.isdigit() else "INVALID"
+    audit(
+        repository.db,
+        dependencies=dependencies,
+        actor=SYSTEM_RECOVERY,
+        action="identity.super_admin.recovered",
+        target_type="employee",
+        target_id=target_id,
+        result="DENIED",
+        reason=f"reasonCode={reason_code}; scope={SUPER_ADMIN_RECOVERY_SCOPE}",
+        correlation_id=correlation_id,
+    )
 
 
 def _cli_descriptor(

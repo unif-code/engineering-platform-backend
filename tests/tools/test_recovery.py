@@ -22,12 +22,33 @@ class FailingWriter:
         raise OSError("simulated stdout failure")
 
 
+class FlushFailingBufferedWriter:
+    def __init__(self) -> None:
+        self.buffer = io.StringIO()
+        self.flush_calls = 0
+
+    def write(self, value: str) -> int:
+        return self.buffer.write(value)
+
+    def flush(self) -> None:
+        self.flush_calls += 1
+        raise OSError("simulated buffered stdout flush failure")
+
+    def getvalue(self) -> str:
+        return self.buffer.getvalue()
+
+
 class UnavailableConvergence:
     def complete(self, _ticket: object) -> None:
         raise RuntimeError("injected convergence outage")
 
     def reconcile_pending(self) -> bool:
         return False
+
+
+class UnavailableAuditAppender:
+    def append_in_transaction(self, _db: object, _envelope: object) -> None:
+        raise RuntimeError("injected denial Audit outage")
 
 
 def test_recovery_restricts_last_unavailable_admin_and_atomically_reissues_bootstrap(
@@ -212,7 +233,7 @@ def test_recovery_cli_denial_is_nonzero_and_does_not_partially_execute(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     dependencies = identity_dependencies()
-    _secret, _old_session = _initialize_account(
+    _secret, old_session = _initialize_account(
         identity_rw_engine,
         dependencies,
         monkeypatch,
@@ -245,6 +266,7 @@ def test_recovery_cli_denial_is_nonzero_and_does_not_partially_execute(
             db.execute(
                 text(
                     "SELECT (SELECT count(*) FROM identity.temp_credential) AS temps, "
+                    "(SELECT count(*) FROM identity.idempotency_record) AS claims, "
                     "(SELECT count(*) FROM audit.audit_event) AS audits"
                 )
             )
@@ -276,25 +298,266 @@ def test_recovery_cli_denial_is_nonzero_and_does_not_partially_execute(
     assert exit_code == 3
     assert stdout.getvalue() == ""
     evidence = json.loads(stderr.getvalue())
-    assert evidence["event"] == "super_admin_recovery"
-    assert evidence["result"] == "DENIED"
+    assert evidence == {
+        "event": "super_admin_recovery",
+        "result": "DENIED",
+        "reasonCode": "OTHER_SUPER_ADMIN_AUTHENTICATING",
+        "commandId": evidence["commandId"],
+    }
+    assert evidence["commandId"].startswith("cli-")
     assert "password" not in stderr.getvalue().lower()
+    assert "approved incident INC-1002" not in stderr.getvalue()
     with identity_owner_engine.connect() as db:
         after = (
             db.execute(
                 text(
                     "SELECT (SELECT count(*) FROM identity.temp_credential) AS temps, "
+                    "(SELECT count(*) FROM identity.idempotency_record) AS claims, "
                     "(SELECT count(*) FROM audit.audit_event) AS audits, "
                     "(SELECT status FROM identity.account "
-                    "WHERE employee_no='00000001') AS status"
+                    "WHERE employee_no='00000001') AS status, "
+                    "(SELECT revoked_at FROM identity.session "
+                    "WHERE token_hash=:token_hash) AS revoked_at"
+                ),
+                {"token_hash": hashlib.sha256(old_session.encode()).hexdigest()},
+            )
+            .mappings()
+            .one()
+        )
+        denial = (
+            db.execute(
+                text(
+                    "SELECT actor, actor_type, action, target_type, target_id, result, "
+                    "reason, correlation_id FROM audit.audit_event "
+                    "WHERE actor='SYSTEM_RECOVERY' AND result='DENIED'"
                 )
             )
             .mappings()
             .one()
         )
     assert after["temps"] == before["temps"]
-    assert after["audits"] == before["audits"]
+    assert after["claims"] == before["claims"]
+    assert after["audits"] == before["audits"] + 1
     assert after["status"] == "DISABLED"
+    assert after["revoked_at"] is None
+    assert dict(denial) == {
+        "actor": "SYSTEM_RECOVERY",
+        "actor_type": "SYSTEM",
+        "action": "identity.super_admin.recovered",
+        "target_type": "employee",
+        "target_id": "00000001",
+        "result": "DENIED",
+        "reason": ("reasonCode=OTHER_SUPER_ADMIN_AUTHENTICATING; scope=SUPER_ADMIN_AUTHENTICATION"),
+        "correlation_id": evidence["commandId"],
+    }
+    assert "approved incident INC-1002" not in repr(denial)
+
+
+def test_recovery_cli_invalid_expiry_writes_correlated_denial_audit_without_recovery(
+    clean_identity_db: None,
+    identity_rw_engine: Engine,
+    identity_owner_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dependencies = identity_dependencies()
+    _secret, old_session = _initialize_account(
+        identity_rw_engine,
+        dependencies,
+        monkeypatch,
+    )
+    with identity_owner_engine.begin() as db:
+        before = (
+            db.execute(
+                text(
+                    "UPDATE identity.account SET is_super_admin=true, status='DISABLED', "
+                    "version=version+1 WHERE employee_no='00000001' "
+                    "RETURNING password_hash, totp_sealed, version"
+                )
+            )
+            .mappings()
+            .one()
+        )
+        before_counts = (
+            db.execute(
+                text(
+                    "SELECT (SELECT count(*) FROM identity.temp_credential) AS temps, "
+                    "(SELECT count(*) FROM identity.idempotency_record) AS claims, "
+                    "(SELECT count(*) FROM audit.audit_event) AS audits"
+                )
+            )
+            .mappings()
+            .one()
+        )
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    recovery_cli = importlib.import_module("control_plane.tools.recovery")
+
+    exit_code = recovery_cli.main(
+        [
+            "--employee-no",
+            "00000001",
+            "--reason",
+            "approved incident MUST-NOT-PERSIST",
+            "--scope",
+            "SUPER_ADMIN_AUTHENTICATION",
+            "--expires-at",
+            "not-an-rfc3339-time",
+        ],
+        engine=identity_rw_engine,
+        dependencies=dependencies,
+        security_changes=None,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    evidence = json.loads(stderr.getvalue())
+    assert exit_code == 3
+    assert stdout.getvalue() == ""
+    assert evidence == {
+        "event": "super_admin_recovery",
+        "result": "DENIED",
+        "reasonCode": "INVALID_EXPIRY",
+        "commandId": evidence["commandId"],
+    }
+    with identity_owner_engine.connect() as db:
+        after = (
+            db.execute(
+                text(
+                    "SELECT a.password_hash, a.totp_sealed, a.version, a.status, "
+                    "s.revoked_at, "
+                    "(SELECT count(*) FROM identity.temp_credential) AS temps, "
+                    "(SELECT count(*) FROM identity.idempotency_record) AS claims, "
+                    "(SELECT count(*) FROM audit.audit_event) AS audits "
+                    "FROM identity.account a JOIN identity.session s ON s.account_id=a.id "
+                    "WHERE a.employee_no='00000001' AND s.token_hash=:token_hash"
+                ),
+                {"token_hash": hashlib.sha256(old_session.encode()).hexdigest()},
+            )
+            .mappings()
+            .one()
+        )
+        denial = (
+            db.execute(
+                text(
+                    "SELECT target_id, result, reason, correlation_id "
+                    "FROM audit.audit_event WHERE actor='SYSTEM_RECOVERY' "
+                    "AND action='identity.super_admin.recovered' AND result='DENIED'"
+                )
+            )
+            .mappings()
+            .one()
+        )
+    assert after["password_hash"] == before["password_hash"]
+    assert after["totp_sealed"] == before["totp_sealed"]
+    assert after["version"] == before["version"]
+    assert after["status"] == "DISABLED"
+    assert after["revoked_at"] is None
+    assert after["temps"] == before_counts["temps"]
+    assert after["claims"] == before_counts["claims"]
+    assert after["audits"] == before_counts["audits"] + 1
+    assert dict(denial) == {
+        "target_id": "00000001",
+        "result": "DENIED",
+        "reason": "reasonCode=INVALID_EXPIRY; scope=SUPER_ADMIN_AUTHENTICATION",
+        "correlation_id": evidence["commandId"],
+    }
+    assert "MUST-NOT-PERSIST" not in repr(denial)
+
+
+def test_recovery_cli_denial_audit_failure_is_safe_nonzero_without_recovery_facts(
+    clean_identity_db: None,
+    identity_rw_engine: Engine,
+    identity_owner_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    setup_dependencies = identity_dependencies()
+    _secret, old_session = _initialize_account(
+        identity_rw_engine,
+        setup_dependencies,
+        monkeypatch,
+    )
+    with identity_owner_engine.begin() as db:
+        before = (
+            db.execute(
+                text(
+                    "UPDATE identity.account SET is_super_admin=true, status='ENABLED', "
+                    "version=version+1 WHERE employee_no='00000001' "
+                    "RETURNING password_hash, totp_sealed, version"
+                )
+            )
+            .mappings()
+            .one()
+        )
+        before_counts = (
+            db.execute(
+                text(
+                    "SELECT (SELECT count(*) FROM identity.temp_credential) AS temps, "
+                    "(SELECT count(*) FROM identity.idempotency_record) AS claims, "
+                    "(SELECT count(*) FROM audit.audit_event) AS audits"
+                )
+            )
+            .mappings()
+            .one()
+        )
+    dependencies = replace(setup_dependencies, audit=UnavailableAuditAppender())
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    recovery_cli = importlib.import_module("control_plane.tools.recovery")
+
+    exit_code = recovery_cli.main(
+        [
+            "--employee-no",
+            "00000001",
+            "--reason",
+            "approved incident MUST-NOT-LEAK",
+            "--scope",
+            "SUPER_ADMIN_AUTHENTICATION",
+            "--expires-at",
+            "2026-01-01T00:15:00+00:00",
+        ],
+        engine=identity_rw_engine,
+        dependencies=dependencies,
+        security_changes=None,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    evidence = json.loads(stderr.getvalue())
+    assert exit_code == 4
+    assert stdout.getvalue() == ""
+    assert evidence == {
+        "event": "super_admin_recovery",
+        "result": "FAILED",
+        "reasonCode": "DENIAL_EVIDENCE_FAILED",
+        "commandId": evidence["commandId"],
+    }
+    assert "MUST-NOT-LEAK" not in stderr.getvalue()
+    assert "injected" not in stderr.getvalue()
+    with identity_owner_engine.connect() as db:
+        after = (
+            db.execute(
+                text(
+                    "SELECT a.password_hash, a.totp_sealed, a.version, a.status, "
+                    "s.revoked_at, "
+                    "(SELECT count(*) FROM identity.temp_credential) AS temps, "
+                    "(SELECT count(*) FROM identity.idempotency_record) AS claims, "
+                    "(SELECT count(*) FROM audit.audit_event) AS audits "
+                    "FROM identity.account a JOIN identity.session s ON s.account_id=a.id "
+                    "WHERE a.employee_no='00000001' AND s.token_hash=:token_hash"
+                ),
+                {"token_hash": hashlib.sha256(old_session.encode()).hexdigest()},
+            )
+            .mappings()
+            .one()
+        )
+    assert after["password_hash"] == before["password_hash"]
+    assert after["totp_sealed"] == before["totp_sealed"]
+    assert after["version"] == before["version"]
+    assert after["status"] == "ENABLED"
+    assert after["revoked_at"] is None
+    assert after["temps"] == before_counts["temps"]
+    assert after["claims"] == before_counts["claims"]
+    assert after["audits"] == before_counts["audits"]
 
 
 def test_recovery_credentials_lost_attestation_covers_multiple_apparently_effective_admins(
@@ -444,6 +707,139 @@ def test_recovery_cli_output_failure_rolls_back_all_database_changes(
     assert after["revoked_at"] is None
     assert after["temps"] == before_counts["temps"]
     assert after["audits"] == before_counts["audits"]
+
+
+def test_recovery_cli_flush_failure_precedes_commit_and_rolls_back_all_changes(
+    clean_identity_db: None,
+    identity_rw_engine: Engine,
+    identity_owner_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dependencies = identity_dependencies()
+    _secret, old_session = _initialize_account(
+        identity_rw_engine,
+        dependencies,
+        monkeypatch,
+    )
+    with identity_owner_engine.begin() as db:
+        before = (
+            db.execute(
+                text(
+                    "UPDATE identity.account SET is_super_admin=true, status='DISABLED', "
+                    "version=version+1 WHERE employee_no='00000001' "
+                    "RETURNING password_hash, totp_sealed, version"
+                )
+            )
+            .mappings()
+            .one()
+        )
+        before_counts = (
+            db.execute(
+                text(
+                    "SELECT (SELECT count(*) FROM identity.temp_credential) AS temps, "
+                    "(SELECT count(*) FROM identity.idempotency_record) AS claims, "
+                    "(SELECT count(*) FROM audit.audit_event) AS audits"
+                )
+            )
+            .mappings()
+            .one()
+        )
+    buffered = FlushFailingBufferedWriter()
+    stderr = io.StringIO()
+    recovery_cli = importlib.import_module("control_plane.tools.recovery")
+
+    exit_code = recovery_cli.main(
+        [
+            "--employee-no",
+            "00000001",
+            "--reason",
+            "approved incident INC-FLUSH-RECOVERY",
+            "--scope",
+            "SUPER_ADMIN_AUTHENTICATION",
+            "--expires-at",
+            "2026-01-01T00:15:00+00:00",
+        ],
+        engine=identity_rw_engine,
+        dependencies=dependencies,
+        security_changes=None,
+        stdout=buffered,
+        stderr=stderr,
+    )
+
+    assert exit_code == 4
+    assert buffered.flush_calls == 1
+    assert len(buffered.getvalue().splitlines()) == 1
+    assert json.loads(stderr.getvalue()) == {
+        "event": "super_admin_recovery",
+        "result": "FAILED",
+    }
+    with identity_owner_engine.connect() as db:
+        after = (
+            db.execute(
+                text(
+                    "SELECT a.password_hash, a.totp_sealed, a.version, a.status, "
+                    "s.revoked_at, "
+                    "(SELECT count(*) FROM identity.temp_credential) AS temps, "
+                    "(SELECT count(*) FROM identity.idempotency_record) AS claims, "
+                    "(SELECT count(*) FROM audit.audit_event) AS audits "
+                    "FROM identity.account a JOIN identity.session s ON s.account_id=a.id "
+                    "WHERE a.employee_no='00000001' AND s.token_hash=:token_hash"
+                ),
+                {"token_hash": hashlib.sha256(old_session.encode()).hexdigest()},
+            )
+            .mappings()
+            .one()
+        )
+    assert after["password_hash"] == before["password_hash"]
+    assert after["totp_sealed"] == before["totp_sealed"]
+    assert after["version"] == before["version"]
+    assert after["status"] == "DISABLED"
+    assert after["revoked_at"] is None
+    assert after["temps"] == before_counts["temps"]
+    assert after["claims"] == before_counts["claims"]
+    assert after["audits"] == before_counts["audits"]
+
+
+def test_bootstrap_cli_flush_failure_precedes_commit_and_leaves_no_partial_state(
+    clean_identity_db: None,
+    identity_rw_engine: Engine,
+    identity_owner_engine: Engine,
+) -> None:
+    dependencies = identity_dependencies()
+    buffered = FlushFailingBufferedWriter()
+    stderr = io.StringIO()
+    bootstrap_cli = importlib.import_module("control_plane.tools.bootstrap_admin")
+
+    exit_code = bootstrap_cli.main(
+        ["--employee-no", "00000001", "--display-name", "Alice"],
+        engine=identity_rw_engine,
+        dependencies=dependencies,
+        security_changes=None,
+        stdout=buffered,
+        stderr=stderr,
+    )
+
+    assert exit_code == 4
+    assert buffered.flush_calls == 1
+    assert len(buffered.getvalue().splitlines()) == 1
+    assert json.loads(stderr.getvalue()) == {
+        "event": "super_admin_bootstrap",
+        "result": "FAILED",
+    }
+    with identity_owner_engine.connect() as db:
+        evidence = (
+            db.execute(
+                text(
+                    "SELECT (SELECT count(*) FROM identity.account) AS accounts, "
+                    "(SELECT count(*) FROM identity.temp_credential) AS temps, "
+                    "(SELECT count(*) FROM identity.idempotency_record) AS claims, "
+                    "(SELECT count(*) FROM audit.audit_event) AS audits"
+                )
+            )
+            .mappings()
+            .one()
+        )
+    assert dict(evidence) == {"accounts": 0, "temps": 0, "claims": 0, "audits": 0}
 
 
 def test_recovery_cli_committed_change_never_reports_nonzero_for_pending_convergence(

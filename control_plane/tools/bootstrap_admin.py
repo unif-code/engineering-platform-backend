@@ -113,6 +113,7 @@ def main(
                     dependencies=dependencies,
                 )
                 output.write(f"{execution.temporary_password}\n")
+                output.flush()
                 commit_attempted = True
                 try:
                     transaction.commit()

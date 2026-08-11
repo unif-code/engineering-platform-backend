@@ -63,7 +63,11 @@ python -m control_plane.tools.recovery --employee-no <employee-no> --reason <app
 
 成功会原子地撤销目标全部 Session、清除旧密码/TOTP 初始化状态、签发一次性临时密码并写入
 actor 为 `SYSTEM_RECOVERY` 的 Audit。任何执行前提、数据库事务或 stdout 安全交付失败都会
-回滚；非 0 退出码表示没有执行恢复。若提交确认丢失，CLI 以稳定 command ID 查询持久幂等
+回滚；密码写入 stdout 后会在数据库 commit 前显式 flush，缓冲区交付失败不会留下恢复事实。
+非 0 退出码表示没有执行恢复。业务前提拒绝时，回滚恢复事务后会用独立短事务追加一条与 stderr
+同 `commandId` 的 `SYSTEM_RECOVERY` `DENIED` Audit；它只含固定 reason code、目标员工号与
+canonical scope，不含命令中的原始 reason 或异常文本。若该拒绝 Audit 自身失败，stderr 仅报告
+`DENIAL_EVIDENCE_FAILED`，exit 4，恢复事实仍未执行。若提交确认丢失，CLI 以稳定 command ID 查询持久幂等
 claim：确认已提交才输出 `SUCCESS`；仍无法判定时输出 credential-safe `OUTCOME_UNKNOWN` 并以
 0 退出，执行人必须用完全相同参数重放以取回同一份已密封凭据，禁止改参数再次签发。提交后的
 authorization 投影暂时不可用时，持久 fence
@@ -75,8 +79,8 @@ authorization 投影暂时不可用时，持久 fence
 | --- | --- | --- |
 | 0 | 命令已提交并交付凭据，或提交结果尚待同参数重放确认 | 已原子提交，或由稳定 command ID 安全解析；绝不把可能已提交的命令报为非 0 |
 | 2 | argparse 结构错误或缺少必填参数 | 未执行 |
-| 3 | 参数值/业务前提不成立 | 未执行 |
-| 4 | 已确认回滚的事务或 stdout 安全输出通道失败 | 已回滚，未执行 |
+| 3 | 参数值/业务前提不成立 | 恢复未执行；已追加 correlated `DENIED` Audit |
+| 4 | 已确认回滚的事务、stdout 安全输出或 denial Audit 失败 | 已回滚，恢复未执行；stderr 不泄露失败细节 |
 
 ## GitOps 一次性 Job 模板要点
 
@@ -98,10 +102,11 @@ GitOps 仓维护受保护的模板，不在本仓复制生产 YAML。模板至�
 
 ## 执行后验证
 
-1. stderr 应恰有一条对应的结构化事件；它只能包含事件名、结果、员工号、scope、expiry 等
-   credential-safe 字段，不能含临时密码。
-2. Audit 中核对 `SYSTEM_BOOTSTRAP` 或 `SYSTEM_RECOVERY`、目标账号、成功结果、reason、scope
-   和 expiry。Audit 与 stderr 的目标及时间必须一致；两份证据分别归档。
+1. stderr 应恰有一条对应的结构化事件；它只能包含事件名、结果、员工号、scope、expiry、
+   `reasonCode`、`commandId` 等 credential-safe 字段，不能含临时密码、原始 reason 或异常文本。
+2. Audit 中核对 `SYSTEM_BOOTSTRAP` 或 `SYSTEM_RECOVERY`、目标账号、结果、scope 和 expiry。
+   denial 只核对固定 reason code，不应出现命令原始 reason；Audit correlation ID 必须与 stderr
+   `commandId` 一致。两份证据分别归档。
 3. 确认目标旧 Session 均已撤销，authorization convergence work 已完成且 principal version
    已提升；若仍 pending，保持受保护操作 fail-closed 并运行既有持久 reconcile，不再次恢复。
 4. 通过受控通道把临时密码只交付给目标人员；完成正式密码与 TOTP 初始化后，确认临时凭据已

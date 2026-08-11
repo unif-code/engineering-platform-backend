@@ -62,6 +62,9 @@ from control_plane.app.modules.identity.application.super_admin import (
     list_super_admins as _list_super_admins,
 )
 from control_plane.app.modules.identity.application.super_admin import (
+    record_super_admin_recovery_denial as _record_super_admin_recovery_denial,
+)
+from control_plane.app.modules.identity.application.super_admin import (
     recover_super_admin as _recover_super_admin,
 )
 from control_plane.app.modules.identity.application.super_admin import (
@@ -485,6 +488,23 @@ def recover_super_admin_cli(
     )
 
 
+def record_super_admin_recovery_denial(
+    db: Connection,
+    *,
+    employee_no: str,
+    reason_code: str,
+    correlation_id: str,
+    dependencies: IdentityDependencies,
+) -> None:
+    _record_super_admin_recovery_denial(
+        dependencies.repository_factory(db),
+        employee_no=employee_no,
+        reason_code=reason_code,
+        correlation_id=correlation_id,
+        dependencies=dependencies,
+    )
+
+
 def resolve_recovery_cli(
     db: Connection,
     *,
@@ -564,6 +584,7 @@ __all__ = [
     "remove_super_admin",
     "recover_super_admin",
     "recover_super_admin_cli",
+    "record_super_admin_recovery_denial",
     "resolve_recovery_cli",
     "resolve_bootstrap_cli",
     "set_account_status",
