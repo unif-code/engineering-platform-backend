@@ -9,6 +9,7 @@ from sqlalchemy import Engine, text
 
 from control_plane.app.modules.identity import (
     AccountStatus,
+    BootstrapDenial,
     EffectiveIdentityPolicy,
     IdentityDependencies,
     InvalidAccountTransition,
@@ -124,6 +125,7 @@ def test_validate_session_separates_bootstrap_and_full_principals(
             bootstrap_token=bootstrap.raw_token,
             dependencies=deps,
         )
+    assert not isinstance(enrollment, BootstrapDenial)
     monkeypatch.setattr(
         "control_plane.app.shared.security.totp.time.time",
         lambda: deps.clock.now().timestamp(),
@@ -135,6 +137,7 @@ def test_validate_session_separates_bootstrap_and_full_principals(
             code=pyotp.TOTP(enrollment.secret).at(deps.clock.now()),
             dependencies=deps,
         )
+    assert not isinstance(confirmed, BootstrapDenial)
     with identity_rw_engine.begin() as db:
         full = validate_session(db, raw_token=confirmed.raw_token, dependencies=deps)
     assert full is not None
@@ -268,6 +271,7 @@ def test_logout_and_bulk_revocation_are_update_only_and_invoke_auth_hook(
         assert validate_session(db, raw_token=token, dependencies=deps) is None
 
     with identity_rw_engine.begin() as db:
+        change_count = len(changes.account_ids)
         revoked = revoke_sessions_for(
             db,
             account_id=account_id,
@@ -276,7 +280,64 @@ def test_logout_and_bulk_revocation_are_update_only_and_invoke_auth_hook(
             dependencies=deps,
         )
     assert revoked == 0
-    assert changes.account_ids[-2:] == [account_id, account_id]
+    assert len(changes.account_ids) == change_count
+
+
+@pytest.mark.parametrize("has_active_session", [False, True])
+def test_explicit_bulk_revoke_always_audits_command_and_hooks_only_actual_changes(
+    clean_identity_db: None,
+    identity_rw_engine: Engine,
+    identity_owner_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+    has_active_session: bool,
+) -> None:
+    changes = AuthChanges()
+    deps = IdentityDependencies(
+        repository_factory=dependencies().repository_factory,
+        secret_manager=StaticSecrets(),
+        policy=dependencies().policy,
+        clock=MutableClock(),
+        random=SystemRandom(),
+        audit=dependencies().audit,
+        on_auth_change=changes,
+    )
+    _, token = _initialize_account(identity_rw_engine, deps, monkeypatch)
+    with identity_rw_engine.connect() as db:
+        account_id = str(db.execute(text("SELECT id FROM identity.account")).scalar_one())
+    if not has_active_session:
+        with identity_rw_engine.begin() as db:
+            assert logout(db, raw_token=token, dependencies=deps) is True
+    changes.account_ids.clear()
+    with identity_owner_engine.begin() as db:
+        db.execute(text("TRUNCATE audit.audit_event"))
+
+    with identity_rw_engine.begin() as db:
+        revoked = revoke_sessions_for(
+            db,
+            account_id=account_id,
+            actor=SYSTEM,
+            reason="security event",
+            dependencies=deps,
+        )
+
+    assert revoked == int(has_active_session)
+    assert changes.account_ids == ([account_id] if has_active_session else [])
+    with identity_owner_engine.connect() as db:
+        command_audits = db.execute(
+            text(
+                "SELECT count(*) FROM audit.audit_event "
+                "WHERE action='identity.sessions.revoke.requested' "
+                "AND reason='security event'"
+            )
+        ).scalar_one()
+        actual_audits = db.execute(
+            text(
+                "SELECT count(*) FROM audit.audit_event "
+                "WHERE action='identity.sessions.revoked' AND reason='security event'"
+            )
+        ).scalar_one()
+    assert command_audits == 1
+    assert actual_audits == int(has_active_session)
 
 
 def test_status_change_rejects_stale_version_revokes_and_guards_last_super_admin(

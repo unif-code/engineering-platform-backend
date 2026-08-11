@@ -11,6 +11,7 @@ from control_plane.app.modules.identity import (
     AuthDenialCode,
     AuthenticationDenial,
     AuthenticationFailed,
+    BootstrapDenial,
     BootstrapPurpose,
     EffectiveIdentityPolicy,
     IdentityDependencies,
@@ -120,6 +121,7 @@ def _initialize_account(
             bootstrap_token=bootstrap_token,
             dependencies=deps,
         )
+    assert not isinstance(enrollment, BootstrapDenial)
     monkeypatch.setattr(
         "control_plane.app.shared.security.totp.time.time",
         lambda: deps.clock.now().timestamp(),
@@ -132,6 +134,7 @@ def _initialize_account(
             code=code,
             dependencies=deps,
         )
+    assert not isinstance(full, BootstrapDenial)
     assert full.kind is SessionKind.FULL
     return enrollment.secret, full.raw_token
 
@@ -167,10 +170,12 @@ def test_password_setup_enforces_floor_and_sets_server_timestamp_only_on_success
         )
 
 
-def test_bootstrap_commands_reject_an_idle_expired_session(
+@pytest.mark.parametrize("operation", ["password", "enroll", "confirm"])
+def test_bootstrap_commands_return_typed_denial_and_commit_idle_revocation(
     clean_identity_db: None,
     identity_rw_engine: Engine,
     identity_owner_engine: Engine,
+    operation: str,
 ) -> None:
     clock = MutableClock()
     changes: list[str] = []
@@ -190,13 +195,28 @@ def test_bootstrap_commands_reject_an_idle_expired_session(
     bootstrap_token = _start_bootstrap(identity_rw_engine, deps)
     clock.value += timedelta(minutes=15)
 
-    with identity_rw_engine.begin() as db, pytest.raises(AuthenticationFailed):
-        complete_password_setup(
-            db,
-            bootstrap_token=bootstrap_token,
-            password=VALID_PASSWORD,
-            dependencies=deps,
-        )
+    result: object
+    with identity_rw_engine.begin() as db:
+        if operation == "password":
+            result = complete_password_setup(
+                db,
+                bootstrap_token=bootstrap_token,
+                password=VALID_PASSWORD,
+                dependencies=deps,
+            )
+        elif operation == "enroll":
+            result = enroll_totp(
+                db,
+                bootstrap_token=bootstrap_token,
+                dependencies=deps,
+            )
+        else:
+            result = confirm_totp(
+                db,
+                bootstrap_token=bootstrap_token,
+                code="000000",
+                dependencies=deps,
+            )
 
     with identity_rw_engine.connect() as db:
         state = db.execute(
@@ -216,6 +236,43 @@ def test_bootstrap_commands_reject_an_idle_expired_session(
     assert state.password_set_at is None
     assert revoke_audits == 1
     assert len(changes) == 1
+    assert isinstance(result, BootstrapDenial)
+    assert result.model_dump(mode="json") == {"code": "INVALID_BOOTSTRAP_SESSION"}
+
+
+@pytest.mark.parametrize("operation", ["password", "enroll", "confirm"])
+def test_bootstrap_commands_return_the_same_safe_denial_for_missing_session(
+    clean_identity_db: None,
+    identity_rw_engine: Engine,
+    operation: str,
+) -> None:
+    deps = dependencies()
+
+    result: object
+    with identity_rw_engine.begin() as db:
+        if operation == "password":
+            result = complete_password_setup(
+                db,
+                bootstrap_token="missing-token",
+                password=VALID_PASSWORD,
+                dependencies=deps,
+            )
+        elif operation == "enroll":
+            result = enroll_totp(
+                db,
+                bootstrap_token="missing-token",
+                dependencies=deps,
+            )
+        else:
+            result = confirm_totp(
+                db,
+                bootstrap_token="missing-token",
+                code="000000",
+                dependencies=deps,
+            )
+
+    assert isinstance(result, BootstrapDenial)
+    assert result.model_dump(mode="json") == {"code": "INVALID_BOOTSTRAP_SESSION"}
 
 
 def test_totp_enrollment_returns_secret_once_and_confirmation_persists_used_step(
@@ -552,6 +609,7 @@ def test_two_different_challenges_cannot_exceed_the_session_cap(
 def test_expired_password_enters_restricted_setup_without_rewriting_password_fact(
     clean_identity_db: None,
     identity_rw_engine: Engine,
+    identity_owner_engine: Engine,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     clock = MutableClock()
@@ -585,6 +643,15 @@ def test_expired_password_enters_restricted_setup_without_rewriting_password_fac
             == original_set_at
         )
         assert db.execute(text("SELECT count(*) FROM identity.auth_challenge")).scalar_one() == 0
+    with identity_owner_engine.connect() as db:
+        restricted_audit = db.execute(
+            text(
+                "SELECT count(*) FROM audit.audit_event "
+                "WHERE action='identity.login.password' AND result='SUCCESS' "
+                "AND reason='password expired restricted flow'"
+            )
+        ).scalar_one()
+    assert restricted_audit == 1
 
 
 def test_password_expired_bootstrap_cannot_replace_or_confirm_totp(
@@ -749,6 +816,7 @@ def test_password_reset_bootstrap_preserves_and_requires_the_existing_totp(
             code=pyotp.TOTP(secret).at(clock.value),
             dependencies=deps,
         )
+    assert isinstance(full, IssuedSession)
     assert full.kind is SessionKind.FULL
     with identity_rw_engine.connect() as db:
         after = db.execute(

@@ -56,6 +56,8 @@ from control_plane.app.modules.identity.domain.session import (
     AuthChallengeState,
     AuthDenialCode,
     AuthenticationDenial,
+    BootstrapDenial,
+    BootstrapDenialCode,
     BootstrapPurpose,
     IssuedSession,
     LoginChallenge,
@@ -126,8 +128,8 @@ def complete_password_setup(
     bootstrap_token: str,
     password: str,
     dependencies: IdentityDependencies,
-) -> None:
-    _complete_password_setup(
+) -> BootstrapDenial | None:
+    return _complete_password_setup(
         dependencies.repository_factory(db),
         bootstrap_token=bootstrap_token,
         password=password,
@@ -140,7 +142,7 @@ def enroll_totp(
     *,
     bootstrap_token: str,
     dependencies: IdentityDependencies,
-) -> TotpEnrollment:
+) -> TotpEnrollment | BootstrapDenial:
     return _enroll_totp(
         dependencies.repository_factory(db),
         bootstrap_token=bootstrap_token,
@@ -154,7 +156,7 @@ def confirm_totp(
     bootstrap_token: str,
     code: str,
     dependencies: IdentityDependencies,
-) -> IssuedSession:
+) -> IssuedSession | BootstrapDenial:
     return _confirm_totp(
         dependencies.repository_factory(db),
         bootstrap_token=bootstrap_token,
@@ -269,6 +271,8 @@ __all__ = [
     "AuthChallengeState",
     "AuthDenialCode",
     "BootstrapPurpose",
+    "BootstrapDenial",
+    "BootstrapDenialCode",
     "EffectiveIdentityPolicy",
     "EffectivePolicyPort",
     "IdentityDependencies",

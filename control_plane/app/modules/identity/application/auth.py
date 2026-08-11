@@ -19,6 +19,8 @@ from control_plane.app.modules.identity.domain.session import (
     AuthChallengeState,
     AuthDenialCode,
     AuthenticationDenial,
+    BootstrapDenial,
+    BootstrapDenialCode,
     BootstrapPurpose,
     IssuedSession,
     LoginChallenge,
@@ -64,15 +66,15 @@ def _bootstrap_account(
     repository: IdentityRepository,
     raw_token: str,
     dependencies: IdentityDependencies,
-) -> Any:
+) -> Any | BootstrapDenial:
     row = repository.session_with_account(token_hash(raw_token), for_update=True)
     if row is None or row["revoked_at"] is not None or row["kind"] != SessionKind.BOOTSTRAP.value:
-        raise AuthenticationFailed("valid bootstrap session required")
+        return BootstrapDenial(code=BootstrapDenialCode.INVALID_SESSION)
     if row["status"] not in {
         AccountStatus.PENDING_INIT.value,
         AccountStatus.ENABLED.value,
     }:
-        raise AuthenticationFailed("valid bootstrap session required")
+        return BootstrapDenial(code=BootstrapDenialCode.INVALID_SESSION)
     now = dependencies.clock.now()
     policy = dependencies.policy.get_identity_policy(repository.db)
     if now >= row["last_seen_at"] + policy.session_idle_timeout:
@@ -85,7 +87,7 @@ def _bootstrap_account(
             reason="idle timeout",
             dependencies=dependencies,
         )
-        raise AuthenticationFailed("valid bootstrap session required")
+        return BootstrapDenial(code=BootstrapDenialCode.INVALID_SESSION)
     repository.touch_session(
         str(row["session_id"]),
         now,
@@ -100,10 +102,12 @@ def complete_password_setup(
     bootstrap_token: str,
     password: str,
     dependencies: IdentityDependencies,
-) -> None:
+) -> BootstrapDenial | None:
     deps = dependencies
     db = repository.db
     row = _bootstrap_account(repository, bootstrap_token, deps)
+    if isinstance(row, BootstrapDenial):
+        return row
     purpose = _bootstrap_purpose(row)
     violations = validate_password_floor(
         password,
@@ -146,6 +150,7 @@ def complete_password_setup(
         reason="bootstrap",
     )
     deps.on_auth_change(account_id)
+    return None
 
 
 def enroll_totp(
@@ -153,10 +158,12 @@ def enroll_totp(
     *,
     bootstrap_token: str,
     dependencies: IdentityDependencies,
-) -> TotpEnrollment:
+) -> TotpEnrollment | BootstrapDenial:
     deps = dependencies
     db = repository.db
     row = _bootstrap_account(repository, bootstrap_token, deps)
+    if isinstance(row, BootstrapDenial):
+        return row
     if _bootstrap_purpose(row) is not BootstrapPurpose.INITIAL_SETUP:
         raise AuthenticationFailed("TOTP enrollment is not allowed for this bootstrap session")
     if row["password_hash"] is None:
@@ -190,10 +197,12 @@ def confirm_totp(
     bootstrap_token: str,
     code: str,
     dependencies: IdentityDependencies,
-) -> IssuedSession:
+) -> IssuedSession | BootstrapDenial:
     deps = dependencies
     db = repository.db
     row = _bootstrap_account(repository, bootstrap_token, deps)
+    if isinstance(row, BootstrapDenial):
+        return row
     purpose = _bootstrap_purpose(row)
     if purpose is BootstrapPurpose.PASSWORD_EXPIRED:
         raise AuthenticationFailed("TOTP confirmation is not allowed for this bootstrap session")
@@ -369,13 +378,24 @@ def login_password_step(
         and account["password_set_at"] is not None
         and now >= account["password_set_at"] + policy.password_max_age
     ):
-        return issue_session(
+        issued = issue_session(
             repository,
             account_id=str(account["id"]),
             kind=SessionKind.BOOTSTRAP,
             bootstrap_purpose=BootstrapPurpose.PASSWORD_EXPIRED,
             dependencies=deps,
         )
+        audit(
+            db,
+            dependencies=deps,
+            actor=Principal(employee_id=employee_no, name=account["display_name"]),
+            action="identity.login.password",
+            target_type="account",
+            target_id=str(account["id"]),
+            result="SUCCESS",
+            reason="password expired restricted flow",
+        )
+        return issued
     raw_token = deps.random.token_urlsafe(32)
     repository.insert_challenge(
         id=str(deps.random.uuid4()),

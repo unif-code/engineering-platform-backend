@@ -159,6 +159,16 @@ def revoke_sessions_for(
     deps = dependencies
     now = deps.clock.now()
     revoked = repository.revoke_sessions(account_id, now, reason)
+    audit(
+        repository.db,
+        dependencies=deps,
+        actor=actor,
+        action="identity.sessions.revoke.requested",
+        target_type="account",
+        target_id=account_id,
+        result="SUCCESS",
+        reason=reason,
+    )
     finalize_session_revocations(
         repository,
         account_id=account_id,

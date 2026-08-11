@@ -11,6 +11,12 @@ depends_on = None
 def upgrade() -> None:
     op.execute("ALTER TABLE identity.session ADD COLUMN bootstrap_purpose TEXT")
     op.execute(
+        "UPDATE identity.session "
+        "SET revoked_at=now(), "
+        "revoke_reason='MIGRATION_BOOTSTRAP_PURPOSE_UPGRADE' "
+        "WHERE kind='BOOTSTRAP' AND revoked_at IS NULL"
+    )
+    op.execute(
         "UPDATE identity.session SET bootstrap_purpose='INITIAL_SETUP' WHERE kind='BOOTSTRAP'"
     )
     op.execute(
@@ -32,5 +38,11 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.execute(
+        "UPDATE identity.session "
+        "SET revoked_at=now(), "
+        "revoke_reason='MIGRATION_BOOTSTRAP_PURPOSE_DOWNGRADE' "
+        "WHERE kind='BOOTSTRAP' AND revoked_at IS NULL"
+    )
     op.execute("ALTER TABLE identity.session DROP CONSTRAINT ck_identity_session_bootstrap_purpose")
     op.execute("ALTER TABLE identity.session DROP COLUMN bootstrap_purpose")

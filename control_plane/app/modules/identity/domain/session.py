@@ -14,6 +14,16 @@ class BootstrapPurpose(StrEnum):
     PASSWORD_EXPIRED = "PASSWORD_EXPIRED"
 
 
+class BootstrapDenialCode(StrEnum):
+    INVALID_SESSION = "INVALID_BOOTSTRAP_SESSION"
+
+
+class BootstrapDenial(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    code: BootstrapDenialCode
+
+
 class AuthDenialCode(StrEnum):
     INVALID_CREDENTIALS = "INVALID_CREDENTIALS"
     BACKOFF_ACTIVE = "BACKOFF_ACTIVE"
