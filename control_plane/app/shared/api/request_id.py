@@ -1,4 +1,5 @@
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from uuid import uuid4
@@ -6,6 +7,7 @@ from uuid import uuid4
 from fastapi import Request, Response
 
 REQUEST_ID_HEADER = "X-Request-ID"
+INBOUND_REQUEST_ID_PATTERN = re.compile(r"req-[a-z0-9]{1,60}")
 
 _request_id: ContextVar[str | None] = ContextVar("request_id", default=None)
 RequestResponseEndpoint = Callable[[Request], Awaitable[Response]]
@@ -17,7 +19,12 @@ def current_request_id() -> str | None:
 
 
 async def request_id_middleware(request: Request, call_next: RequestResponseEndpoint) -> Response:
-    request_id = request.headers.get(REQUEST_ID_HEADER) or uuid4().hex[:16]
+    inbound_request_id = request.headers.get(REQUEST_ID_HEADER)
+    request_id = (
+        inbound_request_id
+        if inbound_request_id and INBOUND_REQUEST_ID_PATTERN.fullmatch(inbound_request_id)
+        else uuid4().hex[:16]
+    )
     token = _request_id.set(request_id)
     try:
         try:

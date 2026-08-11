@@ -1,4 +1,5 @@
 import logging
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -73,6 +74,46 @@ def test_unhandled_exception_is_reported_with_request_id_without_secret(
     assert records[0].__dict__["request_id"] == "req-log"
     assert records[0].__dict__["exception_type"] == "RuntimeError"
     assert "top-secret-token" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "inbound_request_id",
+    ["Bearer top-secret-token", "x" * 65, "req/invalid"],
+)
+def test_invalid_inbound_request_id_is_replaced_everywhere(
+    caplog: pytest.LogCaptureFixture,
+    inbound_request_id: str,
+) -> None:
+    app = create_app()
+    observed_request_ids: list[str | None] = []
+
+    @app.get("/test-only/invalid-request-id")
+    async def invalid_request_id_probe() -> None:
+        observed_request_ids.append(current_request_id())
+        raise RuntimeError("boom")
+
+    caplog.set_level(logging.ERROR, logger="control_plane.app.shared.api.request_id")
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = client.get(
+        "/test-only/invalid-request-id",
+        headers={"X-Request-ID": inbound_request_id},
+    )
+
+    safe_request_id = response.headers["x-request-id"]
+    records = [
+        record
+        for record in caplog.records
+        if record.name == "control_plane.app.shared.api.request_id"
+    ]
+    assert response.status_code == 500
+    assert safe_request_id != inbound_request_id
+    assert re.fullmatch(r"[a-f0-9]{16}", safe_request_id)
+    assert response.json()["requestId"] == safe_request_id
+    assert observed_request_ids == [safe_request_id]
+    assert len(records) == 1
+    assert records[0].__dict__["request_id"] == safe_request_id
+    assert inbound_request_id not in caplog.text
 
 
 def test_request_id_context_is_available_only_during_its_request() -> None:
