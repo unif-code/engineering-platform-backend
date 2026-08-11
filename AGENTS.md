@@ -19,6 +19,7 @@
 ## 构建、测试与开发命令
 
 - `uv sync`：安装依赖（CI 使用 `--locked`）。
+- `uv run python -c "from pathlib import Path; import secrets; p=Path('.localdev-secrets'); p.mkdir(); [(p/name).write_bytes(secrets.token_bytes(32)) for name in ('pepper','totp_key','idempotency_key')]"`：首次本地开发时生成三份相互独立的 CSPRNG 凭据文件；命令不输出凭据内容，目录已由 `/.localdev-secrets/` 忽略。
 - `docker compose up -d`：启动本地 PostgreSQL 18。
 - `uv run alembic upgrade head`：执行迁移。
 - `uv run uvicorn control_plane.app.bootstrap.app:create_app --factory --reload`：本地起服务。

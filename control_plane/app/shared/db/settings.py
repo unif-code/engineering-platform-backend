@@ -10,3 +10,11 @@ class DbSettings(BaseSettings):
     migration_database_url: str = (
         "postgresql+psycopg://platform_owner:localdev@localhost:5432/platform"
     )
+
+
+class SecuritySettings(BaseSettings):
+    """DEV-003 file adapter configuration; secret values never enter settings."""
+
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    secret_material_path: str = "./.localdev-secrets"
