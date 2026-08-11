@@ -66,6 +66,7 @@ containers = [
   "control_plane.app.modules.identity",
   "control_plane.app.modules.audit",
   "control_plane.app.modules.organization",
+  "control_plane.app.modules.workspace",
 ]
 exhaustive = false
 
@@ -84,6 +85,11 @@ forbidden_modules = [
   "control_plane.app.modules.organization.domain",
   "control_plane.app.modules.organization.ports",
   "control_plane.app.modules.organization.adapters",
+  "control_plane.app.modules.workspace.api",
+  "control_plane.app.modules.workspace.application",
+  "control_plane.app.modules.workspace.domain",
+  "control_plane.app.modules.workspace.ports",
+  "control_plane.app.modules.workspace.adapters",
 ]
 # Facade 再导出是合法路径：只禁直连深层，不禁经由公开入口 __init__ 的间接链。
 allow_indirect_imports = true
@@ -103,6 +109,11 @@ forbidden_modules = [
   "control_plane.app.modules.organization.domain",
   "control_plane.app.modules.organization.ports",
   "control_plane.app.modules.organization.adapters",
+  "control_plane.app.modules.workspace.api",
+  "control_plane.app.modules.workspace.application",
+  "control_plane.app.modules.workspace.domain",
+  "control_plane.app.modules.workspace.ports",
+  "control_plane.app.modules.workspace.adapters",
 ]
 # Facade 再导出是合法路径：只禁直连深层，不禁经由公开入口 __init__ 的间接链。
 allow_indirect_imports = true
@@ -122,6 +133,34 @@ forbidden_modules = [
   "control_plane.app.modules.identity.domain",
   "control_plane.app.modules.identity.ports",
   "control_plane.app.modules.identity.adapters",
+  "control_plane.app.modules.workspace.api",
+  "control_plane.app.modules.workspace.application",
+  "control_plane.app.modules.workspace.domain",
+  "control_plane.app.modules.workspace.ports",
+  "control_plane.app.modules.workspace.adapters",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "workspace must use audit, identity, and organization package-root Facades"
+type = "forbidden"
+source_modules = ["control_plane.app.modules.workspace"]
+forbidden_modules = [
+  "control_plane.app.modules.audit.api",
+  "control_plane.app.modules.audit.application",
+  "control_plane.app.modules.audit.domain",
+  "control_plane.app.modules.audit.ports",
+  "control_plane.app.modules.audit.adapters",
+  "control_plane.app.modules.identity.api",
+  "control_plane.app.modules.identity.application",
+  "control_plane.app.modules.identity.domain",
+  "control_plane.app.modules.identity.ports",
+  "control_plane.app.modules.identity.adapters",
+  "control_plane.app.modules.organization.api",
+  "control_plane.app.modules.organization.application",
+  "control_plane.app.modules.organization.domain",
+  "control_plane.app.modules.organization.ports",
+  "control_plane.app.modules.organization.adapters",
 ]
 allow_indirect_imports = true
 
@@ -138,5 +177,6 @@ source_modules = [
   "control_plane.app.modules.identity.domain",
   "control_plane.app.modules.audit.domain",
   "control_plane.app.modules.organization.domain",
+  "control_plane.app.modules.workspace.domain",
 ]
 forbidden_modules = ["control_plane.app.shared.api"]

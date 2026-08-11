@@ -16,6 +16,9 @@ from control_plane.app.modules.organization.application.queries import (
     direct_reports as _direct_reports,
 )
 from control_plane.app.modules.organization.application.queries import get_tree as _get_tree
+from control_plane.app.modules.organization.application.queries import (
+    is_effective_leader as _is_effective_leader,
+)
 from control_plane.app.modules.organization.domain import (
     AccountRef,
     CorruptStructure,
@@ -65,6 +68,19 @@ def direct_reports(
     )
 
 
+def is_effective_leader(
+    db: Connection,
+    *,
+    leader_id: str,
+    dependencies: OrganizationDependencies,
+) -> bool:
+    return _is_effective_leader(
+        dependencies.repository_factory(db),
+        leader_id=leader_id,
+        dependencies=dependencies,
+    )
+
+
 __all__ = [
     "AccountRef",
     "CorruptStructure",
@@ -75,5 +91,6 @@ __all__ = [
     "OrganizationDependencies",
     "direct_reports",
     "get_tree",
+    "is_effective_leader",
     "set_superior",
 ]

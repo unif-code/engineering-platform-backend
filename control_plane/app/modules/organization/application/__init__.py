@@ -9,6 +9,7 @@ from control_plane.app.modules.organization.application.dependencies import (
 from control_plane.app.modules.organization.application.queries import (
     direct_reports,
     get_tree,
+    is_effective_leader,
 )
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "OrganizationDependencies",
     "direct_reports",
     "get_tree",
+    "is_effective_leader",
     "set_superior",
 ]

@@ -113,3 +113,18 @@ def direct_reports(
         if _is_effective(account):
             reports.append(_account_ref(account))
     return sorted(reports, key=_sort_key)
+
+
+def is_effective_leader(
+    repository: OrganizationRepository,
+    *,
+    leader_id: str,
+    dependencies: OrganizationDependencies,
+) -> bool:
+    edges = _edges(repository)
+    edge = edges.get(leader_id)
+    return (
+        edge is not None
+        and edge[1] == OrgKind.LEADER.value
+        and _is_effective(dependencies.identity.get(leader_id))
+    )
