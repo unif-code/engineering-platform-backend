@@ -1,6 +1,6 @@
 """organization baseline: fixed-level edges, durable commands, and runtime role.
 
-角色口令仅用于本地/CI（生产角色由基础设施子项目管理）。
+迁移仅创建 NOLOGIN 权限角色；运行时登录与凭据由基础设施预配。
 """
 
 from alembic import op
@@ -98,7 +98,7 @@ def upgrade() -> None:
         """
         DO $$ BEGIN
             IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'organization_rw') THEN
-                CREATE ROLE organization_rw LOGIN PASSWORD 'localdev';
+                CREATE ROLE organization_rw NOLOGIN;
             END IF;
         END $$
         """

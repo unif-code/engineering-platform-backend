@@ -27,7 +27,11 @@ def organization_owner_engine() -> Engine:
 
 
 @pytest.fixture(scope="session")
-def organization_rw_engine() -> Engine:
+def organization_rw_engine(organization_owner_engine: Engine) -> Engine:
+    # Product migrations create only a NOLOGIN privilege role. Test infrastructure
+    # explicitly provisions its local credential outside the migration boundary.
+    with organization_owner_engine.begin() as db:
+        db.execute(text("ALTER ROLE organization_rw LOGIN PASSWORD 'localdev'"))
     url = os.environ.get(
         "ORGANIZATION_DATABASE_URL",
         "postgresql+psycopg://organization_rw:localdev@localhost:5432/platform",

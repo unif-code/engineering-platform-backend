@@ -1,13 +1,78 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
+from runpy import run_path
+from uuid import uuid4
 
 import pytest
+from alembic import op
 from sqlalchemy import Connection, Engine, inspect, text
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 
 from control_plane.app.shared.db.settings import DbSettings
 
 pytestmark = pytest.mark.integration
+
+
+def _emitted_runtime_role_statement(monkeypatch: pytest.MonkeyPatch) -> str:
+    statements: list[str] = []
+    monkeypatch.setattr(op, "execute", lambda statement: statements.append(str(statement)))
+    migration = run_path("migrations/organization/0001_org_base.py")
+    migration["upgrade"]()
+    return next(statement for statement in statements if "CREATE ROLE" in statement)
+
+
+def test_product_migration_contains_no_runtime_login_secret() -> None:
+    source = Path("migrations/organization/0001_org_base.py").read_text(encoding="utf-8")
+
+    assert "LOGIN PASSWORD" not in source.upper()
+    assert "'localdev'" not in source
+
+
+def test_missing_runtime_role_is_provisioned_as_nologin(
+    monkeypatch: pytest.MonkeyPatch,
+    organization_owner_engine: Engine,
+) -> None:
+    role_name = f"task7_org_missing_{uuid4().hex}"
+    statement = _emitted_runtime_role_statement(monkeypatch).replace("organization_rw", role_name)
+
+    try:
+        with organization_owner_engine.begin() as db:
+            db.execute(text(statement))
+            can_login = db.execute(
+                text("SELECT rolcanlogin FROM pg_roles WHERE rolname=:role_name"),
+                {"role_name": role_name},
+            ).scalar_one()
+        assert can_login is False
+    finally:
+        with organization_owner_engine.begin() as db:
+            db.execute(text(f'DROP ROLE IF EXISTS "{role_name}"'))
+
+
+def test_preprovisioned_login_role_is_not_rewritten(
+    monkeypatch: pytest.MonkeyPatch,
+    organization_owner_engine: Engine,
+) -> None:
+    role_name = f"task7_org_prebuilt_{uuid4().hex}"
+    statement = _emitted_runtime_role_statement(monkeypatch).replace("organization_rw", role_name)
+
+    try:
+        with organization_owner_engine.begin() as db:
+            db.execute(text(f"CREATE ROLE \"{role_name}\" LOGIN PASSWORD 'test-only-password'"))
+            before = db.execute(
+                text("SELECT rolcanlogin, rolpassword FROM pg_authid WHERE rolname=:role_name"),
+                {"role_name": role_name},
+            ).one()
+            db.execute(text(statement))
+            after = db.execute(
+                text("SELECT rolcanlogin, rolpassword FROM pg_authid WHERE rolname=:role_name"),
+                {"role_name": role_name},
+            ).one()
+        assert before[0] is True
+        assert after == before
+    finally:
+        with organization_owner_engine.begin() as db:
+            db.execute(text(f'DROP ROLE IF EXISTS "{role_name}"'))
 
 
 def test_organization_schema_tables_and_runtime_role_exist(

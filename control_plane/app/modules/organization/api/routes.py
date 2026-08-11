@@ -45,6 +45,19 @@ class OrganizationHttpRuntime:
 
 
 def _render(response: IdempotentResponse) -> Response:
+    if response.is_problem:
+        semantic = dict(response.body)
+        title = str(semantic.pop("title"))
+        semantic.pop("status", None)
+        detail_value = semantic.pop("detail", None)
+        detail = str(detail_value) if detail_value is not None else None
+        return problem_response(
+            response.status_code,
+            title,
+            detail=detail,
+            extra=semantic,
+            headers=response.headers,
+        )
     if response.status_code == 204:
         return Response(status_code=204, headers=response.headers)
     return JSONResponse(
@@ -125,8 +138,6 @@ def create_organization_router(
             return problem_response(409, "Idempotency conflict")
         except IdempotencyReplayUnavailable:
             return problem_response(409, "Idempotency replay unavailable")
-        except (InvalidParticipant, InvalidStructure, CorruptStructure):
-            return problem_response(409, "Organization structure conflict")
         return _render(execution.response)
 
     return router
@@ -140,12 +151,19 @@ def _set_superior_response(
     principal: Principal,
     runtime: OrganizationHttpRuntime,
 ) -> IdempotentResponse:
-    set_superior(
-        db,
-        account_id=account_id,
-        superior_id=body.superior_id,
-        actor=principal,
-        reason=body.reason,
-        dependencies=runtime.dependencies,
-    )
+    try:
+        set_superior(
+            db,
+            account_id=account_id,
+            superior_id=body.superior_id,
+            actor=principal,
+            reason=body.reason,
+            dependencies=runtime.dependencies,
+        )
+    except (InvalidParticipant, InvalidStructure, CorruptStructure):
+        return IdempotentResponse(
+            status_code=409,
+            body={"title": "Organization structure conflict", "status": 409},
+            is_problem=True,
+        )
     return IdempotentResponse(status_code=204, body={})

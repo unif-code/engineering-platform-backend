@@ -19,11 +19,14 @@ from control_plane.app.modules.organization.api.routes import (
 )
 from control_plane.app.shared.api.problem import register_problem_handlers
 from control_plane.app.shared.api.request_id import request_id_middleware
+from control_plane.app.shared.idempotency import SealedIdempotentEnvelope
+from control_plane.app.shared.security import unseal
 from tests.organization.helpers import insert_account, organization_dependencies
 
 pytestmark = pytest.mark.integration
 
 MANAGER_ID = "00000000-0000-0000-0000-000000000401"
+SUPERIOR_ID = "00000000-0000-0000-0000-000000000402"
 ACTOR = Principal(employee_id="00000999", name="Administrator")
 SAME_ORIGIN = {"Origin": "https://testserver", "Sec-Fetch-Site": "same-origin"}
 
@@ -317,3 +320,145 @@ def test_callback_failure_rolls_back_fact_audit_and_idempotency_claim(
             )
         ).one()
     assert counts == (0, 0, 0)
+
+
+def test_deterministic_denial_is_replayed_without_sealing_request_id(
+    organization_owner_engine: Engine,
+    organization_rw_engine: Engine,
+    organization_identity_engine: Engine,
+    clean_organization_db: None,
+) -> None:
+    insert_account(
+        organization_owner_engine,
+        account_id=MANAGER_ID,
+        employee_no="00000401",
+        display_name="Target",
+    )
+    with organization_owner_engine.begin() as db:
+        db.execute(
+            text(
+                "INSERT INTO organization.org_edge (account_id, superior_id, kind) "
+                "VALUES (:account_id, NULL, 'MANAGER')"
+            ),
+            {"account_id": SUPERIOR_ID},
+        )
+    callbacks: list[tuple[str, ...]] = []
+    dependencies = organization_dependencies(
+        organization_identity_engine,
+        on_membership_change=lambda ids: callbacks.append(tuple(ids)),
+    )
+    client = _isolated_client(organization_rw_engine, dependencies)
+    path = f"/api/v1/admin/accounts/{MANAGER_ID}/superior"
+    body = {"superiorId": SUPERIOR_ID, "reason": "assign leader"}
+    denial_key = "org-denial-key-0001"
+
+    first = client.put(
+        path,
+        json=body,
+        headers={
+            **SAME_ORIGIN,
+            "Idempotency-Key": denial_key,
+            "X-Request-ID": "req-denialone",
+        },
+    )
+    insert_account(
+        organization_owner_engine,
+        account_id=SUPERIOR_ID,
+        employee_no="00000402",
+        display_name="Superior",
+    )
+    replay = client.put(
+        path,
+        json=body,
+        headers={
+            **SAME_ORIGIN,
+            "Idempotency-Key": denial_key,
+            "X-Request-ID": "req-denialtwo",
+        },
+    )
+    with organization_owner_engine.connect() as db:
+        after_replay = db.execute(
+            text(
+                "SELECT "
+                "(SELECT count(*) FROM organization.idempotency_record) AS commands, "
+                "(SELECT count(*) FROM organization.org_edge WHERE account_id=:target) "
+                " AS target_edges, "
+                "(SELECT count(*) FROM audit.audit_event "
+                " WHERE action='organization.structure.changed' AND target_id=:target) "
+                " AS audits"
+            ),
+            {"target": MANAGER_ID},
+        ).one()
+    assert after_replay == (1, 0, 0)
+    assert callbacks == []
+
+    success = client.put(
+        path,
+        json=body,
+        headers={
+            **SAME_ORIGIN,
+            "Idempotency-Key": "org-denial-recovery-key-0001",
+            "X-Request-ID": "req-denialthree",
+        },
+    )
+
+    assert first.status_code == 409
+    assert first.headers["content-type"].startswith("application/problem+json")
+    assert first.json() == {
+        "title": "Organization structure conflict",
+        "status": 409,
+        "requestId": "req-denialone",
+    }
+    assert replay.status_code == 409
+    assert replay.headers["content-type"].startswith("application/problem+json")
+    assert replay.json() == {
+        "title": "Organization structure conflict",
+        "status": 409,
+        "requestId": "req-denialtwo",
+    }
+    assert success.status_code == 204
+    assert callbacks == [(MANAGER_ID,)]
+
+    with organization_owner_engine.connect() as db:
+        denial_record = (
+            db.execute(
+                text(
+                    "SELECT result_metadata, sealed_response "
+                    "FROM organization.idempotency_record WHERE idempotency_key=:key"
+                ),
+                {"key": denial_key},
+            )
+            .mappings()
+            .one()
+        )
+        counts = db.execute(
+            text(
+                "SELECT "
+                "(SELECT count(*) FROM organization.idempotency_record) AS commands, "
+                "(SELECT count(*) FROM organization.org_edge "
+                " WHERE account_id=:target AND superior_id=:superior AND kind='LEADER') "
+                " AS target_edges, "
+                "(SELECT count(*) FROM audit.audit_event "
+                " WHERE action='organization.structure.changed' AND target_id=:target) "
+                " AS audits"
+            ),
+            {"target": MANAGER_ID, "superior": SUPERIOR_ID},
+        ).one()
+    envelope = SealedIdempotentEnvelope.model_validate_json(
+        unseal(
+            denial_record["sealed_response"],
+            dependencies.secret_manager.load().idempotency_sealing_key,
+        )
+    )
+
+    assert denial_record["result_metadata"] == {
+        "kind": "http-response",
+        "schemaVersion": 1,
+    }
+    assert "requestId" not in envelope.response.body
+    assert envelope.response.body == {
+        "title": "Organization structure conflict",
+        "status": 409,
+    }
+    assert envelope.response.is_problem is True
+    assert counts == (2, 1, 1)
