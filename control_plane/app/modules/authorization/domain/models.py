@@ -3,6 +3,12 @@ from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
+PLATFORM_CONFIGURATION_MANAGE = "platform.configuration.manage"
+PLATFORM_SUPER_ADMIN_MANAGE = "platform.super_admin.manage"
+RESERVED_PLATFORM_CAPABILITIES = frozenset(
+    {PLATFORM_CONFIGURATION_MANAGE, PLATFORM_SUPER_ADMIN_MANAGE}
+)
+
 
 class ScopeType(StrEnum):
     PLATFORM = "PLATFORM"

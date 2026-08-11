@@ -1,5 +1,7 @@
 """Public identity facade; other modules must not import identity internals."""
 
+from datetime import datetime
+
 from sqlalchemy import Connection
 
 from control_plane.app.modules.identity.application.accounts import (
@@ -41,6 +43,39 @@ from control_plane.app.modules.identity.application.sessions import (
 from control_plane.app.modules.identity.application.sessions import (
     validate_session as _validate_session,
 )
+from control_plane.app.modules.identity.application.super_admin import (
+    SuperAdminCliExecution,
+)
+from control_plane.app.modules.identity.application.super_admin import (
+    add_super_admin as _add_super_admin,
+)
+from control_plane.app.modules.identity.application.super_admin import (
+    bootstrap_super_admin as _bootstrap_super_admin,
+)
+from control_plane.app.modules.identity.application.super_admin import (
+    bootstrap_super_admin_cli as _bootstrap_super_admin_cli,
+)
+from control_plane.app.modules.identity.application.super_admin import (
+    issue_super_admin_challenge as _issue_super_admin_challenge,
+)
+from control_plane.app.modules.identity.application.super_admin import (
+    list_super_admins as _list_super_admins,
+)
+from control_plane.app.modules.identity.application.super_admin import (
+    recover_super_admin as _recover_super_admin,
+)
+from control_plane.app.modules.identity.application.super_admin import (
+    recover_super_admin_cli as _recover_super_admin_cli,
+)
+from control_plane.app.modules.identity.application.super_admin import (
+    remove_super_admin as _remove_super_admin,
+)
+from control_plane.app.modules.identity.application.super_admin import (
+    resolve_bootstrap_cli as _resolve_bootstrap_cli,
+)
+from control_plane.app.modules.identity.application.super_admin import (
+    resolve_recovery_cli as _resolve_recovery_cli,
+)
 from control_plane.app.modules.identity.domain.account import (
     AccountDto,
     AccountStatus,
@@ -57,6 +92,10 @@ from control_plane.app.modules.identity.domain.errors import (
     LoginBackoffActive,
     PasswordFloorViolation,
     StaleAccountVersion,
+    SuperAdminBootstrapConflict,
+    SuperAdminConflict,
+    SuperAdminPermissionDenied,
+    SuperAdminRecoveryDenied,
     TotpChallengeFailed,
 )
 from control_plane.app.modules.identity.domain.models import Principal
@@ -284,6 +323,189 @@ def set_account_status(
     )
 
 
+def bootstrap_super_admin(
+    db: Connection,
+    *,
+    employee_no: str,
+    display_name: str,
+    dependencies: IdentityDependencies,
+) -> tuple[AccountDto, str]:
+    return _bootstrap_super_admin(
+        dependencies.repository_factory(db),
+        employee_no=employee_no,
+        display_name=display_name,
+        dependencies=dependencies,
+    )
+
+
+def bootstrap_super_admin_cli(
+    db: Connection,
+    *,
+    employee_no: str,
+    display_name: str,
+    source_transaction_id: str,
+    dependencies: IdentityDependencies,
+) -> SuperAdminCliExecution:
+    return _bootstrap_super_admin_cli(
+        dependencies.repository_factory(db),
+        employee_no=employee_no,
+        display_name=display_name,
+        source_transaction_id=source_transaction_id,
+        dependencies=dependencies,
+    )
+
+
+def resolve_bootstrap_cli(
+    db: Connection,
+    *,
+    employee_no: str,
+    display_name: str,
+    dependencies: IdentityDependencies,
+) -> SuperAdminCliExecution | None:
+    return _resolve_bootstrap_cli(
+        dependencies.repository_factory(db),
+        employee_no=employee_no,
+        display_name=display_name,
+        dependencies=dependencies,
+    )
+
+
+def list_super_admins(
+    db: Connection,
+    *,
+    dependencies: IdentityDependencies,
+) -> list[AccountDto]:
+    return _list_super_admins(dependencies.repository_factory(db))
+
+
+def issue_super_admin_challenge(
+    db: Connection,
+    *,
+    actor_account_id: str,
+    operation: str,
+    dependencies: IdentityDependencies,
+) -> str:
+    if operation not in {"ADD", "REMOVE"}:
+        raise ValueError("unsupported Super Admin operation")
+    return _issue_super_admin_challenge(
+        dependencies.repository_factory(db),
+        actor_account_id=actor_account_id,
+        operation=operation,  # type: ignore[arg-type]
+        dependencies=dependencies,
+    )
+
+
+def add_super_admin(
+    db: Connection,
+    *,
+    target_account_id: str,
+    actor_account_id: str,
+    challenge_token: str,
+    totp_code: str,
+    reason: str,
+    expected_version: int,
+    dependencies: IdentityDependencies,
+) -> AccountDto:
+    return _add_super_admin(
+        dependencies.repository_factory(db),
+        target_account_id=target_account_id,
+        actor_account_id=actor_account_id,
+        challenge_token=challenge_token,
+        totp_code=totp_code,
+        reason=reason,
+        expected_version=expected_version,
+        dependencies=dependencies,
+    )
+
+
+def remove_super_admin(
+    db: Connection,
+    *,
+    target_account_id: str,
+    actor_account_id: str,
+    challenge_token: str,
+    totp_code: str,
+    reason: str,
+    expected_version: int,
+    dependencies: IdentityDependencies,
+) -> AccountDto:
+    return _remove_super_admin(
+        dependencies.repository_factory(db),
+        target_account_id=target_account_id,
+        actor_account_id=actor_account_id,
+        challenge_token=challenge_token,
+        totp_code=totp_code,
+        reason=reason,
+        expected_version=expected_version,
+        dependencies=dependencies,
+    )
+
+
+def recover_super_admin(
+    db: Connection,
+    *,
+    employee_no: str,
+    reason: str,
+    scope: str,
+    expires_at: datetime,
+    credentials_lost: bool,
+    dependencies: IdentityDependencies,
+) -> tuple[AccountDto, str]:
+    return _recover_super_admin(
+        dependencies.repository_factory(db),
+        employee_no=employee_no,
+        reason=reason,
+        scope=scope,
+        expires_at=expires_at,
+        credentials_lost=credentials_lost,
+        dependencies=dependencies,
+    )
+
+
+def recover_super_admin_cli(
+    db: Connection,
+    *,
+    employee_no: str,
+    reason: str,
+    scope: str,
+    expires_at: datetime,
+    credentials_lost: bool,
+    source_transaction_id: str,
+    dependencies: IdentityDependencies,
+) -> SuperAdminCliExecution:
+    return _recover_super_admin_cli(
+        dependencies.repository_factory(db),
+        employee_no=employee_no,
+        reason=reason,
+        scope=scope,
+        expires_at=expires_at,
+        credentials_lost=credentials_lost,
+        source_transaction_id=source_transaction_id,
+        dependencies=dependencies,
+    )
+
+
+def resolve_recovery_cli(
+    db: Connection,
+    *,
+    employee_no: str,
+    reason: str,
+    scope: str,
+    expires_at: datetime,
+    credentials_lost: bool,
+    dependencies: IdentityDependencies,
+) -> SuperAdminCliExecution | None:
+    return _resolve_recovery_cli(
+        dependencies.repository_factory(db),
+        employee_no=employee_no,
+        reason=reason,
+        scope=scope,
+        expires_at=expires_at,
+        credentials_lost=credentials_lost,
+        dependencies=dependencies,
+    )
+
+
 __all__ = [
     "AccountConflict",
     "AccountDto",
@@ -312,9 +534,17 @@ __all__ = [
     "SessionKind",
     "SessionPrincipal",
     "StaleAccountVersion",
+    "SuperAdminBootstrapConflict",
+    "SuperAdminCliExecution",
+    "SuperAdminConflict",
+    "SuperAdminPermissionDenied",
+    "SuperAdminRecoveryDenied",
     "TotpChallengeFailed",
     "TotpEnrollment",
     "complete_password_setup",
+    "bootstrap_super_admin",
+    "bootstrap_super_admin_cli",
+    "add_super_admin",
     "confirm_totp",
     "current_identity_change_source",
     "consume_temp_password",
@@ -323,12 +553,19 @@ __all__ = [
     "ensure_account_transition_allowed",
     "ensure_effective_super_admin_remains",
     "issue_temp_password",
+    "issue_super_admin_challenge",
     "identity_change_source",
     "get_organization_account",
     "login_password_step",
     "login_totp_step",
+    "list_super_admins",
     "logout",
     "revoke_sessions_for",
+    "remove_super_admin",
+    "recover_super_admin",
+    "recover_super_admin_cli",
+    "resolve_recovery_cli",
+    "resolve_bootstrap_cli",
     "set_account_status",
     "validate_session",
 ]

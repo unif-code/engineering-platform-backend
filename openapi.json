@@ -24,6 +24,45 @@
         "title": "AccountRefDto",
         "type": "object"
       },
+      "AccountStatus": {
+        "enum": [
+          "PENDING_INIT",
+          "ENABLED",
+          "DISABLED",
+          "RESTRICTED"
+        ],
+        "title": "AccountStatus",
+        "type": "string"
+      },
+      "AddSuperAdminRequestDto": {
+        "properties": {
+          "accountId": {
+            "minLength": 1,
+            "title": "Accountid",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "totpCode": {
+            "maxLength": 6,
+            "minLength": 6,
+            "pattern": "^[0-9]{6}$",
+            "title": "Totpcode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "accountId",
+          "totpCode"
+        ],
+        "title": "AddSuperAdminRequestDto",
+        "type": "object"
+      },
       "AuthenticatedDto": {
         "properties": {
           "state": {
@@ -708,6 +747,29 @@
         "title": "RemoveLeaderRequestDto",
         "type": "object"
       },
+      "RemoveSuperAdminRequestDto": {
+        "properties": {
+          "reason": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "totpCode": {
+            "maxLength": 6,
+            "minLength": 6,
+            "pattern": "^[0-9]{6}$",
+            "title": "Totpcode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "totpCode"
+        ],
+        "title": "RemoveSuperAdminRequestDto",
+        "type": "object"
+      },
       "ScopeType": {
         "enum": [
           "PLATFORM",
@@ -768,6 +830,108 @@
           "reason"
         ],
         "title": "SetSuperiorRequestDto",
+        "type": "object"
+      },
+      "SuperAdminListResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SuperAdminResponseDto"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextcursor"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "SuperAdminListResponseDto",
+        "type": "object"
+      },
+      "SuperAdminResponseDto": {
+        "properties": {
+          "displayName": {
+            "title": "Displayname",
+            "type": "string"
+          },
+          "employeeNo": {
+            "title": "Employeeno",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "isSuperAdmin": {
+            "title": "Issuperadmin",
+            "type": "boolean"
+          },
+          "passwordSetAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Passwordsetat"
+          },
+          "profession": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profession"
+          },
+          "status": {
+            "$ref": "#/components/schemas/AccountStatus"
+          },
+          "totpConfirmedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Totpconfirmedat"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "employeeNo",
+          "displayName",
+          "profession",
+          "status",
+          "passwordSetAt",
+          "totpConfirmedAt",
+          "isSuperAdmin",
+          "version"
+        ],
+        "title": "SuperAdminResponseDto",
         "type": "object"
       },
       "TotpEnrollmentDto": {
@@ -1483,6 +1647,397 @@
         "summary": "Organization Tree",
         "tags": [
           "organization"
+        ]
+      }
+    },
+    "/api/v1/admin/super-admins": {
+      "get": {
+        "operationId": "super_admin_list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuperAdminListResponseDto"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
+          }
+        },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
+        "summary": "Super Admin List",
+        "tags": [
+          "identity"
+        ]
+      },
+      "post": {
+        "operationId": "super_admin_add",
+        "parameters": [
+          {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Strong entity tag in the form \"v<positive-version>\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "description": "Strong entity tag in the form \"v<positive-version>\"",
+              "examples": [
+                "\"v1\""
+              ],
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AddSuperAdminRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuperAdminResponseDto"
+                }
+              }
+            },
+            "description": "Super Admin lifecycle change applied",
+            "headers": {
+              "ETag": {
+                "description": "Strong account version ETag for the next write",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
+          }
+        },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
+        "summary": "Super Admin Add",
+        "tags": [
+          "identity"
+        ]
+      }
+    },
+    "/api/v1/admin/super-admins/{id}": {
+      "delete": {
+        "operationId": "super_admin_remove",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "title": "Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Strong entity tag in the form \"v<positive-version>\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "description": "Strong entity tag in the form \"v<positive-version>\"",
+              "examples": [
+                "\"v1\""
+              ],
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RemoveSuperAdminRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuperAdminResponseDto"
+                }
+              }
+            },
+            "description": "Super Admin lifecycle change applied",
+            "headers": {
+              "ETag": {
+                "description": "Strong account version ETag for the next write",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
+          }
+        },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
+        "summary": "Super Admin Remove",
+        "tags": [
+          "identity"
         ]
       }
     },

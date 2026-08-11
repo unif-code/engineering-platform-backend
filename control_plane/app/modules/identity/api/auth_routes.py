@@ -171,13 +171,14 @@ def _actor_scope(prefix: str, raw_value: str | None) -> str:
 
 def _fingerprint(
     operation: str,
+    method: str,
     path: str,
     body: Mapping[str, object],
     idempotency_sealing_key: bytes,
 ) -> str:
     return canonical_request_fingerprint(
         operation=operation,
-        method="POST",
+        method=method,
         path=path,
         body=body,
         idempotency_sealing_key=idempotency_sealing_key,
@@ -189,6 +190,7 @@ def _execute(
     *,
     actor: str,
     operation: str,
+    method: str = "POST",
     path: str,
     key: str,
     body: Mapping[str, object],
@@ -214,6 +216,7 @@ def _execute(
                     key=key,
                     fingerprint=_fingerprint(
                         operation,
+                        method,
                         path,
                         body,
                         runtime.dependencies.secret_manager.load().idempotency_sealing_key,

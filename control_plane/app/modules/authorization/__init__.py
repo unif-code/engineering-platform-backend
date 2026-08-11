@@ -43,6 +43,9 @@ from control_plane.app.modules.authorization.application.orchestration import (
     SecurityChangeTicket,
 )
 from control_plane.app.modules.authorization.domain import (
+    PLATFORM_CONFIGURATION_MANAGE,
+    PLATFORM_SUPER_ADMIN_MANAGE,
+    RESERVED_PLATFORM_CAPABILITIES,
     AuthorizationDecision,
     AuthorizationDenied,
     AuthorizationError,
@@ -247,7 +250,10 @@ __all__ = [
     "GrantNotFound",
     "GrantStatus",
     "InvalidGrant",
+    "PLATFORM_CONFIGURATION_MANAGE",
+    "PLATFORM_SUPER_ADMIN_MANAGE",
     "PrincipalVersionDto",
+    "RESERVED_PLATFORM_CAPABILITIES",
     "Scope",
     "ScopedCapability",
     "SecurityChangeOrchestrator",

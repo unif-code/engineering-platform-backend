@@ -32,6 +32,25 @@ class SqlAlchemyIdentityRepository:
             {"account_id": account_id},
         )
 
+    def any_super_admin(self) -> bool:
+        return bool(
+            self.db.execute(
+                text("SELECT EXISTS (SELECT FROM identity.account WHERE is_super_admin=true)")
+            ).scalar_one()
+        )
+
+    def list_super_admins(self) -> list[Any]:
+        return list(
+            self.db.execute(
+                text(
+                    "SELECT * FROM identity.account WHERE is_super_admin=true "
+                    "ORDER BY employee_no, id"
+                )
+            )
+            .mappings()
+            .all()
+        )
+
     def claim_idempotency(self, **values: Any) -> bool:
         result = self.db.execute(
             text(
@@ -243,6 +262,21 @@ class SqlAlchemyIdentityRepository:
             {"account_id": account_id, "now": now},
         )
 
+    def reset_recovery_state(self, account_id: str, now: datetime) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE identity.account SET password_hash=NULL, password_set_at=NULL, "
+                    "totp_sealed=NULL, totp_confirmed_at=NULL, totp_last_step=NULL, "
+                    "status='PENDING_INIT', updated_at=:now, version=version+1 "
+                    "WHERE id=:account_id RETURNING *"
+                ),
+                {"account_id": account_id, "now": now},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
     def update_totp_enrollment(self, account_id: str, sealed: bytes, now: datetime) -> None:
         self.db.execute(
             text(
@@ -313,14 +347,49 @@ class SqlAlchemyIdentityRepository:
             values,
         )
 
+    def insert_admin_challenge(self, **values: Any) -> None:
+        self.db.execute(
+            text(
+                "INSERT INTO identity.auth_challenge "
+                "(id, token_hash, purpose, account_id, actor_id, issued_at, expires_at, "
+                "attempt_limit, attempt_count) VALUES "
+                "(:id, :token_hash, :purpose, :account_id, :actor_id, :issued_at, "
+                ":expires_at, :attempt_limit, 0)"
+            ),
+            values,
+        )
+
+    def admin_challenge_attempts(
+        self,
+        actor_account_id: str,
+        purpose: str,
+        not_before: datetime,
+    ) -> int:
+        return int(
+            self.db.execute(
+                text(
+                    "SELECT COALESCE(sum(attempt_count), 0) "
+                    "FROM identity.auth_challenge WHERE actor_id=:actor_account_id "
+                    "AND purpose=:purpose AND issued_at>=:not_before"
+                ),
+                {
+                    "actor_account_id": actor_account_id,
+                    "purpose": purpose,
+                    "not_before": not_before,
+                },
+            ).scalar_one()
+        )
+
     def challenge_by_hash(self, token_hash: str, *, for_update: bool = False) -> Any:
         suffix = " FOR UPDATE OF c, a" if for_update else ""
         return (
             self.db.execute(
                 text(
-                    "SELECT c.id AS challenge_id, c.purpose, c.account_id, c.expires_at, "
+                    "SELECT c.id AS challenge_id, c.purpose, c.account_id, c.actor_id, "
+                    "c.expires_at, "
                     "c.attempt_limit, c.attempt_count, c.consumed_at, c.revoked_at, "
-                    "a.employee_no, a.display_name, a.status, a.totp_sealed, a.totp_last_step, "
+                    "a.employee_no, a.display_name, a.status, a.password_hash, "
+                    "a.totp_sealed, a.totp_confirmed_at, a.totp_last_step, "
                     "a.is_super_admin FROM identity.auth_challenge c "
                     "JOIN identity.account a ON a.id=c.account_id "
                     f"WHERE c.token_hash=:token_hash{suffix}"
@@ -471,6 +540,31 @@ class SqlAlchemyIdentityRepository:
                 {
                     "account_id": account_id,
                     "status": status,
+                    "expected_version": expected_version,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def update_super_admin(
+        self,
+        account_id: str,
+        is_super_admin: bool,
+        expected_version: int,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE identity.account SET is_super_admin=:is_super_admin, "
+                    "version=version+1, updated_at=:now "
+                    "WHERE id=:account_id AND version=:expected_version RETURNING *"
+                ),
+                {
+                    "account_id": account_id,
+                    "is_super_admin": is_super_admin,
                     "expected_version": expected_version,
                     "now": now,
                 },

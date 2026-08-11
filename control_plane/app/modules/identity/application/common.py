@@ -23,18 +23,23 @@ def audit(
     target_id: str,
     result: str,
     reason: str | None,
+    correlation_id: str | None = None,
 ) -> None:
     record_in_transaction(
         db,
         AuditEnvelope(
             actor=actor.employee_id,
-            actor_type="HUMAN" if actor.employee_id != "SYSTEM" else "SYSTEM",
+            actor_type=(
+                "SYSTEM"
+                if actor.employee_id in {"SYSTEM", "SYSTEM_BOOTSTRAP", "SYSTEM_RECOVERY"}
+                else "HUMAN"
+            ),
             action=action,
             target_type=target_type,
             target_id=target_id,
             result=result,
             reason=reason,
-            correlation_id=current_request_id() or uuid4().hex,
+            correlation_id=correlation_id or current_request_id() or uuid4().hex,
         ),
         dependencies.audit,
     )

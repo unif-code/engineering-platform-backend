@@ -22,6 +22,22 @@ class LastEffectiveSuperAdmin(IdentityError):
     pass
 
 
+class SuperAdminBootstrapConflict(IdentityError):
+    pass
+
+
+class SuperAdminConflict(IdentityError):
+    pass
+
+
+class SuperAdminPermissionDenied(IdentityError):
+    pass
+
+
+class SuperAdminRecoveryDenied(IdentityError):
+    pass
+
+
 class PasswordFloorViolation(IdentityError):
     def __init__(self, violations: list[str]) -> None:
         super().__init__("password does not meet the security floor")

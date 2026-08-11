@@ -45,6 +45,9 @@ from control_plane.app.modules.identity.api.auth_routes import (
     IdentityHttpRuntime,
     create_auth_router,
 )
+from control_plane.app.modules.identity.api.super_admin_routes import (
+    create_super_admin_router,
+)
 from control_plane.app.modules.organization import OrganizationDependencies
 from control_plane.app.modules.organization.adapters import (
     SqlAlchemyIdentityAccountLookup as OrganizationIdentityAccountLookup,
@@ -341,6 +344,13 @@ def create_app(
     app.include_router(create_auth_router(identity_runtime_provider))
     app.include_router(create_authorization_router(authorization_http_runtime))
     protected_principal = current_principal(authorization_http_runtime)
+    app.include_router(
+        create_super_admin_router(
+            identity_runtime_provider,
+            cast(Callable[[], Any], protected_principal),
+            authorization_capability_guard,
+        )
+    )
     app.include_router(
         create_organization_router(
             organization_http_runtime,

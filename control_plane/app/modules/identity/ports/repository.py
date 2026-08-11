@@ -15,6 +15,10 @@ class IdentityRepository(Protocol):
 
     def lock_account_lifecycle(self, account_id: str) -> None: ...
 
+    def any_super_admin(self) -> bool: ...
+
+    def list_super_admins(self) -> list[Any]: ...
+
     def claim_idempotency(self, **values: Any) -> bool: ...
 
     def idempotency_by_scope(
@@ -60,6 +64,8 @@ class IdentityRepository(Protocol):
 
     def reset_password_state(self, account_id: str, now: datetime) -> None: ...
 
+    def reset_recovery_state(self, account_id: str, now: datetime) -> Any: ...
+
     def update_totp_enrollment(self, account_id: str, sealed: bytes, now: datetime) -> None: ...
 
     def confirm_totp(self, account_id: str, step: int, now: datetime) -> None: ...
@@ -77,6 +83,15 @@ class IdentityRepository(Protocol):
     ) -> list[str]: ...
 
     def insert_challenge(self, **values: Any) -> None: ...
+
+    def insert_admin_challenge(self, **values: Any) -> None: ...
+
+    def admin_challenge_attempts(
+        self,
+        actor_account_id: str,
+        purpose: str,
+        not_before: datetime,
+    ) -> int: ...
 
     def challenge_by_hash(self, token_hash: str, *, for_update: bool = False) -> Any: ...
 
@@ -109,6 +124,14 @@ class IdentityRepository(Protocol):
         self,
         account_id: str,
         status: str,
+        expected_version: int,
+        now: datetime,
+    ) -> Any: ...
+
+    def update_super_admin(
+        self,
+        account_id: str,
+        is_super_admin: bool,
         expected_version: int,
         now: datetime,
     ) -> Any: ...

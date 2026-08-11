@@ -7,6 +7,9 @@ from .errors import (
     StaleGrantVersion,
 )
 from .models import (
+    PLATFORM_CONFIGURATION_MANAGE,
+    PLATFORM_SUPER_ADMIN_MANAGE,
+    RESERVED_PLATFORM_CAPABILITIES,
     AuthorizationDecision,
     AuthorizationPrincipal,
     DecisionCode,
@@ -29,7 +32,10 @@ __all__ = [
     "GrantNotFound",
     "GrantStatus",
     "InvalidGrant",
+    "PLATFORM_CONFIGURATION_MANAGE",
+    "PLATFORM_SUPER_ADMIN_MANAGE",
     "PrincipalVersionDto",
+    "RESERVED_PLATFORM_CAPABILITIES",
     "Scope",
     "ScopedCapability",
     "ScopeType",

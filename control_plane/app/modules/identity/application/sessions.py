@@ -26,6 +26,7 @@ def finalize_session_revocations(
     dependencies: IdentityDependencies,
     invoke_hook: bool = True,
     action: str = "identity.sessions.revoked",
+    correlation_id: str | None = None,
 ) -> None:
     if not revoked_session_ids:
         return
@@ -38,6 +39,7 @@ def finalize_session_revocations(
         target_id=account_id,
         result="SUCCESS",
         reason=reason,
+        correlation_id=correlation_id,
     )
     if invoke_hook:
         notify_identity_change(dependencies.on_auth_change, account_id)

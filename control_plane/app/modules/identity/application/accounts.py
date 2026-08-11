@@ -69,6 +69,7 @@ def _issue_temp(
     actor: Principal,
     now: datetime,
     dependencies: IdentityDependencies,
+    expires_at: datetime | None = None,
 ) -> str:
     policy = dependencies.policy.get_identity_policy(repository.db)
     material = dependencies.secret_manager.load()
@@ -80,7 +81,7 @@ def _issue_temp(
         id=str(dependencies.random.uuid4()),
         account_id=account_id,
         secret_hash=hash_password(temporary_password, pepper=material.password_pepper),
-        expires_at=now + policy.temp_credential_ttl,
+        expires_at=expires_at or now + policy.temp_credential_ttl,
         issued_by=issued_by,
         created_at=now,
     )
@@ -96,6 +97,7 @@ def create_account(
     reason: str,
     profession: str | None = None,
     dependencies: IdentityDependencies,
+    correlation_id: str | None = None,
 ) -> tuple[AccountDto, str]:
     deps = dependencies
     db = repository.db
@@ -127,6 +129,7 @@ def create_account(
         target_id=account_id,
         result="SUCCESS",
         reason=reason,
+        correlation_id=correlation_id,
     )
     audit(
         db,
@@ -137,6 +140,7 @@ def create_account(
         target_id=account_id,
         result="SUCCESS",
         reason=reason,
+        correlation_id=correlation_id,
     )
     row = repository.account_by_id(account_id)
     assert row is not None
