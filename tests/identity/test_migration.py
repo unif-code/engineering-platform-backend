@@ -268,7 +268,7 @@ def test_current_alembic_heads_are_installed(identity_owner_engine: Engine) -> N
     assert installed == {
         "0005_audit_authz_grant",
         "0004_identity_bootstrap_totp_cap",
-        "0003_authorization_source_xid",
+        "0004_authorization_pending_set",
     }
 
 

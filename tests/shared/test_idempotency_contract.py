@@ -1,7 +1,12 @@
 from datetime import UTC, datetime
 from typing import Any
 
+import pytest
+
 from control_plane.app.shared.idempotency import (
+    IdempotencyClaim,
+    IdempotencyConflict,
+    IdempotentExecution,
     IdempotentResponse,
     canonical_request_fingerprint,
     execute_idempotent,
@@ -112,3 +117,35 @@ def test_module_neutral_idempotency_helper_executes_and_replays_exact_response()
     assert second.response == response
     assert second.replayed is True
     assert calls == ["called"]
+
+
+def test_claim_callback_runs_only_for_the_transaction_that_created_the_claim() -> None:
+    repository = MemoryRepository()
+    claims: list[tuple[str, bool, str]] = []
+
+    def callback(claim: IdempotencyClaim) -> None:
+        claims.append((claim.record_id, claim.created, claim.request_fingerprint))
+
+    def execute(fingerprint: str) -> IdempotentExecution:
+        return execute_idempotent(
+            repository,
+            actor="actor-1",
+            operation="source-command",
+            key="source-claim-key-0001",
+            fingerprint=fingerprint,
+            command=lambda: IdempotentResponse(status_code=204, body={}),
+            now=lambda: datetime(2026, 1, 1, tzinfo=UTC),
+            new_id=lambda: "00000000-0000-0000-0000-000000001111",
+            idempotency_sealing_key=b"s" * 32,
+            on_claimed=callback,
+        )
+
+    first = execute("fingerprint-a")
+    replay = execute("fingerprint-a")
+    with pytest.raises(IdempotencyConflict, match="different request"):
+        execute("fingerprint-b")
+
+    assert first.claim.created is True
+    assert replay.claim.created is False
+    assert replay.claim.record_id == first.claim.record_id
+    assert claims == [("00000000-0000-0000-0000-000000001111", True, "fingerprint-a")]

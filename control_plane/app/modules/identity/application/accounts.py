@@ -3,6 +3,9 @@ from typing import Any
 
 from control_plane.app.modules.identity.application.common import audit
 from control_plane.app.modules.identity.application.dependencies import IdentityDependencies
+from control_plane.app.modules.identity.application.security_change import (
+    notify_identity_change,
+)
 from control_plane.app.modules.identity.application.sessions import (
     finalize_session_revocations,
     issue_session,
@@ -200,7 +203,7 @@ def issue_temp_password(
         dependencies=deps,
         invoke_hook=False,
     )
-    deps.on_auth_change(account_id)
+    notify_identity_change(deps.on_auth_change, account_id)
     return temporary_password
 
 
@@ -308,5 +311,5 @@ def set_account_status(
         result="SUCCESS",
         reason=reason,
     )
-    deps.on_auth_change(account_id)
+    notify_identity_change(deps.on_auth_change, account_id)
     return _dto(updated)

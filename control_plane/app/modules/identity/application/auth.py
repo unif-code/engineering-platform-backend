@@ -4,6 +4,9 @@ from typing import Any
 from control_plane.app.modules.identity.application.accounts import consume_temp_password
 from control_plane.app.modules.identity.application.common import audit, token_hash
 from control_plane.app.modules.identity.application.dependencies import IdentityDependencies
+from control_plane.app.modules.identity.application.security_change import (
+    notify_identity_change,
+)
 from control_plane.app.modules.identity.application.sessions import (
     finalize_session_revocations,
     issue_session,
@@ -172,7 +175,7 @@ def complete_password_setup(
         result="SUCCESS",
         reason="bootstrap",
     )
-    deps.on_auth_change(account_id)
+    notify_identity_change(deps.on_auth_change, account_id)
     return None
 
 
@@ -315,7 +318,7 @@ def confirm_totp(
         result="SUCCESS",
         reason="bootstrap",
     )
-    deps.on_auth_change(account_id)
+    notify_identity_change(deps.on_auth_change, account_id)
     return issued
 
 

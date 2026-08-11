@@ -40,6 +40,7 @@ from control_plane.app.shared.api.problem import (
     problem_response,
 )
 from control_plane.app.shared.idempotency import (
+    IdempotencyClaim,
     IdempotencyConflict,
     IdempotencyReplayUnavailable,
     IdempotentResponse,
@@ -193,20 +194,27 @@ def _execute(
     response: Response
     try:
         with runtime.engine.begin() as db:
-            if security_changes is not None:
-                source_transaction_id = str(
-                    db.execute(text("SELECT pg_current_xact_id()")).scalar_one()
-                )
+            source_transaction_id = str(
+                db.execute(text("SELECT pg_current_xact_id()")).scalar_one()
+            )
+
+            def register_security_change(claim: IdempotencyClaim) -> None:
+                nonlocal ticket
+                if security_changes is None:
+                    return
                 ticket = security_changes.begin(
                     reason=f"{operation} security change",
                     source_module="workspace",
                     actor=principal.account_id,
                     operation=operation,
                     idempotency_key=key,
+                    request_fingerprint=claim.request_fingerprint,
+                    idempotency_claim_id=claim.record_id,
                     source_transaction_id=source_transaction_id,
                     affected_account_ids=affected_account_ids,
                     affected_workspace_ids=affected_workspace_ids,
                 )
+
             execution = execute_idempotent(
                 runtime.dependencies.repository_factory(db),
                 actor=principal.account_id,
@@ -217,7 +225,12 @@ def _execute(
                 now=runtime.dependencies.clock.now,
                 new_id=runtime.dependencies.random.uuid4,
                 idempotency_sealing_key=material.idempotency_sealing_key,
+                on_claimed=register_security_change,
             )
+            if ticket is not None and not (200 <= execution.response.status_code < 300):
+                assert security_changes is not None
+                security_changes.cancel(ticket)
+                ticket = None
     except IdempotencyConflict:
         response = problem_response(409, "Idempotency conflict")
     except IdempotencyReplayUnavailable:
@@ -229,6 +242,13 @@ def _execute(
         raise
     else:
         response = _render(execution.response)
+        if (
+            execution.replayed
+            and 200 <= response.status_code < 300
+            and security_changes is not None
+            and not security_changes.claim_converged("workspace", execution.claim.record_id)
+        ):
+            return problem_response(503, "Authorization convergence unavailable")
     if ticket is not None:
         assert security_changes is not None
         if 200 <= response.status_code < 300:

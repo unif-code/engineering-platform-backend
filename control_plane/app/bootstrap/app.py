@@ -131,14 +131,18 @@ def authorization_runtime_engine() -> Engine:
     )
 
 
-def _identity_authorization_change(account_id: str) -> None:
+def _identity_authorization_change(account_id: str) -> object:
     source = current_identity_change_source()
-    security_change_orchestrator().identity_change(
+    if source is None or not source.source_transaction_id:
+        raise RuntimeError("identity security change requires an actual source transaction")
+    return security_change_orchestrator().identity_change(
         account_id,
-        actor=source.actor if source is not None else None,
-        operation=source.operation if source is not None else None,
-        idempotency_key=source.idempotency_key if source is not None else None,
-        source_transaction_id=(source.source_transaction_id if source is not None else None),
+        actor=source.actor,
+        operation=source.operation,
+        idempotency_key=source.idempotency_key,
+        source_transaction_id=source.source_transaction_id,
+        request_fingerprint=source.request_fingerprint,
+        idempotency_claim_id=source.idempotency_claim_id,
     )
 
 
@@ -160,6 +164,7 @@ def identity_http_runtime() -> IdentityHttpRuntime:
     return IdentityHttpRuntime(
         engine=identity_runtime_engine(),
         dependencies=identity_dependencies(),
+        security_changes=security_change_orchestrator(),
     )
 
 
@@ -239,6 +244,7 @@ def authorization_http_runtime() -> AuthorizationHttpRuntime:
             identity=SqlAlchemyIdentitySessionValidator(
                 identity_runtime_engine(),
                 identity_dependencies(),
+                security_changes=security_change_orchestrator(),
             ),
             workspace=workspace_membership,
             reconcile=security_change_orchestrator().reconcile_for_account,

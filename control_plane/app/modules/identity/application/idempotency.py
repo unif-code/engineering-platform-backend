@@ -4,6 +4,7 @@ from control_plane.app.modules.identity.application.dependencies import Identity
 from control_plane.app.modules.identity.ports.repository import IdentityRepository
 from control_plane.app.shared.idempotency import (
     CookieReplay,
+    IdempotencyClaim,
     IdempotencyConflict,
     IdempotencyReplayUnavailable,
     IdempotentExecution,
@@ -25,6 +26,7 @@ def execute_idempotent(
     fingerprint: str,
     command: Callable[[], IdempotentResponse],
     dependencies: IdentityDependencies,
+    on_claimed: Callable[[IdempotencyClaim], None] | None = None,
 ) -> IdempotentExecution:
     """Identity-compatible wrapper around the module-neutral command helper."""
     material = dependencies.secret_manager.load()
@@ -38,12 +40,14 @@ def execute_idempotent(
         now=dependencies.clock.now,
         new_id=dependencies.random.uuid4,
         idempotency_sealing_key=material.idempotency_sealing_key,
+        on_claimed=on_claimed,
     )
 
 
 __all__ = [
     "CookieReplay",
     "IdempotencyConflict",
+    "IdempotencyClaim",
     "IdempotencyReplayUnavailable",
     "IdempotentExecution",
     "IdempotentResponse",

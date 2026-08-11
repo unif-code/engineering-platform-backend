@@ -66,11 +66,23 @@ class IdempotentResponse(BaseModel):
     is_problem: bool = False
 
 
+class IdempotencyClaim(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    record_id: str
+    actor: str
+    operation: str
+    idempotency_key: str
+    request_fingerprint: str
+    created: bool
+
+
 class IdempotentExecution(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     response: IdempotentResponse
     replayed: bool
+    claim: IdempotencyClaim
 
 
 class SealedIdempotentEnvelope(BaseModel):
@@ -145,6 +157,7 @@ def execute_idempotent(
     now: Callable[[], datetime],
     new_id: Callable[[], object],
     idempotency_sealing_key: bytes,
+    on_claimed: Callable[[IdempotencyClaim], None] | None = None,
 ) -> IdempotentExecution:
     """Claim, execute, seal, and complete one command in its caller transaction."""
     claimed = repository.claim_idempotency(
@@ -160,9 +173,23 @@ def execute_idempotent(
         raise IdempotencyReplayUnavailable("idempotency claim is unavailable")
     if row["request_fingerprint"] != fingerprint:
         raise IdempotencyConflict("Idempotency-Key is bound to a different request")
+    claim = IdempotencyClaim(
+        record_id=str(row["id"]),
+        actor=actor,
+        operation=operation,
+        idempotency_key=key,
+        request_fingerprint=fingerprint,
+        created=claimed,
+    )
     if not claimed:
-        return IdempotentExecution(response=_replay(row, idempotency_sealing_key), replayed=True)
+        return IdempotentExecution(
+            response=_replay(row, idempotency_sealing_key),
+            replayed=True,
+            claim=claim,
+        )
 
+    if on_claimed is not None:
+        on_claimed(claim)
     response = command()
     envelope = SealedIdempotentEnvelope(
         actor=actor,
@@ -183,4 +210,4 @@ def execute_idempotent(
         now=now(),
     ):
         raise IdempotencyReplayUnavailable("idempotency completion is unavailable")
-    return IdempotentExecution(response=response, replayed=False)
+    return IdempotentExecution(response=response, replayed=False, claim=claim)

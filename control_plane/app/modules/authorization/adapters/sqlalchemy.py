@@ -263,8 +263,16 @@ class SqlAlchemyAuthorizationRepository:
         actor: str,
         operation: str,
         idempotency_key: str,
+        idempotency_claim_id: str | None,
     ) -> None:
-        source_identity = "\x1f".join((source_module, actor, operation, idempotency_key))
+        source_identity = "\x1f".join(
+            (
+                source_module,
+                idempotency_claim_id or actor,
+                "claim" if idempotency_claim_id is not None else operation,
+                idempotency_claim_id or idempotency_key,
+            )
+        )
         self.db.execute(
             text("SELECT pg_advisory_xact_lock(hashtextextended(:identity, 0))"),
             {"identity": source_identity},
@@ -277,21 +285,32 @@ class SqlAlchemyAuthorizationRepository:
         operation: str,
         idempotency_key: str,
         *,
+        idempotency_claim_id: str | None = None,
         for_update: bool = False,
     ) -> Any:
         suffix = " FOR UPDATE" if for_update else ""
+        if idempotency_claim_id is not None:
+            where = (
+                "source_module=:source_module "
+                "AND idempotency_claim_id=CAST(:idempotency_claim_id AS UUID)"
+            )
+        else:
+            where = (
+                "source_module=:source_module AND actor=:actor "
+                "AND operation=:operation AND idempotency_key=:idempotency_key"
+            )
         return (
             self.db.execute(
                 text(
                     'SELECT * FROM "authorization".convergence_work '
-                    "WHERE source_module=:source_module AND actor=:actor "
-                    "AND operation=:operation AND idempotency_key=:idempotency_key" + suffix
+                    f"WHERE {where} ORDER BY created_at DESC, id DESC LIMIT 1{suffix}"
                 ),
                 {
                     "source_module": source_module,
                     "actor": actor,
                     "operation": operation,
                     "idempotency_key": idempotency_key,
+                    "idempotency_claim_id": idempotency_claim_id,
                 },
             )
             .mappings()
@@ -314,6 +333,24 @@ class SqlAlchemyAuthorizationRepository:
             .one_or_none()
         )
 
+    def convergence_status_for_claim(
+        self,
+        source_module: str,
+        idempotency_claim_id: str,
+    ) -> str | None:
+        value = self.db.execute(
+            text(
+                'SELECT status FROM "authorization".convergence_work '
+                "WHERE source_module=:source_module "
+                "AND idempotency_claim_id=CAST(:idempotency_claim_id AS UUID)"
+            ),
+            {
+                "source_module": source_module,
+                "idempotency_claim_id": idempotency_claim_id,
+            },
+        ).scalar_one_or_none()
+        return str(value) if value is not None else None
+
     def insert_convergence_work(self, **values: Any) -> Any:
         parameters = {
             **values,
@@ -331,10 +368,12 @@ class SqlAlchemyAuthorizationRepository:
                     'INSERT INTO "authorization".convergence_work '
                     "(id, source_module, actor, operation, idempotency_key, reason, "
                     "source_transaction_id, "
+                    "idempotency_claim_id, request_fingerprint, "
                     "generation_map, affected_account_ids, affected_workspace_ids, "
                     "recompute_membership, status, phase, created_at, updated_at) VALUES "
                     "(:id, :source_module, :actor, :operation, :idempotency_key, :reason, "
                     ":source_transaction_id, "
+                    "CAST(:idempotency_claim_id AS UUID), :request_fingerprint, "
                     "CAST(:generation_map AS JSONB), CAST(:affected_account_ids AS JSONB), "
                     "CAST(:affected_workspace_ids AS JSONB), :recompute_membership, "
                     "'PENDING', 'SOURCE_REGISTERED', :now, :now) RETURNING *"
@@ -343,6 +382,16 @@ class SqlAlchemyAuthorizationRepository:
             )
             .mappings()
             .one()
+        )
+
+    def insert_pending_principal(self, **values: Any) -> None:
+        self.db.execute(
+            text(
+                'INSERT INTO "authorization".convergence_principal_pending '
+                "(work_id, account_id, generation, reason, created_at) VALUES "
+                "(:work_id, :account_id, :generation, :reason, :created_at)"
+            ),
+            values,
         )
 
     def source_transaction_status(self, source_transaction_id: str) -> str:
@@ -417,16 +466,89 @@ class SqlAlchemyAuthorizationRepository:
             {"id": work_id, "now": now},
         )
 
+    def settle_pending_principal(
+        self,
+        work_id: str,
+        account_id: str,
+        *,
+        bump_version: bool,
+        now: datetime,
+    ) -> Any:
+        self.db.execute(
+            text(
+                'SELECT account_id FROM "authorization".principal_version '
+                "WHERE account_id=:account_id FOR UPDATE"
+            ),
+            {"account_id": account_id},
+        ).one()
+        association = self.db.execute(
+            text(
+                'DELETE FROM "authorization".convergence_principal_pending '
+                "WHERE work_id=:work_id AND account_id=:account_id "
+                "RETURNING generation"
+            ),
+            {"work_id": work_id, "account_id": account_id},
+        ).scalar_one_or_none()
+        if association is None:
+            return None
+        remaining = (
+            self.db.execute(
+                text(
+                    "SELECT generation, reason FROM "
+                    '"authorization".convergence_principal_pending '
+                    "WHERE account_id=:account_id "
+                    "ORDER BY generation DESC, work_id LIMIT 1"
+                ),
+                {"account_id": account_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return (
+            self.db.execute(
+                text(
+                    'UPDATE "authorization".principal_version SET '
+                    "version=version+:version_increment, "
+                    "dirty_generation=:dirty_generation, dirty_reason=:dirty_reason, "
+                    "updated_at=:now WHERE account_id=:account_id RETURNING *"
+                ),
+                {
+                    "account_id": account_id,
+                    "version_increment": 1 if bump_version else 0,
+                    "dirty_generation": (
+                        int(remaining["generation"]) if remaining is not None else None
+                    ),
+                    "dirty_reason": str(remaining["reason"]) if remaining is not None else None,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one()
+        )
+
     def pending_convergence_for_account(self, account_id: str) -> list[str]:
         return [
             str(value)
             for value in self.db.execute(
                 text(
-                    'SELECT id FROM "authorization".convergence_work '
-                    "WHERE status='PENDING' AND generation_map ? :account_id "
-                    "ORDER BY created_at, id"
+                    'SELECT work.id FROM "authorization".convergence_work AS work '
+                    'JOIN "authorization".convergence_principal_pending AS pending '
+                    "ON pending.work_id=work.id "
+                    "WHERE work.status='PENDING' AND pending.account_id=:account_id "
+                    "ORDER BY work.created_at, work.id"
                 ),
                 {"account_id": account_id},
+            ).scalars()
+        ]
+
+    def pending_convergence_work_ids(self) -> list[str]:
+        return [
+            str(value)
+            for value in self.db.execute(
+                text(
+                    'SELECT id FROM "authorization".convergence_work '
+                    "WHERE status='PENDING' ORDER BY created_at, id"
+                )
             ).scalars()
         ]
 

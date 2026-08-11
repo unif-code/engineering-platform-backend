@@ -22,6 +22,7 @@ from control_plane.app.modules.organization.api.routes import (
     OrganizationHttpRuntime,
     create_organization_router,
 )
+from control_plane.app.modules.organization.ports import SecurityChangePort
 from control_plane.app.shared.api.problem import register_problem_handlers
 from control_plane.app.shared.api.request_id import request_id_middleware
 from control_plane.app.shared.idempotency import SealedIdempotentEnvelope
@@ -41,10 +42,12 @@ def _isolated_client(
     dependencies: OrganizationDependencies,
     *,
     guard: Callable[[Principal, str, str | None], None] | None = None,
+    security_changes: SecurityChangePort | None = None,
 ) -> TestClient:
     runtime = OrganizationHttpRuntime(
         engine=organization_rw_engine,
         dependencies=dependencies,
+        security_changes=security_changes,
     )
     app = FastAPI()
     register_problem_handlers(app)
@@ -57,6 +60,29 @@ def _isolated_client(
         )
     )
     return TestClient(app, base_url="https://testserver", raise_server_exceptions=False)
+
+
+class RecordingSecurityChanges:
+    def __init__(self) -> None:
+        self.begins: list[dict[str, object]] = []
+        self.completed: list[object] = []
+        self.cancelled: list[object] = []
+
+    def begin(self, **values: object) -> object:
+        self.begins.append(values)
+        return object()
+
+    def complete(self, ticket: object, **_values: object) -> set[str]:
+        self.completed.append(ticket)
+        return set()
+
+    def cancel(self, ticket: object) -> set[str]:
+        self.cancelled.append(ticket)
+        return set()
+
+    def claim_converged(self, source_module: str, idempotency_claim_id: str) -> bool:
+        del source_module, idempotency_claim_id
+        return True
 
 
 def test_isolated_routes_have_fixed_operation_ids_and_camel_case_shape(
@@ -199,27 +225,37 @@ def test_concurrent_duplicate_key_executes_fact_audit_and_callback_exactly_once(
         organization_identity_engine,
         on_membership_change=hold_callback,
     )
-    client = _isolated_client(organization_rw_engine, dependencies)
+    security_changes = RecordingSecurityChanges()
+    client = _isolated_client(
+        organization_rw_engine,
+        dependencies,
+        security_changes=security_changes,
+    )
     path = f"/api/v1/admin/accounts/{MANAGER_ID}/superior"
-    body = {"superiorId": None, "reason": "concurrent create"}
+    body: dict[str, object] = {"superiorId": None, "reason": "concurrent create"}
     headers = {**SAME_ORIGIN, "Idempotency-Key": "org-concurrent-key-0001"}
 
-    def send() -> HttpxResponse:
-        return cast(HttpxResponse, client.put(path, json=body, headers=headers))
+    def send(payload: dict[str, object]) -> HttpxResponse:
+        return cast(HttpxResponse, client.put(path, json=payload, headers=headers))
 
     with ThreadPoolExecutor(max_workers=2) as pool:
-        first = pool.submit(send)
+        first = pool.submit(send, body)
         assert callback_entered.wait(timeout=3)
-        second = pool.submit(send)
+        second = pool.submit(send, {**body, "reason": "concurrent conflict"})
         try:
             with pytest.raises(FutureTimeout):
                 second.result(timeout=0.5)
         finally:
             release_callback.set()
         responses = [first.result(timeout=3), second.result(timeout=3)]
+    after_commit_conflict = send({**body, "reason": "after commit conflict"})
 
-    assert [response.status_code for response in responses] == [204, 204]
+    assert [response.status_code for response in responses] == [204, 409]
+    assert after_commit_conflict.status_code == 409
     assert callbacks == [(MANAGER_ID,)]
+    assert len(security_changes.begins) == 1
+    assert len(security_changes.completed) == 1
+    assert security_changes.cancelled == []
     with organization_owner_engine.connect() as db:
         counts = db.execute(
             text(
@@ -279,6 +315,57 @@ def test_different_payload_conflicts_and_tampered_replay_fails_closed(
     assert tampered.headers["content-type"].startswith("application/problem+json")
     assert tampered.json()["title"] == "Idempotency replay unavailable"
     assert callbacks == [(MANAGER_ID,)]
+
+
+def test_only_source_idempotency_claim_owner_creates_and_completes_convergence_work(
+    organization_owner_engine: Engine,
+    organization_rw_engine: Engine,
+    organization_identity_engine: Engine,
+    clean_organization_db: None,
+) -> None:
+    insert_account(
+        organization_owner_engine,
+        account_id=MANAGER_ID,
+        employee_no="00000401",
+        display_name="Manager",
+    )
+    dependencies = organization_dependencies(
+        organization_identity_engine,
+        on_membership_change=lambda _ids: None,
+    )
+    security_changes = RecordingSecurityChanges()
+    client = _isolated_client(
+        organization_rw_engine,
+        dependencies,
+        security_changes=security_changes,
+    )
+    path = f"/api/v1/admin/accounts/{MANAGER_ID}/superior"
+    headers = {**SAME_ORIGIN, "Idempotency-Key": "org-claim-owner-0001"}
+    body = {"superiorId": None, "reason": "claim owner"}
+
+    first = client.put(path, json=body, headers=headers)
+    replay = client.put(path, json=body, headers=headers)
+    conflict = client.put(
+        path,
+        json={**body, "reason": "different fingerprint"},
+        headers=headers,
+    )
+
+    assert [first.status_code, replay.status_code, conflict.status_code] == [204, 204, 409]
+    assert len(security_changes.begins) == 1
+    assert len(security_changes.completed) == 1
+    assert security_changes.cancelled == []
+    registration = security_changes.begins[0]
+    with organization_owner_engine.connect() as db:
+        persisted_fingerprint = db.execute(
+            text(
+                "SELECT request_fingerprint FROM organization.idempotency_record "
+                "WHERE idempotency_key='org-claim-owner-0001'"
+            )
+        ).scalar_one()
+    assert registration["request_fingerprint"] == persisted_fingerprint
+    assert registration["idempotency_claim_id"]
+    assert str(registration["source_transaction_id"]).isdigit()
 
 
 def test_callback_failure_rolls_back_fact_audit_and_idempotency_claim(

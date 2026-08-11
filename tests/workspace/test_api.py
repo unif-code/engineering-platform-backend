@@ -20,7 +20,7 @@ from control_plane.app.modules.workspace.api.routes import (
     WorkspaceHttpRuntime,
     create_workspace_router,
 )
-from control_plane.app.modules.workspace.ports import DirectReportView
+from control_plane.app.modules.workspace.ports import DirectReportView, SecurityChangePort
 from control_plane.app.shared.api.problem import register_problem_handlers
 from control_plane.app.shared.api.request_id import request_id_middleware
 from control_plane.app.shared.idempotency import SealedIdempotentEnvelope
@@ -54,10 +54,12 @@ def _isolated_client(
     guard: Callable[[SessionPrincipal, str, str | None], None] | None = None,
     runtime_provider: Callable[[], WorkspaceHttpRuntime] | None = None,
     principal_provider: Callable[[], SessionPrincipal] | None = None,
+    security_changes: SecurityChangePort | None = None,
 ) -> TestClient:
     runtime = WorkspaceHttpRuntime(
         engine=workspace_rw_engine,
         dependencies=dependencies,
+        security_changes=security_changes,
     )
     app = FastAPI()
     register_problem_handlers(app)
@@ -70,6 +72,30 @@ def _isolated_client(
         )
     )
     return TestClient(app, base_url="https://testserver", raise_server_exceptions=False)
+
+
+class RecordingSecurityChanges:
+    def __init__(self) -> None:
+        self.begins: list[dict[str, object]] = []
+        self.completed: list[object] = []
+        self.cancelled: list[object] = []
+        self.converged = True
+
+    def begin(self, **values: object) -> object:
+        self.begins.append(values)
+        return object()
+
+    def complete(self, ticket: object, **_values: object) -> set[str]:
+        self.completed.append(ticket)
+        return set()
+
+    def cancel(self, ticket: object) -> set[str]:
+        self.cancelled.append(ticket)
+        return set()
+
+    def claim_converged(self, source_module: str, idempotency_claim_id: str) -> bool:
+        del source_module, idempotency_claim_id
+        return self.converged
 
 
 def _configure_two_leaders(
@@ -380,6 +406,113 @@ def test_success_replay_conflict_and_tamper_are_durable_and_cookie_free(
             )
         ).one()
     assert counts == (1, 1, 2)
+
+
+def test_workspace_convergence_work_is_owned_only_by_new_source_claim(
+    workspace_owner_engine: Engine,
+    workspace_rw_engine: Engine,
+    workspace_identity_engine: Engine,
+    workspace_organization_engine: Engine,
+    clean_workspace_db: None,
+) -> None:
+    configure_org_leader(
+        owner_engine=workspace_owner_engine,
+        organization_engine=workspace_organization_engine,
+        identity_engine=workspace_identity_engine,
+        manager_id=MANAGER_ID,
+        leader_id=OWNER_ID,
+    )
+    dependencies = workspace_dependencies(
+        workspace_identity_engine,
+        workspace_organization_engine,
+    )
+    security_changes = RecordingSecurityChanges()
+    client = _isolated_client(
+        workspace_rw_engine,
+        dependencies,
+        security_changes=security_changes,
+    )
+    headers = {**SAME_ORIGIN, "Idempotency-Key": "workspace-claim-owner-0001"}
+    body = {"name": "Claim owner", "ownerId": OWNER_ID, "reason": "create"}
+
+    first = client.post("/api/v1/admin/workspaces", json=body, headers=headers)
+    replay = client.post("/api/v1/admin/workspaces", json=body, headers=headers)
+    conflict = client.post(
+        "/api/v1/admin/workspaces",
+        json={**body, "name": "Different"},
+        headers=headers,
+    )
+
+    assert [first.status_code, replay.status_code, conflict.status_code] == [201, 201, 409]
+    assert len(security_changes.begins) == 1
+    assert len(security_changes.completed) == 1
+    assert security_changes.cancelled == []
+    registration = security_changes.begins[0]
+    with workspace_owner_engine.connect() as db:
+        persisted_fingerprint = db.execute(
+            text(
+                "SELECT request_fingerprint FROM workspace.idempotency_record "
+                "WHERE idempotency_key='workspace-claim-owner-0001'"
+            )
+        ).scalar_one()
+    assert registration["request_fingerprint"] == persisted_fingerprint
+    assert registration["idempotency_claim_id"]
+    assert str(registration["source_transaction_id"]).isdigit()
+
+
+def test_same_key_replay_stays_unavailable_until_owner_convergence_is_terminal(
+    workspace_owner_engine: Engine,
+    workspace_rw_engine: Engine,
+    workspace_identity_engine: Engine,
+    workspace_organization_engine: Engine,
+    clean_workspace_db: None,
+) -> None:
+    configure_org_leader(
+        owner_engine=workspace_owner_engine,
+        organization_engine=workspace_organization_engine,
+        identity_engine=workspace_identity_engine,
+        manager_id=MANAGER_ID,
+        leader_id=OWNER_ID,
+    )
+    dependencies = workspace_dependencies(
+        workspace_identity_engine,
+        workspace_organization_engine,
+    )
+
+    class FailingOwnerConvergence(RecordingSecurityChanges):
+        def complete(self, ticket: object, **_values: object) -> set[str]:
+            self.completed.append(ticket)
+            self.converged = False
+            raise RuntimeError("projection failure")
+
+    security_changes = FailingOwnerConvergence()
+    client = _isolated_client(
+        workspace_rw_engine,
+        dependencies,
+        security_changes=security_changes,
+    )
+    headers = {**SAME_ORIGIN, "Idempotency-Key": "workspace-pending-replay-0001"}
+    body = {"name": "Pending replay", "ownerId": OWNER_ID, "reason": "create"}
+
+    owner = client.post("/api/v1/admin/workspaces", json=body, headers=headers)
+    pending_replay = client.post(
+        "/api/v1/admin/workspaces",
+        json=body,
+        headers=headers,
+    )
+    security_changes.converged = True
+    completed_replay = client.post(
+        "/api/v1/admin/workspaces",
+        json=body,
+        headers=headers,
+    )
+
+    assert owner.status_code == 503
+    assert pending_replay.status_code == 503
+    assert completed_replay.status_code == 201
+    assert len(security_changes.begins) == 1
+    assert len(security_changes.completed) == 1
+    assert security_changes.cancelled == []
 
 
 def test_deterministic_denial_replays_with_current_request_id_after_state_repair(
@@ -721,7 +854,12 @@ def test_concurrent_same_key_creates_one_fact_and_exact_response(
             return real_organization.direct_reports(leader_id)
 
     blocking = replace(dependencies, organization=BlockingOrganization())
-    client = _isolated_client(workspace_rw_engine, blocking)
+    security_changes = RecordingSecurityChanges()
+    client = _isolated_client(
+        workspace_rw_engine,
+        blocking,
+        security_changes=security_changes,
+    )
     body = {"name": "Concurrent", "ownerId": OWNER_ID, "reason": "same key"}
     headers = {**SAME_ORIGIN, "Idempotency-Key": "workspace-concurrent-0001"}
 
@@ -744,6 +882,9 @@ def test_concurrent_same_key_creates_one_fact_and_exact_response(
     assert [response.status_code for response in responses] == [201, 201]
     assert responses[0].json() == responses[1].json()
     assert checks == 1
+    assert len(security_changes.begins) == 1
+    assert len(security_changes.completed) == 1
+    assert security_changes.cancelled == []
     with workspace_owner_engine.connect() as db:
         counts = db.execute(
             text(

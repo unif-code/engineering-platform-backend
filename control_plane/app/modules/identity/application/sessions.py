@@ -2,6 +2,9 @@ from datetime import timedelta
 
 from control_plane.app.modules.identity.application.common import audit, token_hash
 from control_plane.app.modules.identity.application.dependencies import IdentityDependencies
+from control_plane.app.modules.identity.application.security_change import (
+    notify_identity_change,
+)
 from control_plane.app.modules.identity.domain.account import AccountStatus
 from control_plane.app.modules.identity.domain.models import Principal
 from control_plane.app.modules.identity.domain.session import (
@@ -37,7 +40,7 @@ def finalize_session_revocations(
         reason=reason,
     )
     if invoke_hook:
-        dependencies.on_auth_change(account_id)
+        notify_identity_change(dependencies.on_auth_change, account_id)
 
 
 def issue_session(

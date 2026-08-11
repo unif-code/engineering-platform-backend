@@ -72,6 +72,7 @@ class AuthorizationRepository(Protocol):
         actor: str,
         operation: str,
         idempotency_key: str,
+        idempotency_claim_id: str | None,
     ) -> None: ...
 
     def convergence_work_by_source(
@@ -81,6 +82,7 @@ class AuthorizationRepository(Protocol):
         operation: str,
         idempotency_key: str,
         *,
+        idempotency_claim_id: str | None = None,
         for_update: bool = False,
     ) -> Any: ...
 
@@ -91,7 +93,15 @@ class AuthorizationRepository(Protocol):
         for_update: bool = False,
     ) -> Any: ...
 
+    def convergence_status_for_claim(
+        self,
+        source_module: str,
+        idempotency_claim_id: str,
+    ) -> str | None: ...
+
     def insert_convergence_work(self, **values: Any) -> Any: ...
+
+    def insert_pending_principal(self, **values: Any) -> None: ...
 
     def source_transaction_status(self, source_transaction_id: str) -> str: ...
 
@@ -116,7 +126,18 @@ class AuthorizationRepository(Protocol):
 
     def cancel_convergence_work(self, work_id: str, now: datetime) -> None: ...
 
+    def settle_pending_principal(
+        self,
+        work_id: str,
+        account_id: str,
+        *,
+        bump_version: bool,
+        now: datetime,
+    ) -> Any: ...
+
     def pending_convergence_for_account(self, account_id: str) -> list[str]: ...
+
+    def pending_convergence_work_ids(self) -> list[str]: ...
 
     def route_registry(self) -> list[Any]: ...
 

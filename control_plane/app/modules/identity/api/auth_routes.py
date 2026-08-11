@@ -52,7 +52,11 @@ from control_plane.app.modules.identity.application.security_change import (
 from control_plane.app.modules.identity.domain.errors import AuthenticationFailed
 from control_plane.app.shared.api.camel import CamelModel
 from control_plane.app.shared.api.idempotency import require_idempotency_key
-from control_plane.app.shared.api.problem import PROBLEM_RESPONSES, problem_response
+from control_plane.app.shared.api.problem import (
+    PROBLEM_RESPONSES,
+    SERVICE_UNAVAILABLE_RESPONSE,
+    problem_response,
+)
 from control_plane.app.shared.security import assert_same_origin
 
 SESSION_COOKIE = "ep_session"
@@ -64,7 +68,10 @@ _COOKIE_OPTIONS: dict[str, Any] = {
 }
 _AUTH_RESPONSES = cast(
     dict[int | str, dict[str, Any]],
-    {status: PROBLEM_RESPONSES[status] for status in (401, 403, 409, 422, 429, 500)},
+    {
+        **{status: PROBLEM_RESPONSES[status] for status in (401, 403, 409, 422, 429, 500)},
+        503: SERVICE_UNAVAILABLE_RESPONSE,
+    },
 )
 
 
@@ -72,6 +79,7 @@ _AUTH_RESPONSES = cast(
 class IdentityHttpRuntime:
     engine: Engine
     dependencies: IdentityDependencies
+    security_changes: Any | None = None
 
 
 def _dto_body(dto: CamelModel) -> dict[str, Any]:
@@ -186,6 +194,7 @@ def _execute(
     body: Mapping[str, object],
     command: Callable[[Any], IdempotentResponse],
 ) -> JSONResponse:
+    change_source = None
     try:
         with runtime.engine.begin() as db:
             source_transaction_id = str(
@@ -196,7 +205,7 @@ def _execute(
                 operation=operation,
                 idempotency_key=key,
                 source_transaction_id=source_transaction_id,
-            ):
+            ) as change_source:
                 repository = runtime.dependencies.repository_factory(db)
                 execution = execute_idempotent(
                     repository,
@@ -211,11 +220,35 @@ def _execute(
                     ),
                     command=lambda: command(db),
                     dependencies=runtime.dependencies,
+                    on_claimed=change_source.bind_claim,
                 )
     except IdempotencyConflict:
         return problem_response(409, "Idempotency conflict")
     except IdempotencyReplayUnavailable:
         return problem_response(409, "Idempotency replay unavailable")
+    except Exception:
+        if runtime.security_changes is not None and change_source is not None:
+            for ticket in change_source.tickets:
+                try:
+                    runtime.security_changes.complete(ticket)
+                except Exception:
+                    pass
+        raise
+    if runtime.security_changes is not None and change_source is not None:
+        try:
+            for ticket in change_source.tickets:
+                runtime.security_changes.complete(ticket)
+        except Exception:
+            return problem_response(503, "Authorization convergence unavailable")
+        if (
+            execution.replayed
+            and 200 <= execution.response.status_code < 300
+            and runtime.security_changes.claim_convergence_status(
+                "identity", execution.claim.record_id
+            )
+            not in (None, "COMPLETED")
+        ):
+            return problem_response(503, "Authorization convergence unavailable")
     return _render(execution.response)
 
 

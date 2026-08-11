@@ -30,7 +30,16 @@ def test_openapi_declares_authentication_operations_and_idempotency_header() -> 
         assert idempotency["schema"]["maxLength"] == 128
         assert idempotency["schema"]["pattern"] == r"^[A-Za-z0-9._:-]+$"
         assert "replay" in idempotency["description"].lower()
-        assert set(operation["responses"]) >= {"200", "401", "403", "409", "422", "429", "500"}
+        assert set(operation["responses"]) >= {
+            "200",
+            "401",
+            "403",
+            "409",
+            "422",
+            "429",
+            "500",
+            "503",
+        }
         assert "Retry-After" in operation["responses"]["429"]["headers"]
 
 
