@@ -8,7 +8,12 @@ from control_plane.app.modules.identity.domain.configuration_policy import (
     OwnedPolicyKey,
     OwnedPolicySnapshot,
     OwnedPolicySnapshotUnavailable,
+    OwnedPolicyValidationIssue,
+    identity_policy_from_candidate,
+    validate_identity_policy_candidate,
+    validate_identity_policy_catalog,
 )
+from control_plane.app.modules.identity.domain.policy import EffectiveIdentityPolicy
 from control_plane.app.modules.identity.ports.configuration_policy import (
     IdentityPolicyOwnerRepository,
 )
@@ -106,10 +111,10 @@ def save_policy_draft_validation(
     )
 
 
-def active_policy_snapshot(
+def _active_policy_and_effective(
     repository: IdentityPolicyOwnerRepository,
     namespace: str,
-) -> OwnedPolicySnapshot:
+) -> tuple[OwnedPolicySnapshot, EffectiveIdentityPolicy]:
     snapshot = repository.active_snapshot(namespace)
     if snapshot is None:
         raise OwnedPolicySnapshotUnavailable(namespace)
@@ -121,4 +126,39 @@ def active_policy_snapshot(
     ).encode("utf-8")
     if not hashlib.sha256(canonical).hexdigest() == snapshot.snapshot_hash:
         raise OwnedPolicySnapshotUnavailable(namespace)
-    return snapshot
+    if validate_identity_policy_catalog(repository.catalog(namespace)):
+        raise OwnedPolicySnapshotUnavailable(namespace)
+    if validate_identity_policy_candidate(snapshot.schema_revision, snapshot.values):
+        raise OwnedPolicySnapshotUnavailable(namespace)
+    try:
+        policy = identity_policy_from_candidate(snapshot.values)
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        raise OwnedPolicySnapshotUnavailable(namespace) from exc
+    return snapshot, policy
+
+
+def active_policy_snapshot(
+    repository: IdentityPolicyOwnerRepository,
+    namespace: str,
+) -> OwnedPolicySnapshot:
+    return _active_policy_and_effective(repository, namespace)[0]
+
+
+def validate_policy_candidate(
+    repository: IdentityPolicyOwnerRepository,
+    namespace: str,
+    *,
+    schema_revision: int,
+    values: dict[str, Any],
+) -> list[OwnedPolicyValidationIssue]:
+    catalog_issues = validate_identity_policy_catalog(repository.catalog(namespace))
+    if catalog_issues:
+        return catalog_issues
+    return validate_identity_policy_candidate(schema_revision, values)
+
+
+def effective_identity_policy(
+    repository: IdentityPolicyOwnerRepository,
+    namespace: str = "identity",
+) -> EffectiveIdentityPolicy:
+    return _active_policy_and_effective(repository, namespace)[1]

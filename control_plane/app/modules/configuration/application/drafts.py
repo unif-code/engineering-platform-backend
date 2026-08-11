@@ -9,6 +9,7 @@ from control_plane.app.modules.configuration.application.dependencies import (
     ConfigurationDependencies,
 )
 from control_plane.app.modules.configuration.domain import (
+    ConfigurationError,
     Draft,
     DraftArchived,
     DraftNotFound,
@@ -17,7 +18,6 @@ from control_plane.app.modules.configuration.domain import (
     InvalidPolicyValue,
     StaleDraftBase,
     StaleDraftRevision,
-    ValidationIssue,
 )
 from control_plane.app.modules.configuration.ports import PolicyOwnerPort
 from control_plane.app.shared.api.request_id import current_request_id
@@ -42,6 +42,7 @@ def _audit(
     draft_id: str,
     result: str,
     reason: str,
+    target_type: str = "configuration_draft",
 ) -> None:
     record_in_transaction(
         db,
@@ -51,7 +52,7 @@ def _audit(
             actor=actor_id,
             actor_type="human",
             action=action,
-            target_type="configuration_draft",
+            target_type=target_type,
             target_id=draft_id,
             result=result,
             reason=reason,
@@ -62,67 +63,64 @@ def _audit(
 
 
 def _require_editable(
-    db: Connection,
     owner: PolicyOwnerPort,
     *,
     draft_id: str,
     namespace: str,
     actor_id: str,
     expected_revision: int,
-    dependencies: ConfigurationDependencies,
-    action: str,
 ) -> Draft:
     draft = owner.draft(draft_id, for_update=True)
     if draft is None or draft.namespace != namespace:
         raise DraftNotFound(draft_id)
     if draft.owner_id != actor_id:
-        _audit(
-            db,
-            dependencies=dependencies,
-            actor_id=actor_id,
-            action=action,
-            draft_id=draft_id,
-            result="DENIED",
-            reason="draft owner mismatch",
-        )
         raise DraftOwnerRequired(draft_id)
     if draft.status == "ARCHIVED":
-        _audit(
-            db,
-            dependencies=dependencies,
-            actor_id=actor_id,
-            action=action,
-            draft_id=draft_id,
-            result="DENIED",
-            reason="draft is archived",
-        )
         raise DraftArchived(draft_id)
     if draft.revision != expected_revision:
-        _audit(
-            db,
-            dependencies=dependencies,
-            actor_id=actor_id,
-            action=action,
-            draft_id=draft_id,
-            result="CONFLICT",
-            reason=(f"stale revision; expected={expected_revision}; current={draft.revision}"),
-        )
         raise StaleDraftRevision(draft_id)
     active = owner.active_snapshot(namespace)
     if draft.base_version != active.version:
-        _audit(
-            db,
-            dependencies=dependencies,
-            actor_id=actor_id,
-            action=action,
-            draft_id=draft_id,
-            result="CONFLICT",
-            reason=(
-                f"stale base; baseVersion={draft.base_version}; activeVersion={active.version}"
-            ),
-        )
         raise StaleDraftBase(draft_id)
     return draft
+
+
+def _denial_reason_code(error: ConfigurationError) -> str:
+    if isinstance(error, DraftNotFound):
+        return "DRAFT_NOT_FOUND"
+    if isinstance(error, DraftOwnerRequired):
+        return "DRAFT_OWNER_REQUIRED"
+    if isinstance(error, DraftArchived):
+        return "DRAFT_ARCHIVED"
+    if isinstance(error, StaleDraftRevision):
+        return "STALE_REVISION"
+    if isinstance(error, StaleDraftBase):
+        return "STALE_BASE"
+    if isinstance(error, InvalidPolicyValue):
+        return "UNREGISTERED_KEY"
+    return "CONFIGURATION_CONFLICT"
+
+
+def _audit_denial(
+    db: Connection,
+    *,
+    dependencies: ConfigurationDependencies,
+    actor_id: str,
+    operation: str,
+    namespace: str,
+    draft_id: str | None,
+    error: ConfigurationError,
+) -> None:
+    _audit(
+        db,
+        dependencies=dependencies,
+        actor_id=actor_id,
+        action=f"configuration.draft.{operation}_denied",
+        draft_id=draft_id or namespace,
+        target_type=("configuration_draft" if draft_id is not None else "configuration_namespace"),
+        result="DENIED",
+        reason=f"namespace={namespace}; reasonCode={_denial_reason_code(error)}",
+    )
 
 
 def _known_values(
@@ -145,7 +143,19 @@ def create_draft(
     actor_id: str,
     dependencies: ConfigurationDependencies,
 ) -> Draft:
-    _known_values(owner, namespace, values)
+    try:
+        _known_values(owner, namespace, values)
+    except InvalidPolicyValue as error:
+        _audit_denial(
+            db,
+            dependencies=dependencies,
+            actor_id=actor_id,
+            operation="create",
+            namespace=namespace,
+            draft_id=None,
+            error=error,
+        )
+        raise
     active = owner.active_snapshot(namespace)
     content = {**active.values, **values}
     draft_id = str(dependencies.random.uuid4())
@@ -186,28 +196,37 @@ def update_draft(
     expected_revision: int,
     dependencies: ConfigurationDependencies,
 ) -> Draft:
-    draft = _require_editable(
-        db,
-        owner,
-        draft_id=draft_id,
-        namespace=namespace,
-        actor_id=actor_id,
-        expected_revision=expected_revision,
-        dependencies=dependencies,
-        action="configuration.draft.update_denied",
-    )
-    _known_values(owner, namespace, values)
-    content = {**draft.content, **values}
-    updated = owner.update_draft(
-        draft_id,
-        expected_revision=expected_revision,
-        content=content,
-        content_hash=_content_hash(content),
-        stale=False,
-        now=dependencies.clock.now(),
-    )
-    if updated is None:
-        raise StaleDraftRevision(draft_id)
+    try:
+        draft = _require_editable(
+            owner,
+            draft_id=draft_id,
+            namespace=namespace,
+            actor_id=actor_id,
+            expected_revision=expected_revision,
+        )
+        _known_values(owner, namespace, values)
+        content = {**draft.content, **values}
+        updated = owner.update_draft(
+            draft_id,
+            expected_revision=expected_revision,
+            content=content,
+            content_hash=_content_hash(content),
+            stale=False,
+            now=dependencies.clock.now(),
+        )
+        if updated is None:
+            raise StaleDraftRevision(draft_id)
+    except ConfigurationError as error:
+        _audit_denial(
+            db,
+            dependencies=dependencies,
+            actor_id=actor_id,
+            operation="update",
+            namespace=namespace,
+            draft_id=draft_id,
+            error=error,
+        )
+        raise
     _audit(
         db,
         dependencies=dependencies,
@@ -223,89 +242,6 @@ def update_draft(
     return updated
 
 
-def _integer_issue(
-    key: str, value: Any, minimum: int, maximum: int | None
-) -> ValidationIssue | None:
-    if not isinstance(value, int) or isinstance(value, bool):
-        return ValidationIssue(
-            code="INVALID_TYPE",
-            key=key,
-            message="Value must use the registered integer type.",
-        )
-    if value < minimum:
-        return ValidationIssue(
-            code="BELOW_MINIMUM",
-            key=key,
-            message="Value is below the permitted minimum.",
-        )
-    if maximum is not None and value > maximum:
-        return ValidationIssue(
-            code="ABOVE_MAXIMUM",
-            key=key,
-            message="Value exceeds the permitted maximum.",
-        )
-    return None
-
-
-def _validate(content: dict[str, Any]) -> list[ValidationIssue]:
-    issues: list[ValidationIssue] = []
-    integer_bounds = {
-        "identity.temp_credential_ttl": (1, None),
-        "identity.session_cap": (1, 10),
-        "identity.session_idle_timeout": (15, 240),
-        "identity.totp_attempt_cap": (1, None),
-        "identity.draft_archive_after": (1, None),
-    }
-    for key, (minimum, maximum) in integer_bounds.items():
-        issue = _integer_issue(key, content.get(key), minimum, maximum)
-        if issue is not None:
-            issues.append(issue)
-
-    password_age = content.get("identity.password_max_age")
-    if password_age != "NEVER":
-        issue = _integer_issue("identity.password_max_age", password_age, 1, None)
-        if issue is not None:
-            issues.append(issue)
-
-    backoff = content.get("identity.login_backoff")
-    expected_fields = {
-        "failureThreshold",
-        "initialDelaySeconds",
-        "maximumDelaySeconds",
-        "resetAfterHours",
-    }
-    if not isinstance(backoff, dict) or set(backoff) != expected_fields:
-        issues.append(
-            ValidationIssue(
-                code="INVALID_OBJECT",
-                key="identity.login_backoff",
-                message="Value does not match the registered object schema.",
-            )
-        )
-    else:
-        invalid_field = any(
-            not isinstance(value, int) or isinstance(value, bool) or value < 1
-            for value in backoff.values()
-        )
-        if invalid_field:
-            issues.append(
-                ValidationIssue(
-                    code="INVALID_OBJECT",
-                    key="identity.login_backoff",
-                    message="Value does not match the registered object schema.",
-                )
-            )
-        elif backoff["maximumDelaySeconds"] < backoff["initialDelaySeconds"]:
-            issues.append(
-                ValidationIssue(
-                    code="CROSS_FIELD_CONFLICT",
-                    key="identity.login_backoff",
-                    message="Backoff maximum must not be below its initial delay.",
-                )
-            )
-    return sorted(issues, key=lambda issue: (issue.key, issue.code))
-
-
 def validate_draft(
     db: Connection,
     owner: PolicyOwnerPort,
@@ -316,30 +252,43 @@ def validate_draft(
     expected_revision: int,
     dependencies: ConfigurationDependencies,
 ) -> DraftValidation:
-    draft = _require_editable(
-        db,
-        owner,
-        draft_id=draft_id,
-        namespace=namespace,
-        actor_id=actor_id,
-        expected_revision=expected_revision,
-        dependencies=dependencies,
-        action="configuration.draft.validation_denied",
-    )
-    issues = _validate(draft.content)
-    evidence = {
-        "valid": not issues,
-        "issues": [issue.model_dump() for issue in issues],
-    }
-    updated = owner.save_validation(
-        draft_id,
-        expected_revision=expected_revision,
-        evidence=evidence,
-        dependency_versions={},
-        now=dependencies.clock.now(),
-    )
-    if updated is None:
-        raise StaleDraftRevision(draft_id)
+    try:
+        draft = _require_editable(
+            owner,
+            draft_id=draft_id,
+            namespace=namespace,
+            actor_id=actor_id,
+            expected_revision=expected_revision,
+        )
+        issues = owner.validate_candidate(
+            namespace,
+            schema_revision=draft.schema_revision,
+            values=draft.content,
+        )
+        evidence = {
+            "valid": not issues,
+            "issues": [issue.model_dump() for issue in issues],
+        }
+        updated = owner.save_validation(
+            draft_id,
+            expected_revision=expected_revision,
+            evidence=evidence,
+            dependency_versions={},
+            now=dependencies.clock.now(),
+        )
+        if updated is None:
+            raise StaleDraftRevision(draft_id)
+    except ConfigurationError as error:
+        _audit_denial(
+            db,
+            dependencies=dependencies,
+            actor_id=actor_id,
+            operation="validate",
+            namespace=namespace,
+            draft_id=draft_id,
+            error=error,
+        )
+        raise
     _audit(
         db,
         dependencies=dependencies,

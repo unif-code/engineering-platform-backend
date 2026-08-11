@@ -5,6 +5,7 @@ from typing import Any, Literal, cast
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from sqlalchemy import Engine, create_engine
+from sqlalchemy.exc import SQLAlchemyError
 
 from control_plane.app import __version__
 from control_plane.app.modules.audit.adapters.transactional import (
@@ -38,8 +39,10 @@ from control_plane.app.modules.configuration.api import (
 )
 from control_plane.app.modules.identity import (
     IdentityDependencies,
+    OwnedPolicySnapshotUnavailable,
     SessionPrincipal,
     current_identity_change_source,
+    effective_identity_policy,
 )
 from control_plane.app.modules.identity.adapters.runtime import (
     SystemClock,
@@ -369,9 +372,14 @@ def create_app(
         responses={503: SERVICE_UNAVAILABLE_RESPONSE, 500: PROBLEM_RESPONSES[500]},
     )
     def readyz() -> JSONResponse | dict[str, str]:
-        if ping(runtime_engine()):
-            return {"status": "ready"}
-        return problem_response(503, "Not ready", detail="database unreachable")
+        try:
+            if not ping(runtime_engine()):
+                return problem_response(503, "Not ready")
+            with identity_runtime_provider().engine.connect() as db:
+                effective_identity_policy(db)
+        except (OwnedPolicySnapshotUnavailable, SQLAlchemyError):
+            return problem_response(503, "Not ready")
+        return {"status": "ready"}
 
     app.include_router(create_auth_router(identity_runtime_provider))
     app.include_router(create_authorization_router(authorization_http_runtime))

@@ -207,6 +207,8 @@ def _execute(
         return problem_response(409, "Idempotency conflict")
     except IdempotencyReplayUnavailable:
         return problem_response(409, "Idempotency replay unavailable")
+    except PolicySnapshotUnavailable:
+        return problem_response(503, "Effective policy unavailable")
     return _render(execution.response)
 
 

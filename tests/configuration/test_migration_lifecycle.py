@@ -83,14 +83,14 @@ def test_fresh_upgrade_installs_independent_heads_and_deterministic_seed(
             ).one()
         assert expected_heads == {
             "0006_audit_configuration_grant",
-            "0007_identity_policy_reader",
+            "0008_identity_policy_catalog",
             "0001_organization_base",
             "0001_workspace_base",
             "0004_authorization_pending_set",
         }
         assert installed_heads == {
             "0006_audit_configuration_grant",
-            "0007_identity_policy_reader",
+            "0008_identity_policy_catalog",
             "0004_authorization_pending_set",
         }
         assert counts == (7, 1, 1, 1)

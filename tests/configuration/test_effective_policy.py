@@ -1,9 +1,15 @@
-import hashlib
 import json
 from datetime import timedelta
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
+
+from tests.configuration.policy_helpers import (
+    rollback_connection,
+    snapshot_with_idle_minutes,
+    temporary_active_snapshot,
+)
 
 pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("configuration_seed")]
 
@@ -42,8 +48,7 @@ def test_effective_policy_fails_closed_for_incomplete_or_hash_invalid_snapshot(
     from control_plane.app.modules.configuration import PolicySnapshotUnavailable
     from control_plane.app.modules.configuration.adapters import IdentityEffectivePolicy
 
-    with configuration_owner_engine.connect() as db:
-        transaction = db.begin()
+    with rollback_connection(configuration_owner_engine) as db:
         db.execute(
             text(
                 "UPDATE identity.version SET snapshot=snapshot - "
@@ -53,7 +58,6 @@ def test_effective_policy_fails_closed_for_incomplete_or_hash_invalid_snapshot(
         )
         with pytest.raises(PolicySnapshotUnavailable):
             IdentityEffectivePolicy().get_identity_policy(db)
-        transaction.rollback()
 
 
 def test_effective_policy_fails_closed_for_well_hashed_wrong_value_type(
@@ -62,55 +66,52 @@ def test_effective_policy_fails_closed_for_well_hashed_wrong_value_type(
     from control_plane.app.modules.configuration import PolicySnapshotUnavailable
     from control_plane.app.modules.configuration.adapters import IdentityEffectivePolicy
 
-    snapshot, _snapshot_hash = _snapshot_with_idle_minutes(60)
+    snapshot, _snapshot_hash = snapshot_with_idle_minutes(60)
     snapshot["identity.session_idle_timeout"] = "60"
-    canonical = json.dumps(
-        snapshot,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    snapshot_hash = hashlib.sha256(canonical).hexdigest()
-    with configuration_owner_engine.connect() as db:
-        transaction = db.begin()
-        db.execute(
-            text(
-                "UPDATE identity.version SET snapshot=CAST(:snapshot AS JSONB), "
-                "snapshot_hash=:snapshot_hash "
-                "WHERE namespace='identity' AND scope='PLATFORM' AND version=1"
-            ),
-            {
-                "snapshot": json.dumps(snapshot, separators=(",", ":")),
-                "snapshot_hash": snapshot_hash,
-            },
+    with temporary_active_snapshot(configuration_owner_engine, snapshot):
+        with configuration_owner_engine.connect() as db:
+            with pytest.raises(PolicySnapshotUnavailable):
+                IdentityEffectivePolicy().get_identity_policy(db)
+
+
+def test_readyz_accepts_a_valid_typed_identity_policy(
+    configuration_seed: None,
+) -> None:
+    del configuration_seed
+    from control_plane.app.bootstrap.app import create_app
+
+    response = TestClient(create_app()).get("/readyz")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ready"}
+
+
+@pytest.mark.parametrize("invalid_case", ["wrong_type", "missing_key"])
+def test_readyz_fails_closed_for_well_hashed_invalid_identity_policy(
+    configuration_owner_engine: Engine,
+    invalid_case: str,
+) -> None:
+    from control_plane.app.bootstrap.app import create_app
+
+    snapshot, _snapshot_hash = snapshot_with_idle_minutes(60)
+    if invalid_case == "wrong_type":
+        snapshot["identity.session_idle_timeout"] = "60"
+    else:
+        snapshot.pop("identity.session_idle_timeout")
+    request_id = f"req-ready{invalid_case.replace('_', '')}"
+    with temporary_active_snapshot(configuration_owner_engine, snapshot):
+        response = TestClient(create_app()).get(
+            "/readyz",
+            headers={"X-Request-ID": request_id},
         )
-        with pytest.raises(PolicySnapshotUnavailable):
-            IdentityEffectivePolicy().get_identity_policy(db)
-        transaction.rollback()
 
-
-def _snapshot_with_idle_minutes(minutes: int) -> tuple[dict[str, object], str]:
-    snapshot: dict[str, object] = {
-        "identity.temp_credential_ttl": 24,
-        "identity.password_max_age": "NEVER",
-        "identity.session_cap": 3,
-        "identity.session_idle_timeout": minutes,
-        "identity.login_backoff": {
-            "failureThreshold": 5,
-            "initialDelaySeconds": 30,
-            "maximumDelaySeconds": 900,
-            "resetAfterHours": 24,
-        },
-        "identity.totp_attempt_cap": 5,
-        "identity.draft_archive_after": 30,
-    }
-    canonical = json.dumps(
-        snapshot,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return snapshot, hashlib.sha256(canonical).hexdigest()
+        assert response.status_code == 503
+        assert response.headers["content-type"].startswith("application/problem+json")
+        assert response.json() == {
+            "title": "Not ready",
+            "status": 503,
+            "requestId": request_id,
+        }
 
 
 def test_test_only_direct_version_two_changes_identity_idle_expiry(
@@ -143,33 +144,32 @@ def test_test_only_direct_version_two_changes_identity_idle_expiry(
                 "identity.account"
             )
         )
-    _secret, token = _initialize_account(identity_rw_engine, deps, monkeypatch)
-    snapshot, snapshot_hash = _snapshot_with_idle_minutes(15)
-    with configuration_owner_engine.begin() as db:
-        db.execute(
-            text(
-                "INSERT INTO identity.version ("
-                "namespace, scope, version, snapshot, changeset, published_by, reason, "
-                "published_at, schema_revision, snapshot_hash, validation_evidence, "
-                "dependency_versions, preview_evidence) VALUES ("
-                "'identity', 'PLATFORM', 2, CAST(:snapshot AS JSONB), '{}'::jsonb, "
-                "'SYSTEM_TEST', 'test-only direct version helper', now(), 1, :hash, "
-                "CAST(:evidence AS JSONB), '{}'::jsonb, '{}'::jsonb)"
-            ),
-            {
-                "snapshot": json.dumps(snapshot, separators=(",", ":")),
-                "hash": snapshot_hash,
-                "evidence": json.dumps({"valid": True, "issues": []}),
-            },
-        )
-        db.execute(
-            text(
-                "UPDATE identity.active_pointer SET version=2 "
-                "WHERE namespace='identity' AND scope='PLATFORM'"
-            )
-        )
-
+    snapshot, snapshot_hash = snapshot_with_idle_minutes(15)
     try:
+        _secret, token = _initialize_account(identity_rw_engine, deps, monkeypatch)
+        with configuration_owner_engine.begin() as db:
+            db.execute(
+                text(
+                    "INSERT INTO identity.version ("
+                    "namespace, scope, version, snapshot, changeset, published_by, reason, "
+                    "published_at, schema_revision, snapshot_hash, validation_evidence, "
+                    "dependency_versions, preview_evidence) VALUES ("
+                    "'identity', 'PLATFORM', 2, CAST(:snapshot AS JSONB), '{}'::jsonb, "
+                    "'SYSTEM_TEST', 'test-only direct version helper', now(), 1, :hash, "
+                    "CAST(:evidence AS JSONB), '{}'::jsonb, '{}'::jsonb)"
+                ),
+                {
+                    "snapshot": json.dumps(snapshot, separators=(",", ":")),
+                    "hash": snapshot_hash,
+                    "evidence": json.dumps({"valid": True, "issues": []}),
+                },
+            )
+            db.execute(
+                text(
+                    "UPDATE identity.active_pointer SET version=2 "
+                    "WHERE namespace='identity' AND scope='PLATFORM'"
+                )
+            )
         clock.value += timedelta(minutes=16)
         with identity_rw_engine.begin() as db:
             assert validate_session(db, raw_token=token, dependencies=deps) is None

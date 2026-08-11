@@ -274,7 +274,7 @@ def test_current_alembic_heads_are_installed(identity_owner_engine: Engine) -> N
         installed = set(conn.execute(text("SELECT version_num FROM alembic_version")).scalars())
     assert installed == {
         "0006_audit_configuration_grant",
-        "0007_identity_policy_reader",
+        "0008_identity_policy_catalog",
         "0004_authorization_pending_set",
     }
 

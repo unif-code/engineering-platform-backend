@@ -1,8 +1,12 @@
+import hashlib
+import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
-from sqlalchemy import Engine, text
+from sqlalchemy import Connection, Engine, text
 
 from control_plane.app.modules.configuration import ConfigurationDependencies
 
@@ -33,6 +37,16 @@ def _dependencies() -> ConfigurationDependencies:
         random=_Random(),
         audit=SqlAlchemyTransactionalAuditAppender(),
     )
+
+
+@contextmanager
+def _rollback(engine: Engine) -> Iterator[Connection]:
+    with engine.connect() as db:
+        transaction = db.begin()
+        try:
+            yield db
+        finally:
+            transaction.rollback()
 
 
 def test_active_snapshot_returns_seeded_identity_version_one(
@@ -72,8 +86,7 @@ def test_active_snapshot_fails_closed_when_the_stored_hash_is_tampered(
         active_snapshot,
     )
 
-    with configuration_owner_engine.connect() as db:
-        transaction = db.begin()
+    with _rollback(configuration_owner_engine) as db:
         db.execute(
             text(
                 "UPDATE identity.version SET snapshot_hash=:invalid "
@@ -83,7 +96,70 @@ def test_active_snapshot_fails_closed_when_the_stored_hash_is_tampered(
         )
         with pytest.raises(PolicySnapshotUnavailable):
             active_snapshot(db, "identity")
-        transaction.rollback()
+
+
+@pytest.mark.parametrize(
+    "invalid_case",
+    [
+        "missing_key",
+        "extra_key",
+        "wrong_type",
+        "out_of_range",
+        "unrepresentable",
+        "unsupported_revision",
+    ],
+)
+def test_public_active_snapshot_fails_closed_for_well_hashed_invalid_candidate(
+    configuration_owner_engine: Engine,
+    invalid_case: str,
+) -> None:
+    from control_plane.app.modules.configuration import (
+        PolicySnapshotUnavailable,
+        active_snapshot,
+    )
+
+    with _rollback(configuration_owner_engine) as db:
+        snapshot = dict(
+            db.execute(
+                text(
+                    "SELECT snapshot FROM identity.version "
+                    "WHERE namespace='identity' AND scope='PLATFORM' AND version=1"
+                )
+            ).scalar_one()
+        )
+        schema_revision = 1
+        if invalid_case == "missing_key":
+            snapshot.pop("identity.session_idle_timeout")
+        elif invalid_case == "extra_key":
+            snapshot["identity.unknown"] = 1
+        elif invalid_case == "wrong_type":
+            snapshot["identity.session_idle_timeout"] = "60"
+        elif invalid_case == "out_of_range":
+            snapshot["identity.session_idle_timeout"] = 10
+        elif invalid_case == "unrepresentable":
+            snapshot["identity.temp_credential_ttl"] = 10**20
+        elif invalid_case == "unsupported_revision":
+            schema_revision = 2
+        canonical = json.dumps(
+            snapshot,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        db.execute(
+            text(
+                "UPDATE identity.version SET snapshot=CAST(:snapshot AS JSONB), "
+                "snapshot_hash=:snapshot_hash, schema_revision=:schema_revision "
+                "WHERE namespace='identity' AND scope='PLATFORM' AND version=1"
+            ),
+            {
+                "snapshot": json.dumps(snapshot, separators=(",", ":")),
+                "snapshot_hash": hashlib.sha256(canonical).hexdigest(),
+                "schema_revision": schema_revision,
+            },
+        )
+        with pytest.raises(PolicySnapshotUnavailable):
+            active_snapshot(db, "identity")
 
 
 def test_active_snapshot_fails_closed_when_no_pointer_exists(
@@ -129,6 +205,36 @@ def test_catalog_returns_the_seven_typed_identity_keys(
         "effect_semantics": "IMMEDIATE",
         "schema_revision": 1,
     }
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    [
+        ("unit", "HOURS"),
+        ("effect_semantics", "NEW_OBJECT"),
+    ],
+)
+def test_active_snapshot_fails_closed_when_owner_catalog_metadata_drifts(
+    configuration_owner_engine: Engine,
+    column: str,
+    value: str,
+) -> None:
+    from control_plane.app.modules.configuration import (
+        PolicySnapshotUnavailable,
+        active_snapshot,
+    )
+
+    assert column in {"unit", "effect_semantics"}
+    with _rollback(configuration_owner_engine) as db:
+        db.execute(
+            text(
+                f"UPDATE identity.policy_key SET {column}=:value "
+                "WHERE key='identity.session_idle_timeout'"
+            ),
+            {"value": value},
+        )
+        with pytest.raises(PolicySnapshotUnavailable):
+            active_snapshot(db, "identity")
 
 
 def test_draft_create_and_update_use_revision_etags_and_full_canonical_content(
@@ -233,3 +339,55 @@ def test_validation_is_bound_and_reports_idle_below_fifteen_without_echoing_valu
         "message": "Value is below the permitted minimum.",
     }
     assert active_version == 1
+
+
+def test_draft_validation_observes_identity_owner_schema_without_a_local_rule_copy(
+    configuration_rw_engine: Engine,
+) -> None:
+    from control_plane.app.modules.configuration import create_draft, validate_draft
+
+    with _rollback(configuration_rw_engine) as db:
+        dependencies = _dependencies()
+        created = create_draft(
+            db,
+            namespace="identity",
+            values={},
+            actor_id="admin-owner-rule",
+            dependencies=dependencies,
+        )
+        content = {**created.content, "identity.unknown": 1}
+        canonical = json.dumps(
+            content,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        db.execute(
+            text(
+                "UPDATE identity.draft SET content=CAST(:content AS JSONB), "
+                "content_hash=:content_hash WHERE id=:draft_id"
+            ),
+            {
+                "content": json.dumps(content, separators=(",", ":")),
+                "content_hash": hashlib.sha256(canonical).hexdigest(),
+                "draft_id": created.id,
+            },
+        )
+
+        result = validate_draft(
+            db,
+            namespace="identity",
+            draft_id=created.id,
+            actor_id="admin-owner-rule",
+            expected_revision=created.revision,
+            dependencies=dependencies,
+        )
+
+    assert result.valid is False
+    assert [issue.model_dump() for issue in result.issues] == [
+        {
+            "code": "UNREGISTERED_KEY",
+            "key": "identity.unknown",
+            "message": "Policy key is not registered.",
+        }
+    ]

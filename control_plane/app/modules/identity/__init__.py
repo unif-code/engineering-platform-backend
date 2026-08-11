@@ -50,6 +50,9 @@ from control_plane.app.modules.identity.application.configuration_policy import 
     create_policy_draft as _create_policy_draft,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
+    effective_identity_policy as _effective_identity_policy,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
     policy_catalog as _policy_catalog,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
@@ -60,6 +63,9 @@ from control_plane.app.modules.identity.application.configuration_policy import 
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
     update_policy_draft as _update_policy_draft,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
+    validate_policy_candidate as _validate_policy_candidate,
 )
 from control_plane.app.modules.identity.application.dependencies import IdentityDependencies
 from control_plane.app.modules.identity.application.security_change import (
@@ -122,6 +128,7 @@ from control_plane.app.modules.identity.domain.configuration_policy import (
     OwnedPolicyKey,
     OwnedPolicySnapshot,
     OwnedPolicySnapshotUnavailable,
+    OwnedPolicyValidationIssue,
 )
 from control_plane.app.modules.identity.domain.errors import (
     AccountConflict,
@@ -240,6 +247,31 @@ def save_policy_draft_validation(
 
 def active_policy_snapshot(db: Connection, namespace: str) -> OwnedPolicySnapshot:
     return _active_policy_snapshot(SqlAlchemyIdentityPolicyOwnerRepository(db), namespace)
+
+
+def validate_policy_candidate(
+    db: Connection,
+    namespace: str,
+    *,
+    schema_revision: int,
+    values: dict[str, Any],
+) -> list[OwnedPolicyValidationIssue]:
+    return _validate_policy_candidate(
+        SqlAlchemyIdentityPolicyOwnerRepository(db),
+        namespace,
+        schema_revision=schema_revision,
+        values=values,
+    )
+
+
+def effective_identity_policy(
+    db: Connection,
+    namespace: str = "identity",
+) -> EffectiveIdentityPolicy:
+    return _effective_identity_policy(
+        SqlAlchemyIdentityPolicyOwnerRepository(db),
+        namespace,
+    )
 
 
 def create_account(
@@ -675,6 +707,7 @@ __all__ = [
     "OwnedPolicyKey",
     "OwnedPolicyDraft",
     "OwnedPolicySnapshotUnavailable",
+    "OwnedPolicyValidationIssue",
     "PasswordFloorViolation",
     "Principal",
     "SessionKind",
@@ -692,6 +725,7 @@ __all__ = [
     "bootstrap_super_admin_cli",
     "add_super_admin",
     "active_policy_snapshot",
+    "effective_identity_policy",
     "claim_configuration_idempotency",
     "complete_configuration_idempotency",
     "configuration_idempotency_by_scope",
@@ -700,6 +734,7 @@ __all__ = [
     "policy_catalog",
     "save_policy_draft_validation",
     "update_policy_draft",
+    "validate_policy_candidate",
     "confirm_totp",
     "current_identity_change_source",
     "consume_temp_password",

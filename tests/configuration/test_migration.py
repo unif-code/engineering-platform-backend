@@ -704,7 +704,7 @@ def test_identity_runtime_can_only_read_the_effective_policy_tables(
         }
 
     assert privileges == {
-        "policy_key": set(),
+        "policy_key": {"SELECT"},
         "draft": set(),
         "version": {"SELECT"},
         "active_pointer": {"SELECT"},

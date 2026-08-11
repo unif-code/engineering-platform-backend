@@ -8,6 +8,7 @@ from control_plane.app.modules.configuration.domain import (
     PolicyKey,
     PolicySnapshot,
     PolicySnapshotUnavailable,
+    ValidationIssue,
 )
 from control_plane.app.modules.identity import (
     OwnedPolicySnapshotUnavailable,
@@ -20,6 +21,7 @@ from control_plane.app.modules.identity import (
     policy_draft,
     save_policy_draft_validation,
     update_policy_draft,
+    validate_policy_candidate,
 )
 
 
@@ -76,6 +78,23 @@ class IdentityPolicyOwner:
         except OwnedPolicySnapshotUnavailable as exc:
             raise PolicySnapshotUnavailable(namespace) from exc
         return PolicySnapshot.model_validate(owned.model_dump())
+
+    def validate_candidate(
+        self,
+        namespace: str,
+        *,
+        schema_revision: int,
+        values: dict[str, Any],
+    ) -> list[ValidationIssue]:
+        return [
+            ValidationIssue.model_validate(issue.model_dump())
+            for issue in validate_policy_candidate(
+                self.db,
+                namespace,
+                schema_revision=schema_revision,
+                values=values,
+            )
+        ]
 
     @staticmethod
     def _draft(owned: Any) -> Draft:
