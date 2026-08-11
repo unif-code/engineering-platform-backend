@@ -220,7 +220,7 @@ def test_seal_unseal_and_missing_material_fail_closed() -> None:
   - 角色 `identity_rw`：`USAGE` on schema + `SELECT/INSERT/UPDATE` on 上述表（**不授 DELETE**；session/temp_credential 撤销与消费都是 UPDATE）
 
 - [ ] **Step 1: 失败测试**（integration 标记）：迁移后断言表存在、`identity_rw` 对 `account` 无 DELETE 权限（`has_table_privilege`）、employee_no 唯一约束生效。
-- [ ] **Step 2: RED**（`uv run alembic upgrade head` 前测试跳过/失败）→ **Step 3: 写迁移** → **Step 4: `uv run alembic upgrade head && uv run pytest -m integration -v` GREEN**
+- [ ] **Step 2: RED**（在健康空库上、`uv run alembic upgrade heads` 前断言真实 FAIL，skip 不算 RED）→ **Step 3: 写迁移** → **Step 4: `uv run alembic upgrade heads && uv run pytest -m integration -v` GREEN**
 - [ ] **Step 5: 提交** `feat(identity): add identity schema baseline migration`（标注迁移）。
 
 ---

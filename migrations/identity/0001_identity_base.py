@@ -55,7 +55,10 @@ def upgrade() -> None:
                 CHECK (length(secret_hash) > 0),
             CONSTRAINT ck_identity_temp_credential_expiry CHECK (expires_at > created_at),
             CONSTRAINT ck_identity_temp_credential_consumed
-                CHECK (consumed_at IS NULL OR consumed_at >= created_at)
+                CHECK (
+                    consumed_at IS NULL
+                    OR (consumed_at >= created_at AND consumed_at < expires_at)
+                )
         )
         """
     )
@@ -76,7 +79,16 @@ def upgrade() -> None:
             CONSTRAINT ck_identity_session_last_seen CHECK (last_seen_at >= created_at),
             CONSTRAINT ck_identity_session_expiry CHECK (expires_hint > created_at),
             CONSTRAINT ck_identity_session_revoked
-                CHECK (revoked_at IS NULL OR revoked_at >= created_at)
+                CHECK (revoked_at IS NULL OR revoked_at >= created_at),
+            CONSTRAINT ck_identity_session_revocation_reason
+                CHECK (
+                    (revoked_at IS NULL AND revoke_reason IS NULL)
+                    OR (
+                        revoked_at IS NOT NULL
+                        AND revoke_reason IS NOT NULL
+                        AND length(btrim(revoke_reason)) > 0
+                    )
+                )
         )
         """
     )
@@ -90,6 +102,15 @@ def upgrade() -> None:
             CONSTRAINT ck_identity_login_backoff_employee_no
                 CHECK (employee_no ~ '^[0-9]{8}$'),
             CONSTRAINT ck_identity_login_backoff_failure_count CHECK (failure_count >= 0),
+            CONSTRAINT ck_identity_login_backoff_failure_lifecycle
+                CHECK (
+                    (
+                        failure_count = 0
+                        AND last_failure_at IS NULL
+                        AND locked_until IS NULL
+                    )
+                    OR (failure_count > 0 AND last_failure_at IS NOT NULL)
+                ),
             CONSTRAINT ck_identity_login_backoff_lock
                 CHECK (
                     locked_until IS NULL
@@ -119,7 +140,10 @@ def upgrade() -> None:
             CONSTRAINT ck_identity_auth_challenge_attempt_count
                 CHECK (attempt_count >= 0 AND attempt_count <= attempt_limit),
             CONSTRAINT ck_identity_auth_challenge_consumed
-                CHECK (consumed_at IS NULL OR consumed_at >= issued_at),
+                CHECK (
+                    consumed_at IS NULL
+                    OR (consumed_at >= issued_at AND consumed_at < expires_at)
+                ),
             CONSTRAINT ck_identity_auth_challenge_revoked
                 CHECK (revoked_at IS NULL OR revoked_at >= issued_at),
             CONSTRAINT ck_identity_auth_challenge_terminal
@@ -173,7 +197,10 @@ def upgrade() -> None:
             CONSTRAINT ck_identity_idempotency_timestamps
                 CHECK (
                     updated_at >= created_at
-                    AND (completed_at IS NULL OR completed_at >= created_at)
+                    AND (
+                        completed_at IS NULL
+                        OR (completed_at >= created_at AND completed_at <= updated_at)
+                    )
                 )
         )
         """

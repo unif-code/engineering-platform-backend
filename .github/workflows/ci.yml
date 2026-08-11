@@ -9,6 +9,8 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    env:
+      REQUIRE_INTEGRATION_DB: '1'
     services:
       postgres:
         image: postgres:18
