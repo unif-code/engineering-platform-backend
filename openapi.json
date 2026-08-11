@@ -141,6 +141,149 @@
         "title": "CreateWorkspaceRequestDto",
         "type": "object"
       },
+      "DraftResponseDto": {
+        "properties": {
+          "archivedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archivedat"
+          },
+          "baseVersion": {
+            "title": "Baseversion",
+            "type": "integer"
+          },
+          "content": {
+            "additionalProperties": true,
+            "title": "Content",
+            "type": "object"
+          },
+          "contentHash": {
+            "title": "Contenthash",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "lastMeaningfulActivityAt": {
+            "format": "date-time",
+            "title": "Lastmeaningfulactivityat",
+            "type": "string"
+          },
+          "namespace": {
+            "title": "Namespace",
+            "type": "string"
+          },
+          "ownerId": {
+            "title": "Ownerid",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schemaRevision": {
+            "title": "Schemarevision",
+            "type": "integer"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "stale": {
+            "title": "Stale",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "validationEvidence": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validationevidence"
+          }
+        },
+        "required": [
+          "id",
+          "namespace",
+          "scope",
+          "content",
+          "baseVersion",
+          "ownerId",
+          "revision",
+          "status",
+          "stale",
+          "lastMeaningfulActivityAt",
+          "archivedAt",
+          "schemaRevision",
+          "contentHash",
+          "validationEvidence"
+        ],
+        "title": "DraftResponseDto",
+        "type": "object"
+      },
+      "DraftValidationResponseDto": {
+        "properties": {
+          "contentHash": {
+            "title": "Contenthash",
+            "type": "string"
+          },
+          "draftId": {
+            "title": "Draftid",
+            "type": "string"
+          },
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationIssueDto"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "valid": {
+            "title": "Valid",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "draftId",
+          "revision",
+          "contentHash",
+          "valid",
+          "issues"
+        ],
+        "title": "DraftValidationResponseDto",
+        "type": "object"
+      },
+      "DraftValuesRequestDto": {
+        "properties": {
+          "values": {
+            "additionalProperties": true,
+            "title": "Values",
+            "type": "object"
+          }
+        },
+        "title": "DraftValuesRequestDto",
+        "type": "object"
+      },
       "FormalMemberListResponseDto": {
         "properties": {
           "items": {
@@ -593,6 +736,147 @@
         "title": "PasswordUpdatedDto",
         "type": "object"
       },
+      "PolicyCatalogResponseDto": {
+        "properties": {
+          "active": {
+            "$ref": "#/components/schemas/PolicySnapshotDto"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PolicyKeyDto"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "active"
+        ],
+        "title": "PolicyCatalogResponseDto",
+        "type": "object"
+      },
+      "PolicyKeyDto": {
+        "properties": {
+          "defaultValue": {
+            "title": "Defaultvalue"
+          },
+          "effectSemantics": {
+            "title": "Effectsemantics",
+            "type": "string"
+          },
+          "enumValues": {
+            "anyOf": [
+              {
+                "items": {},
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enumvalues"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "maxValue": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maxvalue"
+          },
+          "minValue": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Minvalue"
+          },
+          "namespace": {
+            "title": "Namespace",
+            "type": "string"
+          },
+          "schemaRevision": {
+            "title": "Schemarevision",
+            "type": "integer"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "valueType": {
+            "title": "Valuetype",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "namespace",
+          "valueType",
+          "unit",
+          "defaultValue",
+          "minValue",
+          "maxValue",
+          "enumValues",
+          "effectSemantics",
+          "schemaRevision"
+        ],
+        "title": "PolicyKeyDto",
+        "type": "object"
+      },
+      "PolicySnapshotDto": {
+        "properties": {
+          "namespace": {
+            "title": "Namespace",
+            "type": "string"
+          },
+          "schemaRevision": {
+            "title": "Schemarevision",
+            "type": "integer"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "snapshotHash": {
+            "title": "Snapshothash",
+            "type": "string"
+          },
+          "values": {
+            "additionalProperties": true,
+            "title": "Values",
+            "type": "object"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "namespace",
+          "scope",
+          "version",
+          "schemaRevision",
+          "snapshotHash",
+          "values"
+        ],
+        "title": "PolicySnapshotDto",
+        "type": "object"
+      },
       "PrincipalDto": {
         "properties": {
           "accountId": {
@@ -1003,6 +1287,34 @@
           "reason"
         ],
         "title": "TransferOwnerRequestDto",
+        "type": "object"
+      },
+      "ValidateDraftRequestDto": {
+        "properties": {},
+        "title": "ValidateDraftRequestDto",
+        "type": "object"
+      },
+      "ValidationIssueDto": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "key",
+          "message"
+        ],
+        "title": "ValidationIssueDto",
         "type": "object"
       },
       "WorkspaceListResponseDto": {
@@ -1647,6 +1959,570 @@
         "summary": "Organization Tree",
         "tags": [
           "organization"
+        ]
+      }
+    },
+    "/api/v1/admin/policies": {
+      "get": {
+        "operationId": "policies_catalog",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyCatalogResponseDto"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
+          }
+        },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
+        "summary": "Policies Catalog",
+        "tags": [
+          "configuration"
+        ]
+      }
+    },
+    "/api/v1/admin/policies/{namespace}/drafts": {
+      "post": {
+        "operationId": "draft_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftValuesRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponseDto"
+                }
+              }
+            },
+            "description": "Draft created",
+            "headers": {
+              "ETag": {
+                "description": "Strong draft revision ETag for the next write",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
+          }
+        },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
+        "summary": "Draft Create",
+        "tags": [
+          "configuration"
+        ]
+      }
+    },
+    "/api/v1/admin/policies/{namespace}/drafts/{draft_id}": {
+      "patch": {
+        "operationId": "draft_update",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "draft_id",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Draft Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Strong entity tag in the form \"v<positive-version>\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "description": "Strong entity tag in the form \"v<positive-version>\"",
+              "examples": [
+                "\"v1\""
+              ],
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DraftValuesRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponseDto"
+                }
+              }
+            },
+            "description": "Draft updated",
+            "headers": {
+              "ETag": {
+                "description": "Strong draft revision ETag for the next write",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
+          }
+        },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
+        "summary": "Draft Update",
+        "tags": [
+          "configuration"
+        ]
+      }
+    },
+    "/api/v1/admin/policies/{namespace}/drafts/{draft_id}/validate": {
+      "post": {
+        "operationId": "draft_validate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "draft_id",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Draft Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Strong entity tag in the form \"v<positive-version>\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "description": "Strong entity tag in the form \"v<positive-version>\"",
+              "examples": [
+                "\"v1\""
+              ],
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ValidateDraftRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftValidationResponseDto"
+                }
+              }
+            },
+            "description": "Draft updated",
+            "headers": {
+              "ETag": {
+                "description": "Strong draft revision ETag for the next write",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
+          }
+        },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
+        "summary": "Draft Validate",
+        "tags": [
+          "configuration"
         ]
       }
     },

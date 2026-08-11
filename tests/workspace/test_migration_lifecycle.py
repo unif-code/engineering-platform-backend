@@ -32,7 +32,7 @@ def fresh_workspace_database_url(monkeypatch: pytest.MonkeyPatch) -> Iterator[st
         yield target_url
     finally:
         with maintenance.connect() as db:
-            db.execute(text(f'DROP DATABASE "{database_name}" WITH (FORCE)'))
+            db.execute(text(f'DROP DATABASE "{database_name}"'))
         maintenance.dispose()
 
 
@@ -55,15 +55,15 @@ def test_fresh_upgrade_heads_installs_workspace_and_independent_graph(
                 db.execute(text("SELECT version_num FROM alembic_version")).scalars()
             )
         assert expected_heads == {
-            "0005_audit_authz_grant",
-            "0004_identity_bootstrap_totp_cap",
+            "0006_audit_configuration_grant",
+            "0007_identity_policy_reader",
             "0001_organization_base",
             "0001_workspace_base",
             "0004_authorization_pending_set",
         }
         assert installed_heads == {
-            "0005_audit_authz_grant",
-            "0004_identity_bootstrap_totp_cap",
+            "0006_audit_configuration_grant",
+            "0007_identity_policy_reader",
             "0004_authorization_pending_set",
         }
         assert set(inspect(engine).get_table_names(schema="workspace")) == {

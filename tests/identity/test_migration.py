@@ -19,6 +19,13 @@ IDENTITY_TABLES = {
     "session",
     "temp_credential",
 }
+IDENTITY_CONFIGURATION_TABLES = {
+    "active_pointer",
+    "configuration_idempotency_record",
+    "draft",
+    "policy_key",
+    "version",
+}
 
 EXPECTED_COLUMNS = {
     "account": [
@@ -187,7 +194,7 @@ def test_identity_tables_exist(identity_owner_engine: Engine) -> None:
                 )
             ).scalars()
         )
-    assert tables == IDENTITY_TABLES
+    assert tables == IDENTITY_TABLES | IDENTITY_CONFIGURATION_TABLES
 
 
 def test_identity_columns_types_nullability_and_defaults_match_contract(
@@ -266,8 +273,8 @@ def test_current_alembic_heads_are_installed(identity_owner_engine: Engine) -> N
     with identity_owner_engine.connect() as conn:
         installed = set(conn.execute(text("SELECT version_num FROM alembic_version")).scalars())
     assert installed == {
-        "0005_audit_authz_grant",
-        "0004_identity_bootstrap_totp_cap",
+        "0006_audit_configuration_grant",
+        "0007_identity_policy_reader",
         "0004_authorization_pending_set",
     }
 

@@ -30,12 +30,17 @@ from control_plane.app.modules.authorization.api import (
     create_authorization_router,
 )
 from control_plane.app.modules.authorization.api.dependencies import current_principal
+from control_plane.app.modules.configuration import ConfigurationDependencies
+from control_plane.app.modules.configuration.adapters import IdentityEffectivePolicy
+from control_plane.app.modules.configuration.api import (
+    ConfigurationHttpRuntime,
+    create_configuration_router,
+)
 from control_plane.app.modules.identity import (
     IdentityDependencies,
     SessionPrincipal,
     current_identity_change_source,
 )
-from control_plane.app.modules.identity.adapters.policy import DefaultEffectivePolicy
 from control_plane.app.modules.identity.adapters.runtime import (
     SystemClock,
     SystemRandom,
@@ -134,6 +139,15 @@ def authorization_runtime_engine() -> Engine:
     )
 
 
+@lru_cache(maxsize=1)
+def configuration_runtime_engine() -> Engine:
+    return create_engine(
+        DbSettings().configuration_database_url,
+        pool_pre_ping=True,
+        connect_args={"connect_timeout": 2},
+    )
+
+
 def _identity_authorization_change(account_id: str) -> object:
     source = current_identity_change_source()
     if source is None or not source.source_transaction_id:
@@ -154,7 +168,7 @@ def identity_dependencies() -> IdentityDependencies:
     return IdentityDependencies(
         repository_factory=SqlAlchemyIdentityRepository,
         secret_manager=FileSecretManager(SecuritySettings()),
-        policy=DefaultEffectivePolicy(),
+        policy=IdentityEffectivePolicy(),
         clock=SystemClock(),
         random=SystemRandom(),
         audit=SqlAlchemyTransactionalAuditAppender(),
@@ -218,6 +232,24 @@ def authorization_dependencies() -> AuthorizationDependencies:
         audit=SqlAlchemyTransactionalAuditAppender(),
         clock=SystemClock(),
         random=SystemRandom(),
+        secret_manager=FileSecretManager(SecuritySettings()),
+    )
+
+
+@lru_cache(maxsize=1)
+def configuration_dependencies() -> ConfigurationDependencies:
+    return ConfigurationDependencies(
+        clock=SystemClock(),
+        random=SystemRandom(),
+        audit=SqlAlchemyTransactionalAuditAppender(),
+    )
+
+
+@lru_cache(maxsize=1)
+def configuration_http_runtime() -> ConfigurationHttpRuntime:
+    return ConfigurationHttpRuntime(
+        engine=configuration_runtime_engine(),
+        dependencies=configuration_dependencies(),
         secret_manager=FileSecretManager(SecuritySettings()),
     )
 
@@ -362,6 +394,13 @@ def create_app(
         create_workspace_router(
             workspace_http_runtime,
             cast(Callable[[], SessionPrincipal], protected_principal),
+            authorization_capability_guard,
+        )
+    )
+    app.include_router(
+        create_configuration_router(
+            configuration_http_runtime,
+            cast(Callable[[], Any], protected_principal),
             authorization_capability_guard,
         )
     )

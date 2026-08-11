@@ -4,7 +4,7 @@ from control_plane.app.modules.identity.domain.policy import EffectiveIdentityPo
 
 
 class DefaultEffectivePolicy:
-    """Pre-persistence adapter; Task 11 replaces it with the active snapshot."""
+    """Explicit bootstrap/test fallback; never used by production HTTP assembly."""
 
     def get_identity_policy(self, db: Connection) -> EffectiveIdentityPolicy:
         del db

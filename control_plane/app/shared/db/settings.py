@@ -17,6 +17,9 @@ class DbSettings(BaseSettings):
     authorization_database_url: str = (
         "postgresql+psycopg://authorization_rw:localdev@localhost:5432/platform"
     )
+    configuration_database_url: str = (
+        "postgresql+psycopg://configuration_rw:localdev@localhost:5432/platform"
+    )
     migration_database_url: str = (
         "postgresql+psycopg://platform_owner:localdev@localhost:5432/platform"
     )

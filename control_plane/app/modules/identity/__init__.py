@@ -1,9 +1,13 @@
 """Public identity facade; other modules must not import identity internals."""
 
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import Connection
 
+from control_plane.app.modules.identity.adapters.configuration_policy import (
+    SqlAlchemyIdentityPolicyOwnerRepository,
+)
 from control_plane.app.modules.identity.application.accounts import (
     consume_temp_password as _consume_temp_password,
 )
@@ -29,6 +33,33 @@ from control_plane.app.modules.identity.application.auth import (
 )
 from control_plane.app.modules.identity.application.auth import (
     login_totp_step as _login_totp_step,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
+    active_policy_snapshot as _active_policy_snapshot,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
+    claim_configuration_idempotency as _claim_configuration_idempotency,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
+    complete_configuration_idempotency as _complete_configuration_idempotency,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
+    configuration_idempotency_by_scope as _configuration_idempotency_by_scope,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
+    create_policy_draft as _create_policy_draft,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
+    policy_catalog as _policy_catalog,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
+    policy_draft as _policy_draft,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
+    save_policy_draft_validation as _save_policy_draft_validation,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
+    update_policy_draft as _update_policy_draft,
 )
 from control_plane.app.modules.identity.application.dependencies import IdentityDependencies
 from control_plane.app.modules.identity.application.security_change import (
@@ -86,6 +117,12 @@ from control_plane.app.modules.identity.domain.account import (
     ensure_account_transition_allowed,
     ensure_effective_super_admin_remains,
 )
+from control_plane.app.modules.identity.domain.configuration_policy import (
+    OwnedPolicyDraft,
+    OwnedPolicyKey,
+    OwnedPolicySnapshot,
+    OwnedPolicySnapshotUnavailable,
+)
 from control_plane.app.modules.identity.domain.errors import (
     AccountConflict,
     AccountNotFound,
@@ -118,6 +155,91 @@ from control_plane.app.modules.identity.domain.session import (
 )
 from control_plane.app.modules.identity.ports.policy import EffectivePolicyPort
 from control_plane.app.modules.identity.ports.repository import IdentityRepositoryFactory
+
+
+def policy_catalog(db: Connection, namespace: str) -> list[OwnedPolicyKey]:
+    return _policy_catalog(SqlAlchemyIdentityPolicyOwnerRepository(db), namespace)
+
+
+def claim_configuration_idempotency(db: Connection, **values: Any) -> bool:
+    return _claim_configuration_idempotency(
+        SqlAlchemyIdentityPolicyOwnerRepository(db),
+        **values,
+    )
+
+
+def configuration_idempotency_by_scope(
+    db: Connection,
+    actor: str,
+    operation: str,
+    idempotency_key: str,
+    *,
+    for_update: bool = False,
+) -> Any:
+    return _configuration_idempotency_by_scope(
+        SqlAlchemyIdentityPolicyOwnerRepository(db),
+        actor,
+        operation,
+        idempotency_key,
+        for_update=for_update,
+    )
+
+
+def complete_configuration_idempotency(
+    db: Connection,
+    record_id: str,
+    **values: Any,
+) -> bool:
+    return _complete_configuration_idempotency(
+        SqlAlchemyIdentityPolicyOwnerRepository(db),
+        record_id,
+        **values,
+    )
+
+
+def create_policy_draft(db: Connection, **values: Any) -> OwnedPolicyDraft:
+    return _create_policy_draft(SqlAlchemyIdentityPolicyOwnerRepository(db), **values)
+
+
+def policy_draft(
+    db: Connection,
+    draft_id: str,
+    *,
+    for_update: bool = False,
+) -> OwnedPolicyDraft | None:
+    return _policy_draft(
+        SqlAlchemyIdentityPolicyOwnerRepository(db),
+        draft_id,
+        for_update=for_update,
+    )
+
+
+def update_policy_draft(
+    db: Connection,
+    draft_id: str,
+    **values: Any,
+) -> OwnedPolicyDraft | None:
+    return _update_policy_draft(
+        SqlAlchemyIdentityPolicyOwnerRepository(db),
+        draft_id,
+        **values,
+    )
+
+
+def save_policy_draft_validation(
+    db: Connection,
+    draft_id: str,
+    **values: Any,
+) -> OwnedPolicyDraft | None:
+    return _save_policy_draft_validation(
+        SqlAlchemyIdentityPolicyOwnerRepository(db),
+        draft_id,
+        **values,
+    )
+
+
+def active_policy_snapshot(db: Connection, namespace: str) -> OwnedPolicySnapshot:
+    return _active_policy_snapshot(SqlAlchemyIdentityPolicyOwnerRepository(db), namespace)
 
 
 def create_account(
@@ -549,6 +671,10 @@ __all__ = [
     "LoginBackoffActive",
     "LoginChallenge",
     "OrganizationAccountDto",
+    "OwnedPolicySnapshot",
+    "OwnedPolicyKey",
+    "OwnedPolicyDraft",
+    "OwnedPolicySnapshotUnavailable",
     "PasswordFloorViolation",
     "Principal",
     "SessionKind",
@@ -565,6 +691,15 @@ __all__ = [
     "bootstrap_super_admin",
     "bootstrap_super_admin_cli",
     "add_super_admin",
+    "active_policy_snapshot",
+    "claim_configuration_idempotency",
+    "complete_configuration_idempotency",
+    "configuration_idempotency_by_scope",
+    "create_policy_draft",
+    "policy_draft",
+    "policy_catalog",
+    "save_policy_draft_validation",
+    "update_policy_draft",
     "confirm_totp",
     "current_identity_change_source",
     "consume_temp_password",
