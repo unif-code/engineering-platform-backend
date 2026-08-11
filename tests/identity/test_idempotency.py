@@ -18,11 +18,13 @@ pytestmark = pytest.mark.integration
 
 
 def _fingerprint(body: dict[str, object]) -> str:
+    sealing_key = dependencies().secret_manager.load().idempotency_sealing_key
     return canonical_request_fingerprint(
         operation="auth_login",
         method="POST",
         path="/api/v1/auth/login",
         body=body,
+        idempotency_sealing_key=sealing_key,
     )
 
 

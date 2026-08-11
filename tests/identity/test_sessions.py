@@ -137,7 +137,7 @@ def test_validate_session_separates_bootstrap_and_full_principals(
             code=pyotp.TOTP(enrollment.secret).at(deps.clock.now()),
             dependencies=deps,
         )
-    assert not isinstance(confirmed, BootstrapDenial)
+    assert isinstance(confirmed, IssuedSession)
     with identity_rw_engine.begin() as db:
         full = validate_session(db, raw_token=confirmed.raw_token, dependencies=deps)
     assert full is not None

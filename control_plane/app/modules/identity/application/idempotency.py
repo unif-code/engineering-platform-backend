@@ -1,9 +1,12 @@
 import hashlib
+import hmac
 import json
 from collections.abc import Callable, Mapping
 from typing import Any, Literal
 
 from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from control_plane.app.modules.identity.application.dependencies import IdentityDependencies
@@ -11,6 +14,7 @@ from control_plane.app.modules.identity.ports.repository import IdentityReposito
 from control_plane.app.shared.security import seal, unseal
 
 _REPLAY_METADATA = {"kind": "http-response", "schemaVersion": 1}
+_FINGERPRINT_KDF_INFO = b"engineering-platform/identity/idempotency-fingerprint/v1"
 
 
 class IdempotencyConflict(RuntimeError):
@@ -61,6 +65,7 @@ def canonical_request_fingerprint(
     method: str,
     path: str,
     body: Mapping[str, object],
+    idempotency_sealing_key: bytes,
 ) -> str:
     canonical = json.dumps(
         {
@@ -73,7 +78,13 @@ def canonical_request_fingerprint(
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()
+    fingerprint_key = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=_FINGERPRINT_KDF_INFO,
+    ).derive(idempotency_sealing_key)
+    return hmac.new(fingerprint_key, canonical, hashlib.sha256).hexdigest()
 
 
 def _replay(row: Any, dependencies: IdentityDependencies) -> IdempotentResponse:

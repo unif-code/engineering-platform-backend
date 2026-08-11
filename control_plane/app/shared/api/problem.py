@@ -2,7 +2,6 @@ from collections.abc import Mapping
 from typing import Any
 
 from fastapi import FastAPI, Request
-from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
@@ -46,6 +45,44 @@ PROBLEM_RESPONSES[429]["headers"] = {
 }
 
 SERVICE_UNAVAILABLE_RESPONSE = _problem_response_declaration("Not ready")
+
+_SAFE_VALIDATION_CONTEXT_KEYS = frozenset(
+    {
+        "class",
+        "discriminator",
+        "expected",
+        "ge",
+        "gt",
+        "le",
+        "lt",
+        "max_length",
+        "min_length",
+        "multiple_of",
+        "pattern",
+    }
+)
+
+
+def _safe_validation_errors(exc: RequestValidationError) -> list[dict[str, object]]:
+    sanitized: list[dict[str, object]] = []
+    for error in exc.errors():
+        item: dict[str, object] = {
+            "type": str(error.get("type", "validation_error")),
+            "loc": [part for part in error.get("loc", ()) if isinstance(part, (str, int))],
+            "msg": str(error.get("msg", "Invalid input")),
+        }
+        context = error.get("ctx")
+        if isinstance(context, dict):
+            safe_context = {
+                key: value
+                for key, value in context.items()
+                if key in _SAFE_VALIDATION_CONTEXT_KEYS
+                and (value is None or isinstance(value, (str, int, float, bool)))
+            }
+            if safe_context:
+                item["ctx"] = safe_context
+        sanitized.append(item)
+    return sanitized
 
 
 def problem_response(
@@ -92,7 +129,7 @@ def register_problem_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def validation_exception(_: Request, exc: RequestValidationError) -> JSONResponse:
         return problem_response(
-            422, "Validation failed", extra={"errors": jsonable_encoder(exc.errors())}
+            422, "Validation failed", extra={"errors": _safe_validation_errors(exc)}
         )
 
     @app.exception_handler(Exception)

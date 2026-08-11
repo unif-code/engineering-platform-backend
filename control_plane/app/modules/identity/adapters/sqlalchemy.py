@@ -199,7 +199,7 @@ class SqlAlchemyIdentityRepository:
             self.db.execute(
                 text(
                     "SELECT s.id AS session_id, s.account_id, s.kind, s.bootstrap_purpose, "
-                    "s.created_at, "
+                    "s.bootstrap_totp_attempt_count, s.created_at, "
                     "s.last_seen_at, s.revoked_at, a.employee_no, a.display_name, a.status, "
                     "a.password_hash, a.password_set_at, a.totp_sealed, a.totp_confirmed_at, "
                     "a.totp_last_step, a.is_super_admin, a.version "
@@ -211,6 +211,18 @@ class SqlAlchemyIdentityRepository:
             .mappings()
             .one_or_none()
         )
+
+    def increment_bootstrap_totp_attempts(self, session_id: str) -> int:
+        attempt_count = self.db.execute(
+            text(
+                "UPDATE identity.session SET "
+                "bootstrap_totp_attempt_count=bootstrap_totp_attempt_count+1 "
+                "WHERE id=:session_id AND kind='BOOTSTRAP' AND revoked_at IS NULL "
+                "RETURNING bootstrap_totp_attempt_count"
+            ),
+            {"session_id": session_id},
+        ).scalar_one_or_none()
+        return int(attempt_count or 0)
 
     def update_password(self, account_id: str, password_hash: str, now: datetime) -> None:
         self.db.execute(

@@ -204,6 +204,8 @@ def test_identity_0003_downgrade_revokes_every_purpose_without_overwriting_reaso
     clean_identity_db: None,
     identity_owner_engine: Engine,
 ) -> None:
+    config = Config("alembic.ini")
+    command.downgrade(config, "0003_identity_bootstrap_purpose")
     with identity_owner_engine.begin() as conn:
         account_id = conn.execute(
             text(
@@ -238,7 +240,6 @@ def test_identity_0003_downgrade_revokes_every_purpose_without_overwriting_reaso
             {"account_id": account_id},
         )
 
-    config = Config("alembic.ini")
     try:
         command.downgrade(config, "0002_identity_backoff_source")
         with identity_owner_engine.connect() as conn:

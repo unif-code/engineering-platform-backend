@@ -12,7 +12,6 @@ from control_plane.app.modules.identity.domain.account import AccountStatus
 from control_plane.app.modules.identity.domain.errors import (
     AuthenticationFailed,
     PasswordFloorViolation,
-    TotpChallengeFailed,
 )
 from control_plane.app.modules.identity.domain.models import Principal
 from control_plane.app.modules.identity.domain.session import (
@@ -66,6 +65,8 @@ def _bootstrap_account(
     repository: IdentityRepository,
     raw_token: str,
     dependencies: IdentityDependencies,
+    *,
+    touch: bool = True,
 ) -> Any | BootstrapDenial:
     row = repository.session_with_account(token_hash(raw_token), for_update=True)
     if row is None or row["revoked_at"] is not None or row["kind"] != SessionKind.BOOTSTRAP.value:
@@ -88,12 +89,34 @@ def _bootstrap_account(
             dependencies=dependencies,
         )
         return BootstrapDenial(code=BootstrapDenialCode.INVALID_SESSION)
-    repository.touch_session(
-        str(row["session_id"]),
-        now,
-        now + policy.session_idle_timeout,
-    )
+    if touch:
+        repository.touch_session(
+            str(row["session_id"]),
+            now,
+            now + policy.session_idle_timeout,
+        )
     return row
+
+
+def _revoke_exhausted_bootstrap_totp_session(
+    repository: IdentityRepository,
+    row: Any,
+    dependencies: IdentityDependencies,
+    actor: Principal,
+) -> None:
+    revoked = repository.revoke_session(
+        str(row["session_id"]),
+        dependencies.clock.now(),
+        "TOTP_ATTEMPTS_EXHAUSTED",
+    )
+    finalize_session_revocations(
+        repository,
+        account_id=str(row["account_id"]),
+        revoked_session_ids=[revoked] if revoked is not None else [],
+        actor=actor,
+        reason="TOTP attempts exhausted",
+        dependencies=dependencies,
+    )
 
 
 def complete_password_setup(
@@ -197,10 +220,10 @@ def confirm_totp(
     bootstrap_token: str,
     code: str,
     dependencies: IdentityDependencies,
-) -> IssuedSession | BootstrapDenial:
+) -> IssuedSession | BootstrapDenial | AuthenticationDenial:
     deps = dependencies
     db = repository.db
-    row = _bootstrap_account(repository, bootstrap_token, deps)
+    row = _bootstrap_account(repository, bootstrap_token, deps, touch=False)
     if isinstance(row, BootstrapDenial):
         return row
     purpose = _bootstrap_purpose(row)
@@ -208,11 +231,45 @@ def confirm_totp(
         raise AuthenticationFailed("TOTP confirmation is not allowed for this bootstrap session")
     if row["password_hash"] is None or row["totp_sealed"] is None:
         raise AuthenticationFailed("password and TOTP enrollment required")
+    policy = deps.policy.get_identity_policy(db)
+    actor = Principal(employee_id=row["employee_no"], name=row["display_name"])
+    if row["bootstrap_totp_attempt_count"] >= policy.totp_attempt_cap:
+        audit(
+            db,
+            dependencies=deps,
+            actor=actor,
+            action="identity.totp.confirmed",
+            target_type="account",
+            target_id=str(row["account_id"]),
+            result="DENIED",
+            reason="TOTP attempt limit exhausted",
+        )
+        _revoke_exhausted_bootstrap_totp_session(repository, row, deps, actor)
+        return _challenge_denial(
+            attempt_count=row["bootstrap_totp_attempt_count"],
+            attempt_limit=policy.totp_attempt_cap,
+        )
     material = deps.secret_manager.load()
     secret = unseal(row["totp_sealed"], material.totp_sealing_key).decode("ascii")
     step = verify_totp(secret, code, last_used_step=row["totp_last_step"])
     if step is None:
-        raise TotpChallengeFailed("invalid or replayed TOTP")
+        attempt_count = repository.increment_bootstrap_totp_attempts(str(row["session_id"]))
+        audit(
+            db,
+            dependencies=deps,
+            actor=actor,
+            action="identity.totp.confirmed",
+            target_type="account",
+            target_id=str(row["account_id"]),
+            result="DENIED",
+            reason="invalid or replayed TOTP",
+        )
+        if attempt_count >= policy.totp_attempt_cap:
+            _revoke_exhausted_bootstrap_totp_session(repository, row, deps, actor)
+        return _challenge_denial(
+            attempt_count=attempt_count,
+            attempt_limit=policy.totp_attempt_cap,
+        )
     now = deps.clock.now()
     account_id = str(row["account_id"])
     if purpose is BootstrapPurpose.INITIAL_SETUP:

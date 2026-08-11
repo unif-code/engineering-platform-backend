@@ -134,7 +134,7 @@ def _initialize_account(
             code=code,
             dependencies=deps,
         )
-    assert not isinstance(full, BootstrapDenial)
+    assert isinstance(full, IssuedSession)
     assert full.kind is SessionKind.FULL
     return enrollment.secret, full.raw_token
 

@@ -26,6 +26,10 @@ def test_openapi_declares_authentication_operations_and_idempotency_header() -> 
         )
         assert idempotency["in"] == "header"
         assert idempotency["required"] is True
+        assert idempotency["schema"]["minLength"] == 8
+        assert idempotency["schema"]["maxLength"] == 128
+        assert idempotency["schema"]["pattern"] == r"^[A-Za-z0-9._:-]+$"
+        assert "replay" in idempotency["description"].lower()
         assert set(operation["responses"]) >= {"200", "401", "403", "409", "422", "429", "500"}
         assert "Retry-After" in operation["responses"]["429"]["headers"]
 
@@ -88,3 +92,42 @@ def test_login_rejects_malformed_idempotency_key_before_database_access(
 
     assert response.status_code == 422
     assert response.headers["content-type"].startswith("application/problem+json")
+
+
+@pytest.mark.parametrize(
+    ("path", "body", "secret"),
+    [
+        (
+            "/api/v1/auth/login",
+            {"employeeNo": "00000001", "password": {"raw": "password-leak-731"}},
+            "password-leak-731",
+        ),
+        (
+            "/api/v1/auth/totp",
+            {"challengeToken": {"raw": "challenge-leak-842"}, "code": "000000"},
+            "challenge-leak-842",
+        ),
+        (
+            "/api/v1/auth/bootstrap/totp/confirm",
+            {"code": {"raw": "totp-leak-953"}},
+            "totp-leak-953",
+        ),
+    ],
+)
+def test_validation_problem_does_not_echo_authentication_input(
+    path: str,
+    body: dict[str, object],
+    secret: str,
+) -> None:
+    response = TestClient(create_app()).post(
+        path,
+        json=body,
+        headers={"Idempotency-Key": "validation-safe-0001"},
+    )
+
+    assert response.status_code == 422
+    assert secret not in response.text
+    errors = response.json()["errors"]
+    assert errors
+    assert all(set(error) <= {"type", "loc", "msg", "ctx"} for error in errors)
+    assert all({"type", "loc", "msg"} <= set(error) for error in errors)

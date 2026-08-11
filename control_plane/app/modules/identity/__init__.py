@@ -156,7 +156,7 @@ def confirm_totp(
     bootstrap_token: str,
     code: str,
     dependencies: IdentityDependencies,
-) -> IssuedSession | BootstrapDenial:
+) -> IssuedSession | BootstrapDenial | AuthenticationDenial:
     return _confirm_totp(
         dependencies.repository_factory(db),
         bootstrap_token=bootstrap_token,

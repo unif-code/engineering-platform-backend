@@ -272,10 +272,15 @@
         "operationId": "auth_bootstrap_password",
         "parameters": [
           {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -391,10 +396,15 @@
         "operationId": "auth_bootstrap_totp_confirm",
         "parameters": [
           {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -502,10 +512,15 @@
         "operationId": "auth_bootstrap_totp_enroll",
         "parameters": [
           {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -603,10 +618,15 @@
         "operationId": "auth_login",
         "parameters": [
           {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -722,10 +742,15 @@
         "operationId": "auth_logout",
         "parameters": [
           {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }
@@ -823,10 +848,15 @@
         "operationId": "auth_totp",
         "parameters": [
           {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
             "in": "header",
             "name": "Idempotency-Key",
             "required": true,
             "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
               "title": "Idempotency-Key",
               "type": "string"
             }

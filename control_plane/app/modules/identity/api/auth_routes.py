@@ -17,7 +17,6 @@ from control_plane.app.modules.identity import (
     LoginChallenge,
     PasswordFloorViolation,
     SessionKind,
-    TotpChallengeFailed,
     complete_password_setup,
     confirm_totp,
     enroll_totp,
@@ -163,12 +162,14 @@ def _fingerprint(
     operation: str,
     path: str,
     body: Mapping[str, object],
+    idempotency_sealing_key: bytes,
 ) -> str:
     return canonical_request_fingerprint(
         operation=operation,
         method="POST",
         path=path,
         body=body,
+        idempotency_sealing_key=idempotency_sealing_key,
     )
 
 
@@ -190,7 +191,12 @@ def _execute(
                 actor=actor,
                 operation=operation,
                 key=key,
-                fingerprint=_fingerprint(operation, path, body),
+                fingerprint=_fingerprint(
+                    operation,
+                    path,
+                    body,
+                    runtime.dependencies.secret_manager.load().idempotency_sealing_key,
+                ),
                 command=lambda: command(db),
                 dependencies=runtime.dependencies,
             )
@@ -443,8 +449,10 @@ def create_auth_router(
                     code=body.code,
                     dependencies=runtime.dependencies,
                 )
-            except (AuthenticationFailed, TotpChallengeFailed):
+            except AuthenticationFailed:
                 return _problem(401, "Authentication failed")
+            if isinstance(result, AuthenticationDenial):
+                return _authentication_denial(result)
             if isinstance(result, BootstrapDenial):
                 return _problem(401, "Authentication failed")
             return _success(

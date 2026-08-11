@@ -1,3 +1,5 @@
+import hashlib
+import json
 import threading
 from dataclasses import replace
 from datetime import timedelta
@@ -34,6 +36,12 @@ class ExpiringPasswordPolicy:
     def get_identity_policy(self, db: object) -> EffectiveIdentityPolicy:
         del db
         return EffectiveIdentityPolicy(password_max_age=timedelta(days=90))
+
+
+class TightBootstrapTotpPolicy:
+    def get_identity_policy(self, db: object) -> EffectiveIdentityPolicy:
+        del db
+        return EffectiveIdentityPolicy(totp_attempt_cap=2)
 
 
 def _client(identity_rw_engine: Engine) -> tuple[TestClient, IdentityDependencies]:
@@ -111,6 +119,41 @@ def _initialize_via_api(
     return secret, full_token
 
 
+def _prepare_bootstrap_totp(
+    identity_rw_engine: Engine,
+    client: TestClient,
+    deps: IdentityDependencies,
+    *,
+    key_prefix: str,
+) -> tuple[str, str]:
+    temporary_password = _create_account(identity_rw_engine, deps)
+    assert (
+        client.post(
+            "/api/v1/auth/login",
+            json={"employeeNo": "00000001", "password": temporary_password},
+            headers={"Idempotency-Key": f"{key_prefix}-login"},
+        ).status_code
+        == 200
+    )
+    bootstrap_token = client.cookies.get("ep_session")
+    assert bootstrap_token
+    assert (
+        client.post(
+            "/api/v1/auth/bootstrap/password",
+            json={"password": VALID_PASSWORD},
+            headers={"Idempotency-Key": f"{key_prefix}-password"},
+        ).status_code
+        == 200
+    )
+    enrollment = client.post(
+        "/api/v1/auth/bootstrap/totp/enroll",
+        headers={"Idempotency-Key": f"{key_prefix}-enroll"},
+    )
+    assert enrollment.status_code == 200
+    secret = parse_qs(urlsplit(enrollment.json()["provisioningUri"]).query)["secret"][0]
+    return secret, bootstrap_token
+
+
 def test_bootstrap_login_replays_the_same_cookie_without_reconsuming_credential(
     identity_rw_engine: Engine,
     identity_owner_engine: Engine,
@@ -144,6 +187,43 @@ def test_bootstrap_login_replays_the_same_cookie_without_reconsuming_credential(
             ).scalar_one()
             == 1
         )
+
+
+def test_login_request_fingerprint_is_not_an_unkeyed_password_guess_oracle(
+    identity_rw_engine: Engine,
+    clean_identity_db: None,
+) -> None:
+    client, deps = _client(identity_rw_engine)
+    temporary_password = _create_account(identity_rw_engine, deps)
+    response = client.post(
+        "/api/v1/auth/login",
+        json={"employeeNo": "00000001", "password": temporary_password},
+        headers={"Idempotency-Key": "fingerprint-key-0001"},
+    )
+    assert response.status_code == 200
+
+    canonical = json.dumps(
+        {
+            "body": {"employeeNo": "00000001", "password": temporary_password},
+            "method": "POST",
+            "operation": "auth_login",
+            "path": "/api/v1/auth/login",
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    unkeyed_guess = hashlib.sha256(canonical).hexdigest()
+    with identity_rw_engine.connect() as db:
+        stored = db.execute(
+            text(
+                "SELECT request_fingerprint FROM identity.idempotency_record "
+                "WHERE actor='employee:00000001' AND operation='auth_login' "
+                "AND idempotency_key='fingerprint-key-0001'"
+            )
+        ).scalar_one()
+
+    assert stored != unkeyed_guess
 
 
 def test_full_bootstrap_api_sets_full_cookie_then_logout_revokes_it(
@@ -610,3 +690,229 @@ def test_expired_password_flow_allows_only_password_change_then_fresh_login(
     )
     assert fresh_login.status_code == 200
     assert fresh_login.json()["state"] == "TOTP_REQUIRED"
+
+
+def test_bootstrap_totp_failures_are_capped_audited_and_do_not_refresh_session(
+    identity_rw_engine: Engine,
+    identity_owner_engine: Engine,
+    clean_identity_db: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, deps = _client(identity_rw_engine)
+    temporary_password = _create_account(identity_rw_engine, deps)
+    assert (
+        client.post(
+            "/api/v1/auth/login",
+            json={"employeeNo": "00000001", "password": temporary_password},
+            headers={"Idempotency-Key": "bootstrap-cap-login"},
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            "/api/v1/auth/bootstrap/password",
+            json={"password": VALID_PASSWORD},
+            headers={"Idempotency-Key": "bootstrap-cap-password"},
+        ).status_code
+        == 200
+    )
+    enrollment = client.post(
+        "/api/v1/auth/bootstrap/totp/enroll",
+        headers={"Idempotency-Key": "bootstrap-cap-enroll"},
+    )
+    assert enrollment.status_code == 200
+    secret = parse_qs(urlsplit(enrollment.json()["provisioningUri"]).query)["secret"][0]
+    monkeypatch.setattr(
+        "control_plane.app.shared.security.totp.time.time",
+        lambda: deps.clock.now().timestamp(),
+    )
+    with identity_rw_engine.connect() as db:
+        last_seen_before = db.execute(
+            text("SELECT last_seen_at FROM identity.session WHERE kind='BOOTSTRAP'")
+        ).scalar_one()
+
+    responses: list[Response] = []
+    wrong_codes: list[str] = []
+    for attempt in range(1, 6):
+        _clock(deps).value += timedelta(minutes=1)
+        valid_code = pyotp.TOTP(secret).at(deps.clock.now())
+        wrong_code = valid_code[:-1] + str((int(valid_code[-1]) + 1) % 10)
+        wrong_codes.append(wrong_code)
+        responses.append(
+            client.post(
+                "/api/v1/auth/bootstrap/totp/confirm",
+                json={"code": wrong_code},
+                headers={"Idempotency-Key": f"bootstrap-cap-wrong-{attempt}"},
+            )
+        )
+    replay = client.post(
+        "/api/v1/auth/bootstrap/totp/confirm",
+        json={"code": wrong_code},
+        headers={"Idempotency-Key": "bootstrap-cap-wrong-5"},
+    )
+    _clock(deps).value += timedelta(minutes=1)
+    sixth = client.post(
+        "/api/v1/auth/bootstrap/totp/confirm",
+        json={"code": wrong_code},
+        headers={"Idempotency-Key": "bootstrap-cap-wrong-6"},
+    )
+
+    with identity_rw_engine.connect() as db:
+        session_state = db.execute(
+            text(
+                "SELECT last_seen_at, revoked_at, revoke_reason "
+                "FROM identity.session WHERE kind='BOOTSTRAP'"
+            )
+        ).one()
+    with identity_owner_engine.connect() as db:
+        denied_audits = db.execute(
+            text(
+                "SELECT count(*) FROM audit.audit_event "
+                "WHERE action='identity.totp.confirmed' AND result='DENIED'"
+            )
+        ).scalar_one()
+        audit_payload = db.execute(
+            text(
+                "SELECT COALESCE(jsonb_agg(to_jsonb(e))::text, '[]') "
+                "FROM audit.audit_event e "
+                "WHERE action='identity.totp.confirmed' AND result='DENIED'"
+            )
+        ).scalar_one()
+
+    assert [response.status_code for response in responses] == [401, 401, 401, 401, 429]
+    assert replay.status_code == 429
+    assert replay.headers["Retry-After"] == responses[-1].headers["Retry-After"]
+    assert sixth.status_code == 401
+    assert session_state.revoked_at is not None
+    assert session_state.revoke_reason == "TOTP_ATTEMPTS_EXHAUSTED"
+    assert session_state.last_seen_at == last_seen_before
+    assert denied_audits == 5
+    assert all(code not in audit_payload for code in wrong_codes)
+
+
+def test_concurrent_bootstrap_totp_failures_keep_every_attempt(
+    identity_rw_engine: Engine,
+    identity_owner_engine: Engine,
+    clean_identity_db: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    setup_client, deps = _client(identity_rw_engine)
+    secret, bootstrap_token = _prepare_bootstrap_totp(
+        identity_rw_engine,
+        setup_client,
+        deps,
+        key_prefix="bootstrap-concurrent-cap",
+    )
+    monkeypatch.setattr(
+        "control_plane.app.shared.security.totp.time.time",
+        lambda: deps.clock.now().timestamp(),
+    )
+    valid_code = pyotp.TOTP(secret).at(deps.clock.now())
+    wrong_code = valid_code[:-1] + str((int(valid_code[-1]) + 1) % 10)
+    runtime = IdentityHttpRuntime(engine=identity_rw_engine, dependencies=deps)
+    clients = [
+        TestClient(
+            create_app(identity_runtime_provider=lambda: runtime),
+            base_url="https://testserver",
+        )
+        for _ in range(5)
+    ]
+    for client in clients:
+        client.cookies.set("ep_session", bootstrap_token)
+    barrier = threading.Barrier(5)
+    response_lock = threading.Lock()
+    responses: list[Response] = []
+    errors: list[BaseException] = []
+
+    def worker(index: int) -> None:
+        try:
+            barrier.wait(timeout=5)
+            response = clients[index].post(
+                "/api/v1/auth/bootstrap/totp/confirm",
+                json={"code": wrong_code},
+                headers={"Idempotency-Key": f"bootstrap-concurrent-wrong-{index}"},
+            )
+            with response_lock:
+                responses.append(response)
+        except BaseException as exc:  # pragma: no cover - asserted below
+            with response_lock:
+                errors.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(index,)) for index in range(5)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert not errors
+    assert sorted(response.status_code for response in responses) == [401, 401, 401, 401, 429]
+    with identity_rw_engine.connect() as db:
+        state = db.execute(
+            text(
+                "SELECT bootstrap_totp_attempt_count, revoked_at "
+                "FROM identity.session WHERE kind='BOOTSTRAP'"
+            )
+        ).one()
+    with identity_owner_engine.connect() as db:
+        denied_audits = db.execute(
+            text(
+                "SELECT count(*) FROM audit.audit_event "
+                "WHERE action='identity.totp.confirmed' AND result='DENIED'"
+            )
+        ).scalar_one()
+    assert state.bootstrap_totp_attempt_count == 5
+    assert state.revoked_at is not None
+    assert denied_audits == 5
+
+
+def test_bootstrap_totp_uses_the_current_effective_attempt_cap(
+    identity_rw_engine: Engine,
+    clean_identity_db: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    setup_client, deps = _client(identity_rw_engine)
+    secret, bootstrap_token = _prepare_bootstrap_totp(
+        identity_rw_engine,
+        setup_client,
+        deps,
+        key_prefix="bootstrap-policy-cap",
+    )
+    monkeypatch.setattr(
+        "control_plane.app.shared.security.totp.time.time",
+        lambda: deps.clock.now().timestamp(),
+    )
+    valid_code = pyotp.TOTP(secret).at(deps.clock.now())
+    wrong_code = valid_code[:-1] + str((int(valid_code[-1]) + 1) % 10)
+    for attempt in range(2):
+        response = setup_client.post(
+            "/api/v1/auth/bootstrap/totp/confirm",
+            json={"code": wrong_code},
+            headers={"Idempotency-Key": f"bootstrap-policy-wrong-{attempt}"},
+        )
+        assert response.status_code == 401
+
+    tight_deps = replace(deps, policy=TightBootstrapTotpPolicy())
+    runtime = IdentityHttpRuntime(engine=identity_rw_engine, dependencies=tight_deps)
+    tight_client = TestClient(
+        create_app(identity_runtime_provider=lambda: runtime),
+        base_url="https://testserver",
+    )
+    tight_client.cookies.set("ep_session", bootstrap_token)
+    blocked = tight_client.post(
+        "/api/v1/auth/bootstrap/totp/confirm",
+        json={"code": valid_code},
+        headers={"Idempotency-Key": "bootstrap-policy-terminal"},
+    )
+
+    assert blocked.status_code == 429
+    assert blocked.headers["Retry-After"] == "1"
+    with identity_rw_engine.connect() as db:
+        state = db.execute(
+            text(
+                "SELECT bootstrap_totp_attempt_count, revoked_at "
+                "FROM identity.session WHERE kind='BOOTSTRAP'"
+            )
+        ).one()
+    assert state.bootstrap_totp_attempt_count == 2
+    assert state.revoked_at is not None
