@@ -24,6 +24,16 @@ class MembershipChangeFailed(RuntimeError):
     """The downstream membership projection callback failed."""
 
 
+def _actor_id(actor: Any) -> str:
+    account_id = getattr(actor, "account_id", None)
+    if isinstance(account_id, str) and account_id:
+        return account_id
+    employee_id = getattr(actor, "employee_id", None)
+    if isinstance(employee_id, str) and employee_id:
+        return employee_id
+    raise ValueError("organization actor requires a stable identifier")
+
+
 def _is_effective(
     account: OrganizationAccountView | None,
 ) -> TypeGuard[OrganizationAccountView]:
@@ -94,13 +104,14 @@ def set_superior(
     old_summary = "absent" if previous is None else f"{previous[1]}:{previous[0] or 'none'}"
     new_summary = f"{kind.value}:{superior_id or 'none'}"
     audit_reason = f"{reason}; old={old_summary}; new={new_summary}"
+    audit_actor = _actor_id(actor)
     record_in_transaction(
         repository.db,
         AuditEnvelope(
             id=str(dependencies.random.uuid4()),
             occurred_at=now,
-            actor=actor.employee_id,
-            actor_type="HUMAN" if actor.employee_id != "SYSTEM" else "SYSTEM",
+            actor=audit_actor,
+            actor_type="HUMAN" if audit_actor != "SYSTEM" else "SYSTEM",
             action="organization.structure.changed",
             target_type="ACCOUNT",
             target_id=account_id,

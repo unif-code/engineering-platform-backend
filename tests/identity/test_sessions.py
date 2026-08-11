@@ -144,6 +144,37 @@ def test_validate_session_separates_bootstrap_and_full_principals(
     assert full.session_kind is SessionKind.FULL
 
 
+def test_protected_session_validation_checks_idle_without_touching_activity(
+    clean_identity_db: None,
+    identity_rw_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Changing validate_session to always touch last_seen_at must fail this test."""
+    clock = MutableClock()
+    deps = dependencies(clock=clock)
+    _secret, token = _initialize_account(identity_rw_engine, deps, monkeypatch)
+    with identity_rw_engine.connect() as db:
+        before = db.execute(
+            text("SELECT last_seen_at FROM identity.session WHERE kind='FULL'")
+        ).scalar_one()
+
+    clock.value += timedelta(minutes=1)
+    with identity_rw_engine.begin() as db:
+        principal = validate_session(
+            db,
+            raw_token=token,
+            dependencies=deps,
+            touch_activity=False,
+        )
+
+    assert principal is not None
+    with identity_rw_engine.connect() as db:
+        after = db.execute(
+            text("SELECT last_seen_at FROM identity.session WHERE kind='FULL'")
+        ).scalar_one()
+    assert after == before
+
+
 def test_session_cap_evicts_oldest_full_session_deterministically(
     clean_identity_db: None,
     identity_rw_engine: Engine,

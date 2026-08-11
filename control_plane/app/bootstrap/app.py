@@ -1,8 +1,8 @@
 from collections.abc import Callable
 from functools import lru_cache
-from typing import Literal
+from typing import Any, Literal, cast
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import Engine, create_engine
 
@@ -10,19 +10,63 @@ from control_plane.app import __version__
 from control_plane.app.modules.audit.adapters.transactional import (
     SqlAlchemyTransactionalAuditAppender,
 )
-from control_plane.app.modules.identity import IdentityDependencies
+from control_plane.app.modules.authorization import (
+    AuthorizationDependencies,
+    AuthorizationPrincipal,
+    DecisionDependencies,
+    Scope,
+    SecurityChangeOrchestrator,
+    principal_has_capability,
+)
+from control_plane.app.modules.authorization.adapters import (
+    SqlAlchemyAuthorizationRepository,
+    SqlAlchemyIdentitySessionValidator,
+    SqlAlchemyOrganizationSummary,
+    SqlAlchemyWorkspaceMembership,
+    SqlAlchemyWorkspaceSummaries,
+)
+from control_plane.app.modules.authorization.api import (
+    AuthorizationHttpRuntime,
+    create_authorization_router,
+)
+from control_plane.app.modules.authorization.api.dependencies import current_principal
+from control_plane.app.modules.identity import IdentityDependencies, SessionPrincipal
 from control_plane.app.modules.identity.adapters.policy import DefaultEffectivePolicy
 from control_plane.app.modules.identity.adapters.runtime import (
     SystemClock,
     SystemRandom,
-    no_auth_change,
 )
 from control_plane.app.modules.identity.adapters.sqlalchemy import SqlAlchemyIdentityRepository
 from control_plane.app.modules.identity.api.auth_routes import (
     IdentityHttpRuntime,
     create_auth_router,
 )
-from control_plane.app.modules.identity.api.routes import router as identity_router
+from control_plane.app.modules.organization import OrganizationDependencies
+from control_plane.app.modules.organization.adapters import (
+    SqlAlchemyIdentityAccountLookup as OrganizationIdentityAccountLookup,
+)
+from control_plane.app.modules.organization.adapters import (
+    SqlAlchemyOrganizationRepository,
+)
+from control_plane.app.modules.organization.api import (
+    OrganizationHttpRuntime,
+    create_organization_router,
+)
+from control_plane.app.modules.workspace import (
+    WorkspaceDependencies,
+    on_membership_change,
+)
+from control_plane.app.modules.workspace.adapters import (
+    SqlAlchemyIdentityAccountLookup as WorkspaceIdentityAccountLookup,
+)
+from control_plane.app.modules.workspace.adapters import (
+    SqlAlchemyOrganizationReports,
+    SqlAlchemyWorkspaceRepository,
+)
+from control_plane.app.modules.workspace.api import (
+    WorkspaceHttpRuntime,
+    create_workspace_router,
+)
 from control_plane.app.shared.api.camel import CamelModel
 from control_plane.app.shared.api.problem import (
     PROBLEM_RESPONSES,
@@ -57,19 +101,188 @@ def identity_runtime_engine() -> Engine:
 
 
 @lru_cache(maxsize=1)
-def identity_http_runtime() -> IdentityHttpRuntime:
-    # Task 9 replaces the explicit no-projection hook before protected consumers
-    # are registered. Until then no authorization projection can become stale.
-    dependencies = IdentityDependencies(
+def organization_runtime_engine() -> Engine:
+    return create_engine(
+        DbSettings().organization_database_url,
+        pool_pre_ping=True,
+        connect_args={"connect_timeout": 2},
+    )
+
+
+@lru_cache(maxsize=1)
+def workspace_runtime_engine() -> Engine:
+    return create_engine(
+        DbSettings().workspace_database_url,
+        pool_pre_ping=True,
+        connect_args={"connect_timeout": 2},
+    )
+
+
+@lru_cache(maxsize=1)
+def authorization_runtime_engine() -> Engine:
+    return create_engine(
+        DbSettings().authorization_database_url,
+        pool_pre_ping=True,
+        connect_args={"connect_timeout": 2},
+    )
+
+
+def _identity_authorization_change(account_id: str) -> None:
+    security_change_orchestrator().identity_change(account_id)
+
+
+@lru_cache(maxsize=1)
+def identity_dependencies() -> IdentityDependencies:
+    return IdentityDependencies(
         repository_factory=SqlAlchemyIdentityRepository,
         secret_manager=FileSecretManager(SecuritySettings()),
         policy=DefaultEffectivePolicy(),
         clock=SystemClock(),
         random=SystemRandom(),
         audit=SqlAlchemyTransactionalAuditAppender(),
-        on_auth_change=no_auth_change,
+        on_auth_change=_identity_authorization_change,
     )
-    return IdentityHttpRuntime(engine=identity_runtime_engine(), dependencies=dependencies)
+
+
+@lru_cache(maxsize=1)
+def identity_http_runtime() -> IdentityHttpRuntime:
+    return IdentityHttpRuntime(
+        engine=identity_runtime_engine(),
+        dependencies=identity_dependencies(),
+    )
+
+
+def _post_commit_membership_change(_account_ids: object) -> None:
+    # Organization HTTP composition performs the real committed-state recompute.
+    return None
+
+
+@lru_cache(maxsize=1)
+def organization_dependencies() -> OrganizationDependencies:
+    return OrganizationDependencies(
+        repository_factory=SqlAlchemyOrganizationRepository,
+        identity=OrganizationIdentityAccountLookup(
+            identity_runtime_engine(),
+            identity_dependencies(),
+        ),
+        audit=SqlAlchemyTransactionalAuditAppender(),
+        on_membership_change=_post_commit_membership_change,
+        clock=SystemClock(),
+        random=SystemRandom(),
+        secret_manager=FileSecretManager(SecuritySettings()),
+    )
+
+
+@lru_cache(maxsize=1)
+def workspace_dependencies() -> WorkspaceDependencies:
+    return WorkspaceDependencies(
+        repository_factory=SqlAlchemyWorkspaceRepository,
+        identity=WorkspaceIdentityAccountLookup(
+            identity_runtime_engine(),
+            identity_dependencies(),
+        ),
+        organization=SqlAlchemyOrganizationReports(
+            organization_runtime_engine(),
+            organization_dependencies(),
+        ),
+        audit=SqlAlchemyTransactionalAuditAppender(),
+        clock=SystemClock(),
+        random=SystemRandom(),
+        secret_manager=FileSecretManager(SecuritySettings()),
+    )
+
+
+@lru_cache(maxsize=1)
+def authorization_dependencies() -> AuthorizationDependencies:
+    return AuthorizationDependencies(
+        repository_factory=SqlAlchemyAuthorizationRepository,
+        audit=SqlAlchemyTransactionalAuditAppender(),
+        clock=SystemClock(),
+        random=SystemRandom(),
+        secret_manager=FileSecretManager(SecuritySettings()),
+    )
+
+
+@lru_cache(maxsize=1)
+def security_change_orchestrator() -> SecurityChangeOrchestrator:
+    return SecurityChangeOrchestrator(
+        authorization_runtime_engine(),
+        authorization_dependencies(),
+        recompute_membership=on_membership_change(
+            workspace_runtime_engine(),
+            dependencies=workspace_dependencies(),
+        ),
+    )
+
+
+@lru_cache(maxsize=1)
+def authorization_http_runtime() -> AuthorizationHttpRuntime:
+    workspace_membership = SqlAlchemyWorkspaceMembership(
+        workspace_runtime_engine(),
+        workspace_dependencies(),
+    )
+    return AuthorizationHttpRuntime(
+        engine=authorization_runtime_engine(),
+        dependencies=authorization_dependencies(),
+        decision_dependencies=DecisionDependencies(
+            identity=SqlAlchemyIdentitySessionValidator(
+                identity_runtime_engine(),
+                identity_dependencies(),
+            ),
+            workspace=workspace_membership,
+        ),
+        organization_summary=SqlAlchemyOrganizationSummary(
+            organization_runtime_engine(),
+            organization_dependencies(),
+        ),
+        workspace_summaries=SqlAlchemyWorkspaceSummaries(
+            workspace_runtime_engine(),
+            workspace_dependencies(),
+        ),
+    )
+
+
+@lru_cache(maxsize=1)
+def organization_http_runtime() -> OrganizationHttpRuntime:
+    return OrganizationHttpRuntime(
+        engine=organization_runtime_engine(),
+        dependencies=organization_dependencies(),
+        security_changes=security_change_orchestrator(),
+    )
+
+
+@lru_cache(maxsize=1)
+def workspace_http_runtime() -> WorkspaceHttpRuntime:
+    return WorkspaceHttpRuntime(
+        engine=workspace_runtime_engine(),
+        dependencies=workspace_dependencies(),
+        security_changes=security_change_orchestrator(),
+    )
+
+
+def authorization_principal(request: Request) -> AuthorizationPrincipal:
+    dependency = current_principal(authorization_http_runtime)
+    return cast(AuthorizationPrincipal, dependency(request))
+
+
+def authorization_capability_guard(
+    principal: Any,
+    capability: str,
+    workspace_id: str | None,
+) -> None:
+    resolved = cast(AuthorizationPrincipal, principal)
+    scope = Scope.workspace(workspace_id) if workspace_id is not None else Scope.platform()
+    runtime = authorization_http_runtime()
+    with runtime.engine.begin() as db:
+        allowed = principal_has_capability(
+            db,
+            principal=resolved,
+            capability=capability,
+            scope=scope,
+            dependencies=runtime.dependencies,
+        )
+    if not allowed:
+        raise HTTPException(status_code=403, detail="Forbidden")
 
 
 def create_app(
@@ -105,7 +318,21 @@ def create_app(
             return {"status": "ready"}
         return problem_response(503, "Not ready", detail="database unreachable")
 
-    app.include_router(identity_router)
     app.include_router(create_auth_router(identity_runtime_provider))
+    app.include_router(create_authorization_router(authorization_http_runtime))
+    app.include_router(
+        create_organization_router(
+            organization_http_runtime,
+            cast(Callable[[], Any], authorization_principal),
+            authorization_capability_guard,
+        )
+    )
+    app.include_router(
+        create_workspace_router(
+            workspace_http_runtime,
+            cast(Callable[[], SessionPrincipal], authorization_principal),
+            authorization_capability_guard,
+        )
+    )
 
     return app

@@ -31,6 +31,7 @@ from control_plane.app.modules.workspace.api.dto import (
     WorkspaceListResponseDto,
     WorkspaceResponseDto,
 )
+from control_plane.app.modules.workspace.ports import SecurityChangePort
 from control_plane.app.shared.api.concurrency import entity_tag, require_if_match
 from control_plane.app.shared.api.idempotency import require_idempotency_key
 from control_plane.app.shared.api.problem import PROBLEM_RESPONSES, problem_response
@@ -55,6 +56,7 @@ _RESPONSES = cast(
 class WorkspaceHttpRuntime:
     engine: Engine
     dependencies: WorkspaceDependencies
+    security_changes: SecurityChangePort | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -177,6 +179,13 @@ def _execute(
         body=body,
         idempotency_sealing_key=material.idempotency_sealing_key,
     )
+    security_changes = runtime.security_changes
+    ticket = (
+        security_changes.begin(reason=f"{operation} security change")
+        if security_changes is not None
+        else None
+    )
+    response: Response
     try:
         with runtime.engine.begin() as db:
             execution = execute_idempotent(
@@ -191,16 +200,32 @@ def _execute(
                 idempotency_sealing_key=material.idempotency_sealing_key,
             )
     except IdempotencyConflict:
-        return problem_response(409, "Idempotency conflict")
+        response = problem_response(409, "Idempotency conflict")
     except IdempotencyReplayUnavailable:
-        return problem_response(409, "Idempotency replay unavailable")
-    return _render(execution.response)
+        response = problem_response(409, "Idempotency replay unavailable")
+    except Exception:
+        if ticket is not None:
+            assert security_changes is not None
+            security_changes.cancel(ticket)
+        raise
+    else:
+        response = _render(execution.response)
+    if ticket is not None:
+        assert security_changes is not None
+        if 200 <= response.status_code < 300:
+            try:
+                security_changes.complete(ticket)
+            except Exception:
+                return problem_response(503, "Authorization convergence unavailable")
+        else:
+            security_changes.cancel(ticket)
+    return response
 
 
 def create_workspace_router(
     runtime_provider: Callable[[], WorkspaceHttpRuntime],
     principal_provider: Callable[[], SessionPrincipal],
-    capability_guard: Callable[[SessionPrincipal, str], None],
+    capability_guard: Callable[[SessionPrincipal, str, str | None], None],
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v1/admin", tags=["workspace"])
 
@@ -213,7 +238,7 @@ def create_workspace_router(
     def workspace_list(
         principal: Annotated[SessionPrincipal, Depends(principal_provider)],
     ) -> WorkspaceListResponseDto:
-        capability_guard(principal, WORKSPACE_READ_CAPABILITY)
+        capability_guard(principal, WORKSPACE_READ_CAPABILITY, None)
         runtime = runtime_provider()
         with runtime.engine.connect() as db:
             values = list_workspaces(db, dependencies=runtime.dependencies)
@@ -238,7 +263,7 @@ def create_workspace_router(
         principal: Annotated[SessionPrincipal, Depends(principal_provider)],
         preflight: Annotated[_CreateWritePreflight, Depends(_create_write_preflight)],
     ) -> Response:
-        capability_guard(principal, WORKSPACE_MANAGE_CAPABILITY)
+        capability_guard(principal, WORKSPACE_MANAGE_CAPABILITY, None)
         runtime = runtime_provider()
         body_data = body.model_dump(mode="json", by_alias=True)
 
@@ -284,7 +309,7 @@ def create_workspace_router(
         principal: Annotated[SessionPrincipal, Depends(principal_provider)],
         preflight: Annotated[_VersionedWritePreflight, Depends(_versioned_write_preflight)],
     ) -> Response:
-        capability_guard(principal, WORKSPACE_MANAGE_CAPABILITY)
+        capability_guard(principal, WORKSPACE_MANAGE_CAPABILITY, workspace_id)
         runtime = runtime_provider()
         body_data: dict[str, object] = {
             **body.model_dump(mode="json", by_alias=True),
@@ -335,7 +360,7 @@ def create_workspace_router(
         principal: Annotated[SessionPrincipal, Depends(principal_provider)],
         preflight: Annotated[_VersionedWritePreflight, Depends(_versioned_write_preflight)],
     ) -> Response:
-        capability_guard(principal, WORKSPACE_MANAGE_CAPABILITY)
+        capability_guard(principal, WORKSPACE_MANAGE_CAPABILITY, workspace_id)
         runtime = runtime_provider()
         body_data: dict[str, object] = {
             **body.model_dump(mode="json", by_alias=True),
@@ -385,7 +410,7 @@ def create_workspace_router(
         principal: Annotated[SessionPrincipal, Depends(principal_provider)],
         preflight: Annotated[_VersionedWritePreflight, Depends(_versioned_write_preflight)],
     ) -> Response:
-        capability_guard(principal, WORKSPACE_MANAGE_CAPABILITY)
+        capability_guard(principal, WORKSPACE_MANAGE_CAPABILITY, workspace_id)
         runtime = runtime_provider()
         body_data: dict[str, object] = {
             **body.model_dump(mode="json", by_alias=True),
@@ -428,7 +453,7 @@ def create_workspace_router(
         workspace_id: Annotated[str, Path(alias="id")],
         principal: Annotated[SessionPrincipal, Depends(principal_provider)],
     ) -> FormalMemberListResponseDto | Response:
-        capability_guard(principal, WORKSPACE_READ_CAPABILITY)
+        capability_guard(principal, WORKSPACE_READ_CAPABILITY, workspace_id)
         runtime = runtime_provider()
         with runtime.engine.connect() as db:
             try:

@@ -10,6 +10,7 @@ from control_plane.app.modules.organization.ports.runtime import (
     ClockPort,
     MembershipChangePort,
     RandomPort,
+    SecurityChangePort,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "OrganizationRepository",
     "OrganizationRepositoryFactory",
     "RandomPort",
+    "SecurityChangePort",
 ]

@@ -74,6 +74,7 @@ def validate_session(
     *,
     raw_token: str,
     dependencies: IdentityDependencies,
+    touch_activity: bool = True,
 ) -> SessionPrincipal | None:
     deps = dependencies
     db = repository.db
@@ -105,11 +106,12 @@ def validate_session(
             dependencies=deps,
         )
         return None
-    repository.touch_session(
-        str(row["session_id"]),
-        now,
-        now + policy.session_idle_timeout,
-    )
+    if touch_activity:
+        repository.touch_session(
+            str(row["session_id"]),
+            now,
+            now + policy.session_idle_timeout,
+        )
     return SessionPrincipal(
         account_id=str(row["account_id"]),
         employee_no=row["employee_no"],

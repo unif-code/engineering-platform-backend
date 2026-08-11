@@ -8,7 +8,11 @@ from control_plane.app.modules.workspace.ports.repository import (
     WorkspaceRepository,
     WorkspaceRepositoryFactory,
 )
-from control_plane.app.modules.workspace.ports.runtime import ClockPort, RandomPort
+from control_plane.app.modules.workspace.ports.runtime import (
+    ClockPort,
+    RandomPort,
+    SecurityChangePort,
+)
 
 __all__ = [
     "ClockPort",
@@ -16,6 +20,7 @@ __all__ = [
     "IdentityAccountLookupPort",
     "OrganizationReportsPort",
     "RandomPort",
+    "SecurityChangePort",
     "WorkspaceAccountView",
     "WorkspaceRepository",
     "WorkspaceRepositoryFactory",

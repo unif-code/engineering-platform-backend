@@ -51,7 +51,7 @@ def _isolated_client(
     dependencies: WorkspaceDependencies,
     *,
     principal: SessionPrincipal | None = None,
-    guard: Callable[[SessionPrincipal, str], None] | None = None,
+    guard: Callable[[SessionPrincipal, str, str | None], None] | None = None,
     runtime_provider: Callable[[], WorkspaceHttpRuntime] | None = None,
     principal_provider: Callable[[], SessionPrincipal] | None = None,
 ) -> TestClient:
@@ -66,7 +66,7 @@ def _isolated_client(
         create_workspace_router(
             runtime_provider=runtime_provider or (lambda: runtime),
             principal_provider=principal_provider or (lambda: principal or _session_principal()),
-            capability_guard=guard or (lambda _principal, _capability: None),
+            capability_guard=guard or (lambda _principal, _capability, _scope_id: None),
         )
     )
     return TestClient(app, base_url="https://testserver", raise_server_exceptions=False)
@@ -129,7 +129,9 @@ def test_isolated_workspace_routes_expose_exact_contract_and_create_camel_respon
     client = _isolated_client(
         workspace_rw_engine,
         dependencies,
-        guard=lambda principal, capability: guarded.append((principal.account_id, capability)),
+        guard=lambda principal, capability, _scope_id: guarded.append(
+            (principal.account_id, capability)
+        ),
     )
 
     schema = client.get("/openapi.json").json()
@@ -181,7 +183,7 @@ def test_isolated_workspace_routes_expose_exact_contract_and_create_camel_respon
     assert idempotency_actor == audit_actor == OWNER_ID
 
 
-def test_workspace_routes_are_not_registered_in_real_bootstrap_or_artifact() -> None:
+def test_workspace_routes_are_globally_registered_and_require_authentication() -> None:
     app = create_app()
     schema = app.openapi()
     operation_ids = {
@@ -193,17 +195,17 @@ def test_workspace_routes_are_not_registered_in_real_bootstrap_or_artifact() -> 
         "workspace_members",
     }
 
-    assert not any(
-        operation.get("operationId") in operation_ids
+    registered = {
+        operation.get("operationId")
         for path in schema["paths"].values()
         for operation in path.values()
         if isinstance(operation, dict)
-    )
-    client = TestClient(app, raise_server_exceptions=False)
-    assert client.get("/api/v1/admin/workspaces").status_code == 404
-    with open("openapi.json", encoding="utf-8") as artifact:
-        artifact_text = artifact.read()
-    assert not operation_ids.intersection(artifact_text.split('"'))
+    }
+    assert operation_ids <= registered
+    client = TestClient(app, base_url="https://testserver", raise_server_exceptions=False)
+    response = client.get("/api/v1/admin/workspaces")
+    assert response.status_code == 401
+    assert response.headers["content-type"].startswith("application/problem+json")
 
 
 def test_write_headers_and_same_origin_are_enforced_before_database_access(

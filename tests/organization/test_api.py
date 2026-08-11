@@ -40,7 +40,7 @@ def _isolated_client(
     organization_rw_engine: Engine,
     dependencies: OrganizationDependencies,
     *,
-    guard: Callable[[Principal, str], None] | None = None,
+    guard: Callable[[Principal, str, str | None], None] | None = None,
 ) -> TestClient:
     runtime = OrganizationHttpRuntime(
         engine=organization_rw_engine,
@@ -53,7 +53,7 @@ def _isolated_client(
         create_organization_router(
             runtime_provider=lambda: runtime,
             principal_provider=lambda: ACTOR,
-            capability_guard=guard or (lambda _principal, _capability: None),
+            capability_guard=guard or (lambda _principal, _capability, _scope_id: None),
         )
     )
     return TestClient(app, base_url="https://testserver", raise_server_exceptions=False)
@@ -80,7 +80,9 @@ def test_isolated_routes_have_fixed_operation_ids_and_camel_case_shape(
     client = _isolated_client(
         organization_rw_engine,
         dependencies,
-        guard=lambda principal, capability: guarded.append((principal.employee_id, capability)),
+        guard=lambda principal, capability, _scope_id: guarded.append(
+            (principal.employee_id, capability)
+        ),
     )
 
     schema = client.get("/openapi.json").json()
@@ -119,24 +121,18 @@ def test_isolated_routes_have_fixed_operation_ids_and_camel_case_shape(
     ]
 
 
-def test_organization_routes_are_not_registered_in_real_bootstrap_or_artifact() -> None:
+def test_organization_routes_are_globally_registered_and_require_authentication() -> None:
     app = create_app()
     schema = app.openapi()
-    assert "/api/v1/admin/organization/tree" not in schema["paths"]
-    assert "/api/v1/admin/accounts/{accountId}/superior" not in schema["paths"]
-    assert not any(
-        operation.get("operationId") in {"org_tree", "org_set_superior"}
-        for path in schema["paths"].values()
-        for operation in path.values()
-        if isinstance(operation, dict)
+    assert schema["paths"]["/api/v1/admin/organization/tree"]["get"]["operationId"] == ("org_tree")
+    assert (
+        schema["paths"]["/api/v1/admin/accounts/{accountId}/superior"]["put"]["operationId"]
+        == "org_set_superior"
     )
     client = TestClient(app, raise_server_exceptions=False)
     response = client.get("/api/v1/admin/organization/tree")
-    assert response.status_code == 404
-    with open("openapi.json", encoding="utf-8") as artifact:
-        text_artifact = artifact.read()
-    assert "org_tree" not in text_artifact
-    assert "org_set_superior" not in text_artifact
+    assert response.status_code == 401
+    assert response.headers["content-type"].startswith("application/problem+json")
 
 
 def test_write_requires_same_origin_and_idempotency_key_before_database_change(

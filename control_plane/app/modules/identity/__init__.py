@@ -218,11 +218,13 @@ def validate_session(
     *,
     raw_token: str,
     dependencies: IdentityDependencies,
+    touch_activity: bool = True,
 ) -> SessionPrincipal | None:
     return _validate_session(
         dependencies.repository_factory(db),
         raw_token=raw_token,
         dependencies=dependencies,
+        touch_activity=touch_activity,
     )
 
 

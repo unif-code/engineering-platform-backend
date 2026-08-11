@@ -1,0 +1,265 @@
+import json
+from datetime import datetime
+from typing import Any
+
+from sqlalchemy import Connection, text
+
+
+class SqlAlchemyAuthorizationRepository:
+    def __init__(self, db: Connection) -> None:
+        self.db = db
+
+    def claim_idempotency(self, **values: Any) -> bool:
+        result = self.db.execute(
+            text(
+                'INSERT INTO "authorization".idempotency_record '
+                "(id, actor, operation, idempotency_key, request_fingerprint, state, "
+                "created_at, updated_at) VALUES "
+                "(:id, :actor, :operation, :idempotency_key, :request_fingerprint, "
+                "'IN_PROGRESS', :now, :now) ON CONFLICT "
+                "(actor, operation, idempotency_key) DO NOTHING RETURNING id"
+            ),
+            values,
+        )
+        return result.scalar_one_or_none() is not None
+
+    def idempotency_by_scope(
+        self,
+        actor: str,
+        operation: str,
+        idempotency_key: str,
+        *,
+        for_update: bool = False,
+    ) -> Any:
+        suffix = " FOR UPDATE" if for_update else ""
+        return (
+            self.db.execute(
+                text(
+                    'SELECT * FROM "authorization".idempotency_record '
+                    "WHERE actor=:actor AND operation=:operation "
+                    f"AND idempotency_key=:idempotency_key{suffix}"
+                ),
+                {"actor": actor, "operation": operation, "idempotency_key": idempotency_key},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def complete_idempotency(
+        self,
+        record_id: str,
+        *,
+        http_status: int,
+        result_metadata: dict[str, object],
+        sealed_response: bytes,
+        now: datetime,
+    ) -> bool:
+        result = self.db.execute(
+            text(
+                "UPDATE \"authorization\".idempotency_record SET state='COMPLETED', "
+                "http_status=:http_status, result_metadata=CAST(:metadata AS JSONB), "
+                "sealed_response=:sealed_response, completed_at=:now, updated_at=:now "
+                "WHERE id=:id AND state='IN_PROGRESS'"
+            ),
+            {
+                "id": record_id,
+                "http_status": http_status,
+                "metadata": json.dumps(result_metadata, separators=(",", ":")),
+                "sealed_response": sealed_response,
+                "now": now,
+            },
+        )
+        return result.rowcount == 1
+
+    def insert_grant(self, **values: Any) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    'INSERT INTO "authorization"."grant" '
+                    "(id, principal_id, capability, scope_type, scope_id, source, "
+                    "valid_from, valid_to, status, version, created_at, updated_at) VALUES "
+                    "(:id, :principal_id, :capability, :scope_type, :scope_id, :source, "
+                    ":valid_from, :valid_to, 'ACTIVE', 1, :now, :now) RETURNING *"
+                ),
+                values,
+            )
+            .mappings()
+            .one()
+        )
+
+    def grant_by_id(self, grant_id: str, *, for_update: bool = False) -> Any:
+        suffix = " FOR UPDATE" if for_update else ""
+        return (
+            self.db.execute(
+                text(f'SELECT * FROM "authorization"."grant" WHERE id=:id{suffix}'),
+                {"id": grant_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def list_grants(self) -> list[Any]:
+        return list(
+            self.db.execute(
+                text('SELECT * FROM "authorization"."grant" ORDER BY created_at, id')
+            ).mappings()
+        )
+
+    def effective_grants(
+        self,
+        *,
+        principal_id: str,
+        capability: str | None,
+        scope_type: str | None,
+        scope_id: str | None,
+        now: datetime,
+    ) -> list[Any]:
+        conditions = [
+            "principal_id=:principal_id",
+            "status='ACTIVE'",
+            "(valid_from IS NULL OR valid_from<=:now)",
+            "(valid_to IS NULL OR :now<valid_to)",
+        ]
+        if capability is not None:
+            conditions.append("capability=:capability")
+        if scope_type is not None:
+            conditions.append("scope_type=:scope_type")
+            conditions.append("scope_id IS NOT DISTINCT FROM :scope_id")
+        return list(
+            self.db.execute(
+                text(
+                    'SELECT * FROM "authorization"."grant" WHERE '
+                    + " AND ".join(conditions)
+                    + " ORDER BY capability, scope_type, scope_id, id"
+                ),
+                {
+                    "principal_id": principal_id,
+                    "capability": capability,
+                    "scope_type": scope_type,
+                    "scope_id": scope_id,
+                    "now": now,
+                },
+            ).mappings()
+        )
+
+    def revoke_grant(
+        self,
+        *,
+        grant_id: str,
+        expected_version: int,
+        actor_id: str,
+        reason: str,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    'UPDATE "authorization"."grant" SET status=\'REVOKED\', '
+                    "version=version+1, updated_at=:now, revoked_at=:now, "
+                    "revoked_by=:actor_id, revoke_reason=:reason "
+                    "WHERE id=:grant_id AND status='ACTIVE' AND version=:expected_version "
+                    "RETURNING *"
+                ),
+                {
+                    "grant_id": grant_id,
+                    "expected_version": expected_version,
+                    "actor_id": actor_id,
+                    "reason": reason,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def bump_principal_version(self, account_id: str, now: datetime) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    'INSERT INTO "authorization".principal_version '
+                    "(account_id, version, fence_generation, updated_at) "
+                    "VALUES (:account_id, 2, 0, :now) ON CONFLICT (account_id) "
+                    'DO UPDATE SET version="authorization".principal_version.version+1, '
+                    "updated_at=EXCLUDED.updated_at RETURNING *"
+                ),
+                {"account_id": account_id, "now": now},
+            )
+            .mappings()
+            .one()
+        )
+
+    def principal_version(self, account_id: str, *, for_update: bool = False) -> Any:
+        suffix = " FOR UPDATE" if for_update else ""
+        return (
+            self.db.execute(
+                text(
+                    'SELECT * FROM "authorization".principal_version '
+                    f"WHERE account_id=:account_id{suffix}"
+                ),
+                {"account_id": account_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def mark_fence(self, account_id: str, reason: str, now: datetime) -> int:
+        return int(
+            self.db.execute(
+                text(
+                    'INSERT INTO "authorization".principal_version '
+                    "(account_id, version, fence_generation, dirty_generation, "
+                    "dirty_reason, updated_at) VALUES (:account_id, 1, 1, 1, :reason, :now) "
+                    "ON CONFLICT (account_id) DO UPDATE SET "
+                    'fence_generation="authorization".principal_version.fence_generation+1, '
+                    'dirty_generation="authorization".principal_version.fence_generation+1, '
+                    "dirty_reason=EXCLUDED.dirty_reason, updated_at=EXCLUDED.updated_at "
+                    "RETURNING dirty_generation"
+                ),
+                {"account_id": account_id, "reason": reason, "now": now},
+            ).scalar_one()
+        )
+
+    def clear_fence(self, account_id: str, generation: int, now: datetime) -> bool:
+        result = self.db.execute(
+            text(
+                'UPDATE "authorization".principal_version SET dirty_generation=NULL, '
+                "dirty_reason=NULL, updated_at=:now WHERE account_id=:account_id "
+                "AND dirty_generation=:generation"
+            ),
+            {"account_id": account_id, "generation": generation, "now": now},
+        )
+        return result.rowcount == 1
+
+    def converge_fence(self, account_id: str, generation: int, now: datetime) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    'UPDATE "authorization".principal_version SET version=version+1, '
+                    "dirty_generation=NULL, dirty_reason=NULL, updated_at=:now "
+                    "WHERE account_id=:account_id AND dirty_generation=:generation "
+                    "RETURNING *"
+                ),
+                {"account_id": account_id, "generation": generation, "now": now},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def principal_ids(self) -> list[str]:
+        return [
+            str(value)
+            for value in self.db.execute(
+                text(
+                    'SELECT account_id FROM "authorization".principal_version '
+                    'UNION SELECT principal_id FROM "authorization"."grant" '
+                    "ORDER BY 1"
+                )
+            ).scalars()
+        ]
+
+    def route_registry(self) -> list[Any]:
+        return list(
+            self.db.execute(
+                text('SELECT * FROM "authorization".route_registry ORDER BY sort, route_key')
+            ).mappings()
+        )
