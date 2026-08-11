@@ -69,6 +69,7 @@ EXPECTED_COLUMNS = {
         ("failure_count", "INTEGER", False, "0"),
         ("last_failure_at", "TIMESTAMPTZ", True, None),
         ("locked_until", "TIMESTAMPTZ", True, None),
+        ("source", "TEXT", False, None),
     ],
     "session": [
         ("id", "UUID", False, None),
@@ -105,7 +106,7 @@ EXPECTED_PRIMARY_KEYS = {
     "account": ("id",),
     "auth_challenge": ("id",),
     "idempotency_record": ("id",),
-    "login_backoff": ("employee_no",),
+    "login_backoff": ("employee_no", "source"),
     "session": ("id",),
     "temp_credential": ("id",),
 }
@@ -262,7 +263,10 @@ def test_identity_foreign_keys_stay_inside_identity_schema(
 def test_both_independent_alembic_heads_are_installed(identity_owner_engine: Engine) -> None:
     with identity_owner_engine.connect() as conn:
         installed = set(conn.execute(text("SELECT version_num FROM alembic_version")).scalars())
-    assert installed == {"0001_audit_event", "0001_identity_base"}
+    assert installed == {
+        "0002_audit_transactional_append",
+        "0002_identity_backoff_source",
+    }
 
 
 @pytest.mark.parametrize("employee_no", ["1234567", "123456789", "ABCDEFGH"])
@@ -379,8 +383,9 @@ def test_login_backoff_rejects_invalid_employee_count_and_lock_lifecycle(
             conn.execute(
                 text(
                     "INSERT INTO identity.login_backoff "
-                    "(employee_no, failure_count, last_failure_at, locked_until) VALUES "
-                    "(:employee_no, :failure_count, CAST(:last_failure_at AS timestamptz), "
+                    "(employee_no, source, failure_count, last_failure_at, locked_until) VALUES "
+                    "(:employee_no, 'legacy', :failure_count, "
+                    "CAST(:last_failure_at AS timestamptz), "
                     "CAST(:locked_until AS timestamptz))"
                 ),
                 {
