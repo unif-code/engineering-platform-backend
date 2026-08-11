@@ -9,6 +9,9 @@ from control_plane.app.modules.identity.application.accounts import (
     create_account as _create_account,
 )
 from control_plane.app.modules.identity.application.accounts import (
+    get_organization_account as _get_organization_account,
+)
+from control_plane.app.modules.identity.application.accounts import (
     issue_temp_password as _issue_temp_password,
 )
 from control_plane.app.modules.identity.application.accounts import (
@@ -36,6 +39,7 @@ from control_plane.app.modules.identity.application.sessions import (
 from control_plane.app.modules.identity.domain.account import (
     AccountDto,
     AccountStatus,
+    OrganizationAccountDto,
     ensure_account_transition_allowed,
     ensure_effective_super_admin_remains,
 )
@@ -104,6 +108,18 @@ def issue_temp_password(
         actor=actor,
         reason=reason,
         dependencies=dependencies,
+    )
+
+
+def get_organization_account(
+    db: Connection,
+    *,
+    account_id: str,
+    dependencies: IdentityDependencies,
+) -> OrganizationAccountDto | None:
+    return _get_organization_account(
+        dependencies.repository_factory(db),
+        account_id=account_id,
     )
 
 
@@ -282,6 +298,7 @@ __all__ = [
     "LastEffectiveSuperAdmin",
     "LoginBackoffActive",
     "LoginChallenge",
+    "OrganizationAccountDto",
     "PasswordFloorViolation",
     "Principal",
     "SessionKind",
@@ -297,6 +314,7 @@ __all__ = [
     "ensure_account_transition_allowed",
     "ensure_effective_super_admin_remains",
     "issue_temp_password",
+    "get_organization_account",
     "login_password_step",
     "login_totp_step",
     "logout",

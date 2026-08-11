@@ -10,6 +10,7 @@ from control_plane.app.modules.identity.application.sessions import (
 from control_plane.app.modules.identity.domain.account import (
     AccountDto,
     AccountStatus,
+    OrganizationAccountDto,
     ensure_account_transition_allowed,
     ensure_effective_super_admin_remains,
 )
@@ -38,6 +39,23 @@ def _dto(row: Any) -> AccountDto:
         totp_confirmed_at=row["totp_confirmed_at"],
         is_super_admin=row["is_super_admin"],
         version=row["version"],
+    )
+
+
+def get_organization_account(
+    repository: IdentityRepository,
+    *,
+    account_id: str,
+) -> OrganizationAccountDto | None:
+    row = repository.account_by_id(account_id)
+    if row is None:
+        return None
+    return OrganizationAccountDto(
+        id=str(row["id"]),
+        employee_no=row["employee_no"],
+        display_name=row["display_name"],
+        status=AccountStatus(row["status"]),
+        initialized=row["password_hash"] is not None and row["totp_confirmed_at"] is not None,
     )
 
 

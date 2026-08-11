@@ -30,6 +30,18 @@ class AccountDto(BaseModel):
     version: int
 
 
+class OrganizationAccountDto(BaseModel):
+    """Safe identity projection exposed to the organization module."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    employee_no: str
+    display_name: str
+    status: AccountStatus
+    initialized: bool
+
+
 def ensure_account_transition_allowed(
     *,
     current: AccountStatus,

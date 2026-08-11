@@ -262,11 +262,11 @@ def test_identity_foreign_keys_stay_inside_identity_schema(
     assert actual == EXPECTED_FOREIGN_KEYS
 
 
-def test_both_independent_alembic_heads_are_installed(identity_owner_engine: Engine) -> None:
+def test_current_alembic_heads_are_installed(identity_owner_engine: Engine) -> None:
     with identity_owner_engine.connect() as conn:
         installed = set(conn.execute(text("SELECT version_num FROM alembic_version")).scalars())
     assert installed == {
-        "0002_audit_transactional_append",
+        "0003_audit_org_append_grant",
         "0004_identity_bootstrap_totp_cap",
     }
 
