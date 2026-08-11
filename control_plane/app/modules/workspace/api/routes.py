@@ -2,14 +2,18 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, Path, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy import Engine
 
-from control_plane.app.modules.identity import Principal
+from control_plane.app.modules.identity import SessionPrincipal
 from control_plane.app.modules.workspace import (
+    StaleWorkspaceVersion,
+    WorkspaceArchived,
     WorkspaceDependencies,
     WorkspaceError,
+    WorkspaceNotFound,
+    WorkspaceOwnerRequired,
     create_workspace,
     invite_leader,
     list_workspaces,
@@ -53,6 +57,54 @@ class WorkspaceHttpRuntime:
     dependencies: WorkspaceDependencies
 
 
+@dataclass(frozen=True, slots=True)
+class _CreateWritePreflight:
+    idempotency_key: str
+
+
+@dataclass(frozen=True, slots=True)
+class _VersionedWritePreflight:
+    idempotency_key: str
+    expected_version: int
+
+
+def _required_raw_header(request: Request, name: str) -> str:
+    value = request.headers.get(name)
+    if value is None:
+        raise HTTPException(status_code=422, detail=f"Missing {name}")
+    return value
+
+
+def _assert_create_write_preflight(request: Request) -> None:
+    assert_same_origin(request)
+    require_idempotency_key(_required_raw_header(request, "Idempotency-Key"))
+
+
+def _assert_versioned_write_preflight(request: Request) -> None:
+    _assert_create_write_preflight(request)
+    require_if_match(_required_raw_header(request, "If-Match"))
+
+
+def _create_write_preflight(
+    request: Request,
+    idempotency_key: Annotated[str, Depends(require_idempotency_key)],
+) -> _CreateWritePreflight:
+    assert_same_origin(request)
+    return _CreateWritePreflight(idempotency_key=idempotency_key)
+
+
+def _versioned_write_preflight(
+    request: Request,
+    idempotency_key: Annotated[str, Depends(require_idempotency_key)],
+    expected_version: Annotated[int, Depends(require_if_match)],
+) -> _VersionedWritePreflight:
+    assert_same_origin(request)
+    return _VersionedWritePreflight(
+        idempotency_key=idempotency_key,
+        expected_version=expected_version,
+    )
+
+
 def _render(response: IdempotentResponse) -> Response:
     if response.is_problem:
         semantic = dict(response.body)
@@ -83,10 +135,25 @@ def _workspace_response(workspace: Any, *, status_code: int) -> IdempotentRespon
     )
 
 
-def _denial() -> IdempotentResponse:
+def _denial(error: WorkspaceError) -> IdempotentResponse:
+    if isinstance(error, WorkspaceNotFound):
+        status_code = 404
+        title = "Workspace not found"
+    elif isinstance(error, WorkspaceOwnerRequired):
+        status_code = 403
+        title = "Workspace owner required"
+    elif isinstance(error, StaleWorkspaceVersion):
+        status_code = 409
+        title = "Stale workspace version"
+    elif isinstance(error, WorkspaceArchived):
+        status_code = 409
+        title = "Workspace archived"
+    else:
+        status_code = 409
+        title = "Workspace governance conflict"
     return IdempotentResponse(
-        status_code=409,
-        body={"title": "Workspace governance conflict", "status": 409},
+        status_code=status_code,
+        body={"title": title, "status": status_code},
         is_problem=True,
     )
 
@@ -94,7 +161,7 @@ def _denial() -> IdempotentResponse:
 def _execute(
     runtime: WorkspaceHttpRuntime,
     *,
-    principal: Principal,
+    principal: SessionPrincipal,
     operation: str,
     key: str,
     method: str,
@@ -114,7 +181,7 @@ def _execute(
         with runtime.engine.begin() as db:
             execution = execute_idempotent(
                 runtime.dependencies.repository_factory(db),
-                actor=principal.employee_id,
+                actor=principal.account_id,
                 operation=operation,
                 key=key,
                 fingerprint=fingerprint,
@@ -132,8 +199,8 @@ def _execute(
 
 def create_workspace_router(
     runtime_provider: Callable[[], WorkspaceHttpRuntime],
-    principal_provider: Callable[[], Principal],
-    capability_guard: Callable[[Principal, str], None],
+    principal_provider: Callable[[], SessionPrincipal],
+    capability_guard: Callable[[SessionPrincipal, str], None],
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v1/admin", tags=["workspace"])
 
@@ -144,7 +211,7 @@ def create_workspace_router(
         responses=_RESPONSES,
     )
     def workspace_list(
-        principal: Annotated[Principal, Depends(principal_provider)],
+        principal: Annotated[SessionPrincipal, Depends(principal_provider)],
     ) -> WorkspaceListResponseDto:
         capability_guard(principal, WORKSPACE_READ_CAPABILITY)
         runtime = runtime_provider()
@@ -160,14 +227,17 @@ def create_workspace_router(
         status_code=201,
         response_model=WorkspaceResponseDto,
         responses=_RESPONSES,
+        dependencies=[
+            Depends(_assert_create_write_preflight),
+            Depends(_create_write_preflight),
+        ],
     )
     def workspace_create(
         body: CreateWorkspaceRequestDto,
         request: Request,
-        principal: Annotated[Principal, Depends(principal_provider)],
-        idempotency_key: Annotated[str, Depends(require_idempotency_key)],
+        principal: Annotated[SessionPrincipal, Depends(principal_provider)],
+        preflight: Annotated[_CreateWritePreflight, Depends(_create_write_preflight)],
     ) -> Response:
-        assert_same_origin(request)
         capability_guard(principal, WORKSPACE_MANAGE_CAPABILITY)
         runtime = runtime_provider()
         body_data = body.model_dump(mode="json", by_alias=True)
@@ -182,15 +252,15 @@ def create_workspace_router(
                     reason=body.reason,
                     dependencies=runtime.dependencies,
                 )
-            except WorkspaceError:
-                return _denial()
+            except WorkspaceError as error:
+                return _denial(error)
             return _workspace_response(created, status_code=201)
 
         return _execute(
             runtime,
             principal=principal,
             operation="workspace_create",
-            key=idempotency_key,
+            key=preflight.idempotency_key,
             method="POST",
             path=request.url.path,
             body=body_data,
@@ -202,21 +272,23 @@ def create_workspace_router(
         operation_id="workspace_invite_leader",
         response_model=WorkspaceResponseDto,
         responses=_RESPONSES,
+        dependencies=[
+            Depends(_assert_versioned_write_preflight),
+            Depends(_versioned_write_preflight),
+        ],
     )
     def workspace_invite_leader(
         workspace_id: Annotated[str, Path(alias="id")],
         body: InviteLeaderRequestDto,
         request: Request,
-        principal: Annotated[Principal, Depends(principal_provider)],
-        idempotency_key: Annotated[str, Depends(require_idempotency_key)],
-        expected_version: Annotated[int, Depends(require_if_match)],
+        principal: Annotated[SessionPrincipal, Depends(principal_provider)],
+        preflight: Annotated[_VersionedWritePreflight, Depends(_versioned_write_preflight)],
     ) -> Response:
-        assert_same_origin(request)
         capability_guard(principal, WORKSPACE_MANAGE_CAPABILITY)
         runtime = runtime_provider()
         body_data: dict[str, object] = {
             **body.model_dump(mode="json", by_alias=True),
-            "expectedVersion": expected_version,
+            "expectedVersion": preflight.expected_version,
         }
 
         def command(db: Any) -> IdempotentResponse:
@@ -225,20 +297,20 @@ def create_workspace_router(
                     db,
                     workspace_id=workspace_id,
                     account_id=body.account_id,
-                    expected_version=expected_version,
+                    expected_version=preflight.expected_version,
                     actor=principal,
                     reason=body.reason,
                     dependencies=runtime.dependencies,
                 )
-            except WorkspaceError:
-                return _denial()
+            except WorkspaceError as error:
+                return _denial(error)
             return _workspace_response(updated, status_code=200)
 
         return _execute(
             runtime,
             principal=principal,
             operation="workspace_invite_leader",
-            key=idempotency_key,
+            key=preflight.idempotency_key,
             method="POST",
             path=request.url.path,
             body=body_data,
@@ -250,22 +322,24 @@ def create_workspace_router(
         operation_id="workspace_remove_leader",
         response_model=WorkspaceResponseDto,
         responses=_RESPONSES,
+        dependencies=[
+            Depends(_assert_versioned_write_preflight),
+            Depends(_versioned_write_preflight),
+        ],
     )
     def workspace_remove_leader(
         workspace_id: Annotated[str, Path(alias="id")],
         account_id: Annotated[str, Path(alias="accountId")],
         body: RemoveLeaderRequestDto,
         request: Request,
-        principal: Annotated[Principal, Depends(principal_provider)],
-        idempotency_key: Annotated[str, Depends(require_idempotency_key)],
-        expected_version: Annotated[int, Depends(require_if_match)],
+        principal: Annotated[SessionPrincipal, Depends(principal_provider)],
+        preflight: Annotated[_VersionedWritePreflight, Depends(_versioned_write_preflight)],
     ) -> Response:
-        assert_same_origin(request)
         capability_guard(principal, WORKSPACE_MANAGE_CAPABILITY)
         runtime = runtime_provider()
         body_data: dict[str, object] = {
             **body.model_dump(mode="json", by_alias=True),
-            "expectedVersion": expected_version,
+            "expectedVersion": preflight.expected_version,
         }
 
         def command(db: Any) -> IdempotentResponse:
@@ -274,20 +348,20 @@ def create_workspace_router(
                     db,
                     workspace_id=workspace_id,
                     account_id=account_id,
-                    expected_version=expected_version,
+                    expected_version=preflight.expected_version,
                     actor=principal,
                     reason=body.reason,
                     dependencies=runtime.dependencies,
                 )
-            except WorkspaceError:
-                return _denial()
+            except WorkspaceError as error:
+                return _denial(error)
             return _workspace_response(updated, status_code=200)
 
         return _execute(
             runtime,
             principal=principal,
             operation="workspace_remove_leader",
-            key=idempotency_key,
+            key=preflight.idempotency_key,
             method="DELETE",
             path=request.url.path,
             body=body_data,
@@ -299,21 +373,23 @@ def create_workspace_router(
         operation_id="workspace_transfer_owner",
         response_model=WorkspaceResponseDto,
         responses=_RESPONSES,
+        dependencies=[
+            Depends(_assert_versioned_write_preflight),
+            Depends(_versioned_write_preflight),
+        ],
     )
     def workspace_transfer_owner(
         workspace_id: Annotated[str, Path(alias="id")],
         body: TransferOwnerRequestDto,
         request: Request,
-        principal: Annotated[Principal, Depends(principal_provider)],
-        idempotency_key: Annotated[str, Depends(require_idempotency_key)],
-        expected_version: Annotated[int, Depends(require_if_match)],
+        principal: Annotated[SessionPrincipal, Depends(principal_provider)],
+        preflight: Annotated[_VersionedWritePreflight, Depends(_versioned_write_preflight)],
     ) -> Response:
-        assert_same_origin(request)
         capability_guard(principal, WORKSPACE_MANAGE_CAPABILITY)
         runtime = runtime_provider()
         body_data: dict[str, object] = {
             **body.model_dump(mode="json", by_alias=True),
-            "expectedVersion": expected_version,
+            "expectedVersion": preflight.expected_version,
         }
 
         def command(db: Any) -> IdempotentResponse:
@@ -322,20 +398,20 @@ def create_workspace_router(
                     db,
                     workspace_id=workspace_id,
                     new_owner_id=body.new_owner_id,
-                    expected_version=expected_version,
+                    expected_version=preflight.expected_version,
                     actor=principal,
                     reason=body.reason,
                     dependencies=runtime.dependencies,
                 )
-            except WorkspaceError:
-                return _denial()
+            except WorkspaceError as error:
+                return _denial(error)
             return _workspace_response(updated, status_code=200)
 
         return _execute(
             runtime,
             principal=principal,
             operation="workspace_transfer_owner",
-            key=idempotency_key,
+            key=preflight.idempotency_key,
             method="POST",
             path=request.url.path,
             body=body_data,
@@ -350,16 +426,19 @@ def create_workspace_router(
     )
     def workspace_members(
         workspace_id: Annotated[str, Path(alias="id")],
-        principal: Annotated[Principal, Depends(principal_provider)],
-    ) -> FormalMemberListResponseDto:
+        principal: Annotated[SessionPrincipal, Depends(principal_provider)],
+    ) -> FormalMemberListResponseDto | Response:
         capability_guard(principal, WORKSPACE_READ_CAPABILITY)
         runtime = runtime_provider()
         with runtime.engine.connect() as db:
-            values = members(
-                db,
-                workspace_id=workspace_id,
-                dependencies=runtime.dependencies,
-            )
+            try:
+                values = members(
+                    db,
+                    workspace_id=workspace_id,
+                    dependencies=runtime.dependencies,
+                )
+            except WorkspaceError as error:
+                return _render(_denial(error))
         return FormalMemberListResponseDto(
             items=[FormalMemberResponseDto.from_domain(value) for value in values]
         )

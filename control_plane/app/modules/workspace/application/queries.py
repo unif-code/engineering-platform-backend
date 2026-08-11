@@ -3,7 +3,9 @@ from control_plane.app.modules.workspace.application.dependencies import Workspa
 from control_plane.app.modules.workspace.domain import (
     FormalMemberDto,
     MemberSource,
+    WorkspaceArchived,
     WorkspaceDto,
+    WorkspaceNotFound,
 )
 from control_plane.app.modules.workspace.ports import WorkspaceRepository
 
@@ -18,6 +20,11 @@ def members(
     workspace_id: str,
     dependencies: WorkspaceDependencies,
 ) -> list[FormalMemberDto]:
+    workspace = repository.workspace_by_id(workspace_id)
+    if workspace is None:
+        raise WorkspaceNotFound(workspace_id)
+    if workspace["archived_at"] is not None:
+        raise WorkspaceArchived(workspace_id)
     return [
         FormalMemberDto(
             account_id=str(row["account_id"]),

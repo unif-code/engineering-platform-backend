@@ -2,6 +2,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import replace
+from datetime import UTC, datetime
 from threading import Event
 from typing import cast
 
@@ -13,7 +14,7 @@ from sqlalchemy import Engine, text
 
 import control_plane.app.modules.organization as organization
 from control_plane.app.bootstrap.app import create_app
-from control_plane.app.modules.identity import Principal
+from control_plane.app.modules.identity import Principal, SessionKind, SessionPrincipal
 from control_plane.app.modules.workspace import WorkspaceDependencies
 from control_plane.app.modules.workspace.api.routes import (
     WorkspaceHttpRuntime,
@@ -35,12 +36,24 @@ SECOND_LEADER_ID = "00000000-0000-0000-0000-000000000903"
 SAME_ORIGIN = {"Origin": "https://testserver", "Sec-Fetch-Site": "same-origin"}
 
 
+def _session_principal(account_id: str = OWNER_ID) -> SessionPrincipal:
+    return SessionPrincipal(
+        account_id=account_id,
+        employee_no="00000902" if account_id == OWNER_ID else "00000903",
+        display_name="Owner" if account_id == OWNER_ID else "Second leader",
+        session_kind=SessionKind.FULL,
+        is_super_admin=False,
+    )
+
+
 def _isolated_client(
     workspace_rw_engine: Engine,
     dependencies: WorkspaceDependencies,
     *,
-    principal: Principal | None = None,
-    guard: Callable[[Principal, str], None] | None = None,
+    principal: SessionPrincipal | None = None,
+    guard: Callable[[SessionPrincipal, str], None] | None = None,
+    runtime_provider: Callable[[], WorkspaceHttpRuntime] | None = None,
+    principal_provider: Callable[[], SessionPrincipal] | None = None,
 ) -> TestClient:
     runtime = WorkspaceHttpRuntime(
         engine=workspace_rw_engine,
@@ -51,8 +64,8 @@ def _isolated_client(
     app.middleware("http")(request_id_middleware)
     app.include_router(
         create_workspace_router(
-            runtime_provider=lambda: runtime,
-            principal_provider=lambda: principal or Principal(employee_id=OWNER_ID, name="Owner"),
+            runtime_provider=runtime_provider or (lambda: runtime),
+            principal_provider=principal_provider or (lambda: principal or _session_principal()),
             capability_guard=guard or (lambda _principal, _capability: None),
         )
     )
@@ -116,7 +129,7 @@ def test_isolated_workspace_routes_expose_exact_contract_and_create_camel_respon
     client = _isolated_client(
         workspace_rw_engine,
         dependencies,
-        guard=lambda principal, capability: guarded.append((principal.employee_id, capability)),
+        guard=lambda principal, capability: guarded.append((principal.account_id, capability)),
     )
 
     schema = client.get("/openapi.json").json()
@@ -157,6 +170,15 @@ def test_isolated_workspace_routes_expose_exact_contract_and_create_camel_respon
     assert guarded == [(OWNER_ID, "platform.workspace.manage")]
     with workspace_owner_engine.connect() as db:
         assert db.execute(text("SELECT count(*) FROM workspace.workspace")).scalar_one() == 1
+        idempotency_actor = db.execute(
+            text(
+                "SELECT actor FROM workspace.idempotency_record WHERE operation='workspace_create'"
+            )
+        ).scalar_one()
+        audit_actor = db.execute(
+            text("SELECT actor FROM audit.audit_event WHERE action='workspace.created'")
+        ).scalar_one()
+    assert idempotency_actor == audit_actor == OWNER_ID
 
 
 def test_workspace_routes_are_not_registered_in_real_bootstrap_or_artifact() -> None:
@@ -202,7 +224,23 @@ def test_write_headers_and_same_origin_are_enforced_before_database_access(
         workspace_identity_engine,
         workspace_organization_engine,
     )
-    client = _isolated_client(workspace_rw_engine, dependencies)
+    calls: list[str] = []
+    runtime = WorkspaceHttpRuntime(engine=workspace_rw_engine, dependencies=dependencies)
+
+    def runtime_provider() -> WorkspaceHttpRuntime:
+        calls.append("runtime")
+        return runtime
+
+    def principal_provider() -> SessionPrincipal:
+        calls.append("principal")
+        return _session_principal()
+
+    client = _isolated_client(
+        workspace_rw_engine,
+        dependencies,
+        runtime_provider=runtime_provider,
+        principal_provider=principal_provider,
+    )
     create_body = {"name": "Denied", "ownerId": OWNER_ID, "reason": "headers"}
 
     missing_key = client.post(
@@ -214,6 +252,19 @@ def test_write_headers_and_same_origin_are_enforced_before_database_access(
         "/api/v1/admin/workspaces",
         json=create_body,
         headers={"Origin": "https://evil.example", "Idempotency-Key": "workspace-key-0001"},
+    )
+    cross_site_metadata = client.post(
+        "/api/v1/admin/workspaces",
+        json=create_body,
+        headers={
+            "Sec-Fetch-Site": "cross-site",
+            "Idempotency-Key": "workspace-key-0004",
+        },
+    )
+    malformed_key = client.post(
+        "/api/v1/admin/workspaces",
+        json=create_body,
+        headers={**SAME_ORIGIN, "Idempotency-Key": "short"},
     )
     missing_match = client.post(
         "/api/v1/admin/workspaces/missing/leaders",
@@ -235,14 +286,35 @@ def test_write_headers_and_same_origin_are_enforced_before_database_access(
         for response in (
             missing_key,
             cross_origin,
+            cross_site_metadata,
+            malformed_key,
             missing_match,
             invalid_match,
         )
-    ] == [422, 403, 422, 422]
+    ] == [422, 403, 403, 422, 422, 422]
     assert all(
         response.headers["content-type"].startswith("application/problem+json")
-        for response in (missing_key, cross_origin, missing_match, invalid_match)
+        for response in (
+            missing_key,
+            cross_origin,
+            cross_site_metadata,
+            malformed_key,
+            missing_match,
+            invalid_match,
+        )
     )
+    assert all(
+        response.json()["requestId"] == response.headers["x-request-id"]
+        for response in (
+            missing_key,
+            cross_origin,
+            cross_site_metadata,
+            malformed_key,
+            missing_match,
+            invalid_match,
+        )
+    )
+    assert calls == []
     with workspace_owner_engine.connect() as db:
         counts = db.execute(
             text(
@@ -424,6 +496,144 @@ def test_deterministic_denial_replays_with_current_request_id_after_state_repair
     assert counts == (1, 2)
 
 
+def test_unknown_members_is_a_not_found_problem_with_current_request_id(
+    workspace_rw_engine: Engine,
+    workspace_identity_engine: Engine,
+    workspace_organization_engine: Engine,
+    clean_workspace_db: None,
+) -> None:
+    dependencies = workspace_dependencies(
+        workspace_identity_engine,
+        workspace_organization_engine,
+    )
+    client = _isolated_client(workspace_rw_engine, dependencies)
+
+    response = client.get(
+        "/api/v1/admin/workspaces/00000000-0000-0000-0000-000000000999/members",
+        headers={"X-Request-ID": "req-membersmissing"},
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "title": "Workspace not found",
+        "status": 404,
+        "requestId": "req-membersmissing",
+    }
+
+
+def test_archived_members_fails_closed_without_projection_disclosure(
+    workspace_owner_engine: Engine,
+    workspace_rw_engine: Engine,
+    workspace_identity_engine: Engine,
+    workspace_organization_engine: Engine,
+    clean_workspace_db: None,
+) -> None:
+    configure_org_leader(
+        owner_engine=workspace_owner_engine,
+        organization_engine=workspace_organization_engine,
+        identity_engine=workspace_identity_engine,
+        manager_id=MANAGER_ID,
+        leader_id=OWNER_ID,
+    )
+    dependencies = workspace_dependencies(
+        workspace_identity_engine,
+        workspace_organization_engine,
+    )
+    client = _isolated_client(workspace_rw_engine, dependencies)
+    created = client.post(
+        "/api/v1/admin/workspaces",
+        json={"name": "Archived", "ownerId": OWNER_ID, "reason": "create"},
+        headers={**SAME_ORIGIN, "Idempotency-Key": "workspace-archive-0001"},
+    )
+    workspace_id = created.json()["id"]
+    with workspace_owner_engine.begin() as db:
+        db.execute(
+            text("UPDATE workspace.workspace SET archived_at=:archived_at WHERE id=:id"),
+            {"archived_at": datetime.now(UTC), "id": workspace_id},
+        )
+
+    response = client.get(
+        f"/api/v1/admin/workspaces/{workspace_id}/members",
+        headers={"X-Request-ID": "req-membersarchived"},
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "title": "Workspace archived",
+        "status": 409,
+        "requestId": "req-membersarchived",
+    }
+    assert OWNER_ID not in response.text
+
+
+def test_owner_denial_replays_precise_forbidden_problem_for_account_actor(
+    workspace_owner_engine: Engine,
+    workspace_rw_engine: Engine,
+    workspace_identity_engine: Engine,
+    workspace_organization_engine: Engine,
+    clean_workspace_db: None,
+) -> None:
+    _configure_two_leaders(
+        workspace_owner_engine,
+        workspace_identity_engine,
+        workspace_organization_engine,
+    )
+    dependencies = workspace_dependencies(
+        workspace_identity_engine,
+        workspace_organization_engine,
+    )
+    owner_client = _isolated_client(workspace_rw_engine, dependencies)
+    created = owner_client.post(
+        "/api/v1/admin/workspaces",
+        json={"name": "Owner gate", "ownerId": OWNER_ID, "reason": "create"},
+        headers={**SAME_ORIGIN, "Idempotency-Key": "workspace-owner-gate-create"},
+    )
+    workspace_id = created.json()["id"]
+    non_owner_client = _isolated_client(
+        workspace_rw_engine,
+        dependencies,
+        principal=_session_principal(SECOND_LEADER_ID),
+    )
+    headers = {
+        **SAME_ORIGIN,
+        "Idempotency-Key": "workspace-owner-denial-0001",
+        "If-Match": '"v1"',
+    }
+    path = f"/api/v1/admin/workspaces/{workspace_id}/leaders"
+    body = {"accountId": SECOND_LEADER_ID, "reason": "non-owner invite"}
+
+    first = non_owner_client.post(
+        path,
+        json=body,
+        headers={**headers, "X-Request-ID": "req-ownerfirst"},
+    )
+    replay = non_owner_client.post(
+        path,
+        json=body,
+        headers={**headers, "X-Request-ID": "req-ownerreplay"},
+    )
+
+    assert first.json() == {
+        "title": "Workspace owner required",
+        "status": 403,
+        "requestId": "req-ownerfirst",
+    }
+    assert replay.json() == {
+        "title": "Workspace owner required",
+        "status": 403,
+        "requestId": "req-ownerreplay",
+    }
+    with workspace_owner_engine.connect() as db:
+        denial_actor, state = db.execute(
+            text(
+                "SELECT actor, state FROM workspace.idempotency_record "
+                "WHERE idempotency_key='workspace-owner-denial-0001'"
+            )
+        ).one()
+    assert denial_actor == SECOND_LEADER_ID
+    assert state == "COMPLETED"
+
+
 @pytest.mark.parametrize("failure_type", [RuntimeError, ValueError])
 def test_unexpected_projection_failure_rolls_back_fact_audit_and_claim(
     workspace_owner_engine: Engine,
@@ -586,13 +796,30 @@ def test_if_match_controls_leader_mutation_and_list_members_are_enveloped(
             "X-Request-ID": "req-stale",
         },
     )
+    stale_replay = client.post(
+        f"/api/v1/admin/workspaces/{workspace_id}/leaders",
+        json={"accountId": SECOND_LEADER_ID, "reason": "stale"},
+        headers={
+            **SAME_ORIGIN,
+            "Idempotency-Key": "workspace-invite-stale-0001",
+            "If-Match": '"v1"',
+            "X-Request-ID": "req-stalereplay",
+        },
+    )
     listing = client.get("/api/v1/admin/workspaces")
     projected = client.get(f"/api/v1/admin/workspaces/{workspace_id}/members")
 
     assert invited.status_code == 200
     assert invited.headers["etag"] == '"v2"'
     assert stale.status_code == 409
+    assert stale.json()["title"] == "Stale workspace version"
     assert stale.json()["requestId"] == "req-stale"
+    assert stale_replay.status_code == 409
+    assert stale_replay.json() == {
+        "title": "Stale workspace version",
+        "status": 409,
+        "requestId": "req-stalereplay",
+    }
     assert listing.json()["nextCursor"] is None
     assert [item["id"] for item in listing.json()["items"]] == [workspace_id]
     assert projected.json()["nextCursor"] is None
