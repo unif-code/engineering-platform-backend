@@ -6,6 +6,7 @@ from sqlalchemy import Connection
 
 from control_plane.app.modules.organization.application import (
     InvalidParticipant,
+    MembershipChangeFailed,
     OrganizationDependencies,
 )
 from control_plane.app.modules.organization.application.commands import (
@@ -69,6 +70,7 @@ __all__ = [
     "CorruptStructure",
     "InvalidParticipant",
     "InvalidStructure",
+    "MembershipChangeFailed",
     "OrgKind",
     "OrganizationDependencies",
     "direct_reports",

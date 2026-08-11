@@ -12,7 +12,12 @@ from sqlalchemy import Engine, text
 
 from control_plane.app.bootstrap.app import create_app
 from control_plane.app.modules.identity import Principal
-from control_plane.app.modules.organization import OrganizationDependencies
+from control_plane.app.modules.organization import (
+    CorruptStructure,
+    InvalidParticipant,
+    InvalidStructure,
+    OrganizationDependencies,
+)
 from control_plane.app.modules.organization.api.routes import (
     OrganizationHttpRuntime,
     create_organization_router,
@@ -309,6 +314,66 @@ def test_callback_failure_rolls_back_fact_audit_and_idempotency_claim(
 
     assert response.status_code == 500
     assert response.headers["content-type"].startswith("application/problem+json")
+    with organization_owner_engine.connect() as db:
+        counts = db.execute(
+            text(
+                "SELECT "
+                "(SELECT count(*) FROM organization.org_edge) AS edges, "
+                "(SELECT count(*) FROM organization.idempotency_record) AS commands, "
+                "(SELECT count(*) FROM audit.audit_event "
+                " WHERE action='organization.structure.changed') AS audits"
+            )
+        ).one()
+    assert counts == (0, 0, 0)
+
+
+@pytest.mark.parametrize(
+    "callback_error",
+    [
+        InvalidParticipant("callback participant failure"),
+        InvalidStructure("callback structure failure"),
+        CorruptStructure("callback projection failure"),
+    ],
+    ids=["invalid-participant", "invalid-structure", "corrupt-structure"],
+)
+def test_callback_business_named_failure_is_500_and_rolls_back_entire_command(
+    callback_error: Exception,
+    organization_owner_engine: Engine,
+    organization_rw_engine: Engine,
+    organization_identity_engine: Engine,
+    clean_organization_db: None,
+) -> None:
+    insert_account(
+        organization_owner_engine,
+        account_id=MANAGER_ID,
+        employee_no="00000401",
+        display_name="Manager",
+    )
+    callbacks = 0
+
+    def fail_callback(_ids: object) -> None:
+        nonlocal callbacks
+        callbacks += 1
+        raise callback_error
+
+    dependencies = organization_dependencies(
+        organization_identity_engine,
+        on_membership_change=fail_callback,
+    )
+    client = _isolated_client(organization_rw_engine, dependencies)
+    response = client.put(
+        f"/api/v1/admin/accounts/{MANAGER_ID}/superior",
+        json={"superiorId": None, "reason": "must roll back"},
+        headers={
+            **SAME_ORIGIN,
+            "Idempotency-Key": f"org-callback-{type(callback_error).__name__.lower()}-0001",
+        },
+    )
+
+    assert response.status_code == 500
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert "callback" not in response.text.lower()
+    assert callbacks == 1
     with organization_owner_engine.connect() as db:
         counts = db.execute(
             text(

@@ -20,6 +20,10 @@ class InvalidParticipant(ValueError):
     """An organization participant is not an effective identity account."""
 
 
+class MembershipChangeFailed(RuntimeError):
+    """The downstream membership projection callback failed."""
+
+
 def _is_effective(
     account: OrganizationAccountView | None,
 ) -> TypeGuard[OrganizationAccountView]:
@@ -106,4 +110,7 @@ def set_superior(
         ),
         dependencies.audit,
     )
-    dependencies.on_membership_change(_affected_accounts(proposed, account_id))
+    try:
+        dependencies.on_membership_change(_affected_accounts(proposed, account_id))
+    except Exception as exc:
+        raise MembershipChangeFailed("membership change callback failed") from exc

@@ -1,5 +1,6 @@
 from control_plane.app.modules.organization.application.commands import (
     InvalidParticipant,
+    MembershipChangeFailed,
     set_superior,
 )
 from control_plane.app.modules.organization.application.dependencies import (
@@ -12,6 +13,7 @@ from control_plane.app.modules.organization.application.queries import (
 
 __all__ = [
     "InvalidParticipant",
+    "MembershipChangeFailed",
     "OrganizationDependencies",
     "direct_reports",
     "get_tree",

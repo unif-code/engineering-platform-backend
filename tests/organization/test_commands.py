@@ -271,7 +271,7 @@ def test_callback_failure_rolls_back_organization_fact_and_audit(
         on_membership_change=fail_callback,
     )
 
-    with pytest.raises(RuntimeError, match="projection unavailable"):
+    with pytest.raises(RuntimeError, match="membership change callback failed") as exc_info:
         with organization_rw_engine.begin() as db:
             _set_superior()(
                 db,
@@ -281,6 +281,9 @@ def test_callback_failure_rolls_back_organization_fact_and_audit(
                 reason="must roll back",
                 dependencies=dependencies,
             )
+
+    assert isinstance(exc_info.value.__cause__, RuntimeError)
+    assert str(exc_info.value.__cause__) == "projection unavailable"
 
     with organization_owner_engine.connect() as db:
         edge_count = db.execute(text("SELECT count(*) FROM organization.org_edge")).scalar_one()

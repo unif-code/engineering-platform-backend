@@ -7,9 +7,10 @@ from uuid import uuid4
 import pytest
 from alembic import op
 from sqlalchemy import Connection, Engine, inspect, text
-from sqlalchemy.exc import IntegrityError, ProgrammingError
+from sqlalchemy.exc import ArgumentError, IntegrityError, ProgrammingError
 
 from control_plane.app.shared.db.settings import DbSettings
+from tests.organization.conftest import _temporary_organization_role_engine
 
 pytestmark = pytest.mark.integration
 
@@ -73,6 +74,80 @@ def test_preprovisioned_login_role_is_not_rewritten(
     finally:
         with organization_owner_engine.begin() as db:
             db.execute(text(f'DROP ROLE IF EXISTS "{role_name}"'))
+
+
+def test_runtime_fixture_uses_disposable_login_without_rewriting_shared_role(
+    organization_owner_engine: Engine,
+) -> None:
+    with organization_owner_engine.connect() as db:
+        before = db.execute(
+            text("SELECT rolcanlogin, rolpassword FROM pg_authid WHERE rolname='organization_rw'")
+        ).one()
+
+    with _temporary_organization_role_engine(
+        organization_owner_engine,
+        DbSettings().organization_database_url,
+    ) as (runtime_engine, login_role):
+        with runtime_engine.connect() as db:
+            current_role, session_role = db.execute(text("SELECT current_user, session_user")).one()
+        with organization_owner_engine.connect() as db:
+            membership = db.execute(
+                text("SELECT pg_has_role(:login_role, 'organization_rw', 'MEMBER')"),
+                {"login_role": login_role},
+            ).scalar_one()
+
+        assert current_role == "organization_rw"
+        assert session_role == login_role
+        assert membership is True
+
+    with organization_owner_engine.connect() as db:
+        after = db.execute(
+            text("SELECT rolcanlogin, rolpassword FROM pg_authid WHERE rolname='organization_rw'")
+        ).one()
+        temporary_role_exists = db.execute(
+            text("SELECT EXISTS (SELECT FROM pg_roles WHERE rolname=:login_role)"),
+            {"login_role": login_role},
+        ).scalar_one()
+
+    assert after == before
+    assert temporary_role_exists is False
+
+
+def test_runtime_fixture_invalid_url_does_not_leak_temporary_login(
+    organization_owner_engine: Engine,
+) -> None:
+    with organization_owner_engine.connect() as db:
+        before = set(
+            db.execute(
+                text("SELECT rolname FROM pg_roles WHERE rolname LIKE 'test_organization_login_%'")
+            ).scalars()
+        )
+
+    leaked_roles: set[str] = set()
+    try:
+        with pytest.raises(ArgumentError):
+            with _temporary_organization_role_engine(
+                organization_owner_engine,
+                "not-a-sqlalchemy-database-url",
+            ):
+                pass
+        with organization_owner_engine.connect() as db:
+            after = set(
+                db.execute(
+                    text(
+                        "SELECT rolname FROM pg_roles "
+                        "WHERE rolname LIKE 'test_organization_login_%'"
+                    )
+                ).scalars()
+            )
+        leaked_roles = after - before
+        assert after == before
+    finally:
+        for role_name in leaked_roles:
+            assert role_name.startswith("test_organization_login_")
+            with organization_owner_engine.begin() as db:
+                db.execute(text(f'REVOKE organization_rw FROM "{role_name}"'))
+                db.execute(text(f'DROP ROLE "{role_name}"'))
 
 
 def test_organization_schema_tables_and_runtime_role_exist(
