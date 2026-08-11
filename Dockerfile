@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# 运行镜像同时承担 API 服务与迁移 Job（alembic upgrade head），因此打包 migrations 与 alembic.ini。
+# 运行镜像同时承担 API 服务与迁移 Job（alembic upgrade heads），因此打包 migrations 与 alembic.ini。
 FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
 ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy
 WORKDIR /app

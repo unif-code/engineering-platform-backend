@@ -21,7 +21,7 @@
 - `uv sync`：安装依赖（CI 使用 `--locked`）。
 - `uv run python -c "from pathlib import Path; import secrets; p=Path('.localdev-secrets'); p.mkdir(); [(p/name).write_bytes(secrets.token_bytes(32)) for name in ('pepper','totp_key','idempotency_key')]"`：首次本地开发时生成三份相互独立的 CSPRNG 凭据文件；命令不输出凭据内容，目录已由 `/.localdev-secrets/` 忽略。
 - `docker compose up -d`：启动本地 PostgreSQL 18。
-- `uv run alembic upgrade head`：执行迁移。
+- `uv run alembic upgrade heads`：执行全部独立模块迁移分支。
 - `uv run uvicorn control_plane.app.bootstrap.app:create_app --factory --reload`：本地起服务。
 - `uv run pytest`：全部测试；无 DB 时集成测试自动 skip。
 - `uv run ruff format . && uv run ruff check . && uv run mypy . && uv run lint-imports`：质量门。
@@ -47,7 +47,7 @@ CI 将构件与 SHA-256 附到 GitHub Release；breaking 变更必须升 major�
 main push 触发 CI `publish-image`：构建 `linux/amd64` 镜像推
 `ghcr.io/unif-code/engineering-platform-backend:sha-<short-sha>`，digest 写入 job
 summary，gitops 仓按 digest 引用部署。镜像同时承载 API 与迁移 Job（含
-`migrations/` 与 `alembic.ini`，Job 执行 `alembic upgrade head`），非 root 运行。
+`migrations/` 与 `alembic.ini`，Job 执行 `alembic upgrade heads`），非 root 运行。
 本地验证：`docker build -t backend-dev . && docker run --rm -p 8000:8000 backend-dev`。
 
 ## 提交与 Pull Request 规范

@@ -7,6 +7,7 @@ class DbSettings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     database_url: str = "postgresql+psycopg://audit_rw:localdev@localhost:5432/platform"
+    identity_database_url: str = "postgresql+psycopg://identity_rw:localdev@localhost:5432/platform"
     migration_database_url: str = (
         "postgresql+psycopg://platform_owner:localdev@localhost:5432/platform"
     )

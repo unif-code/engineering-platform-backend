@@ -10,7 +10,7 @@ def _engine_or_skip(url: str) -> Engine:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
     except Exception:
-        pytest.skip("PostgreSQL 不可用：先 docker compose up -d 并 uv run alembic upgrade head")
+        pytest.skip("PostgreSQL 不可用：先 docker compose up -d 并 uv run alembic upgrade heads")
     return engine
 
 

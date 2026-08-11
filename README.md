@@ -27,7 +27,7 @@
 ```bash
 uv sync                        # 安装依赖（CI 用 --locked）
 docker compose up -d           # 本地一次性 PostgreSQL 18（仅开发/测试；部署走 k8s，见下）
-uv run alembic upgrade head    # 执行迁移
+uv run alembic upgrade heads   # 执行全部独立模块迁移分支
 uv run uvicorn control_plane.app.bootstrap.app:create_app --factory --reload
 uv run pytest                  # 无 DB 时集成测试自动 skip（勿据此判定通过）
 ```
@@ -44,8 +44,8 @@ uv run pytest                  # 无 DB 时集成测试自动 skip（勿据此�
 ## 运行契约（部署侧）
 
 - 端口 `8000`；liveness `/healthz`，readiness `/readyz`（DB 不可达返回 503 `application/problem+json`）。
-- 环境变量：`DATABASE_URL`（运行时，`audit_rw` 受限角色）、`MIGRATION_DATABASE_URL`（迁移 Job，owner 角色），格式 `postgresql+psycopg://user:pass@host:5432/platform`。
-- 迁移 Job 使用同一镜像执行 `alembic upgrade head`（镜像已含 `migrations/` 与 `alembic.ini`）。
+- 环境变量：`DATABASE_URL`（审计运行时，`audit_rw` 受限角色）、`IDENTITY_DATABASE_URL`（身份运行时，`identity_rw` 受限角色）、`MIGRATION_DATABASE_URL`（迁移 Job，owner 角色），格式 `postgresql+psycopg://user:pass@host:5432/platform`。
+- 迁移 Job 使用同一镜像执行 `alembic upgrade heads`（镜像已含 `migrations/` 与 `alembic.ini`）。
 - 容器以非 root（uid/gid 999）运行；镜像 Private，集群侧需 `read:packages` 的 imagePullSecret。
 
 ## 约定速查
