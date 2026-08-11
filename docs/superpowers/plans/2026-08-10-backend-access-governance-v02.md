@@ -35,6 +35,7 @@
 
 ```python
 """契约守护：import-linter 配置必须覆盖 modules/ 下全部模块。"""
+
 import tomllib
 from pathlib import Path
 
@@ -43,11 +44,7 @@ MODULES_DIR = ROOT / "control_plane" / "app" / "modules"
 
 
 def actual_modules() -> set[str]:
-    return {
-        p.name
-        for p in MODULES_DIR.iterdir()
-        if p.is_dir() and (p / "__init__.py").exists()
-    }
+    return {p.name for p in MODULES_DIR.iterdir() if p.is_dir() and (p / "__init__.py").exists()}
 
 
 def contracts() -> list[dict]:
@@ -71,7 +68,9 @@ def test_facade_contracts_are_symmetric() -> None:
         for other in sorted(others):
             covered = any(
                 f"control_plane.app.modules.{m}" in c["source_modules"]
-                and any(f".{other}." in fm or fm.endswith(f".{other}") for fm in c["forbidden_modules"])
+                and any(
+                    f".{other}." in fm or fm.endswith(f".{other}") for fm in c["forbidden_modules"]
+                )
                 for c in forbidden
             )
             assert covered, f"缺少 {m} → {other} 深层导入的 forbidden 契约"
@@ -179,10 +178,12 @@ def test_password_roundtrip_and_pepper_dependency() -> None:
     assert verify_password("Str0ng!Passw0rd#2026", h, pepper=b"p1")
     assert not verify_password("Str0ng!Passw0rd#2026", h, pepper=b"p2")
 
+
 def test_floor_rejects_short_weak_and_context() -> None:
     assert validate_password_floor("Sh0rt!", context=[])
     assert validate_password_floor("Password!2026aaaa", context=[])  # 弱口令表
     assert validate_password_floor("Xx!00000001Xx!zzz", context=["00000001"])
+
 
 def test_totp_replay_rejected() -> None:
     secret = pyotp.random_base32()
@@ -190,6 +191,7 @@ def test_totp_replay_rejected() -> None:
     step = verify_totp(secret, code, last_used_step=None)
     assert step is not None
     assert verify_totp(secret, code, last_used_step=step) is None
+
 
 def test_seal_unseal_and_missing_material_fail_closed() -> None:
     key = os.urandom(32)
@@ -246,11 +248,12 @@ def test_temp_password_atomic_consume(db) -> None:
     assert consume_temp_password(db, employee_no="00000001", temp_password=temp) is not None
     assert consume_temp_password(db, employee_no="00000001", temp_password=temp) is None  # 二次失败
 
+
 def test_session_cap_evicts_oldest(db) -> None: ...  # 第 4 个登录使最旧 revoked
-def test_idle_expiry(db, freezer) -> None: ...       # 61min 无活动 → validate 返回 None
+def test_idle_expiry(db, freezer) -> None: ...  # 61min 无活动 → validate 返回 None
 def test_backoff_after_five_failures(db) -> None: ...  # 第 6 次返回带 retryAfter 的错误
 def test_disable_revokes_sessions(db) -> None: ...
-def test_audit_written_in_same_txn(db) -> None: ...   # 制造失败回滚 → 无 audit 行
+def test_audit_written_in_same_txn(db) -> None: ...  # 制造失败回滚 → 无 audit 行
 ```
 
 - [ ] **Step 2: RED** → **Step 3: 实现（domain 纯逻辑 + application 组事务 + adapter SQL）** → **Step 4: GREEN + 质量门**
