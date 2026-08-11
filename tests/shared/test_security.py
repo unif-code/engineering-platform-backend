@@ -76,6 +76,31 @@ def test_file_secret_manager_loads_three_independent_materials(tmp_path: Path) -
     )
 
 
+@pytest.mark.parametrize(
+    ("pepper", "totp_key", "idempotency_key"),
+    [
+        (b"", b"t" * 32, b"i" * 32),
+        (b"p" * 32, b"", b"i" * 32),
+        (b"p" * 32, b"t" * 32, b""),
+        (b"short", b"t" * 32, b"i" * 32),
+        (b"p" * 32, b"short", b"i" * 32),
+        (b"p" * 32, b"t" * 32, b"short"),
+        (b"k" * 32, b"k" * 32, b"i" * 32),
+        (b"p" * 32, b"k" * 32, b"k" * 32),
+        (b"k" * 32, b"t" * 32, b"k" * 32),
+    ],
+)
+def test_secret_material_constructor_enforces_length_and_independence(
+    pepper: bytes, totp_key: bytes, idempotency_key: bytes
+) -> None:
+    with pytest.raises(SecretMaterialUnavailable, match="secret material is unavailable"):
+        SecretMaterial(
+            password_pepper=pepper,
+            totp_sealing_key=totp_key,
+            idempotency_sealing_key=idempotency_key,
+        )
+
+
 @pytest.mark.parametrize("missing_file", ["pepper", "totp_key", "idempotency_key"])
 def test_secret_material_fails_closed_when_a_file_is_missing(
     tmp_path: Path, missing_file: str

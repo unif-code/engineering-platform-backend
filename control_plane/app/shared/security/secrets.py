@@ -17,6 +17,15 @@ class SecretMaterial:
     totp_sealing_key: bytes
     idempotency_sealing_key: bytes
 
+    def __post_init__(self) -> None:
+        values = (
+            self.password_pepper,
+            self.totp_sealing_key,
+            self.idempotency_sealing_key,
+        )
+        if not all(len(value) == _MATERIAL_SIZE for value in values) or len(set(values)) != 3:
+            raise SecretMaterialUnavailable("secret material is unavailable")
+
     @classmethod
     def load(cls, path: str | Path) -> "SecretMaterial":
         """Load DEV file material directly; consumers should use SecretManagerPort."""
@@ -29,18 +38,7 @@ class SecretMaterial:
             )
         except OSError:
             raise SecretMaterialUnavailable("secret material is unavailable") from None
-
-        if not material._is_valid():
-            raise SecretMaterialUnavailable("secret material is unavailable")
         return material
-
-    def _is_valid(self) -> bool:
-        values = (
-            self.password_pepper,
-            self.totp_sealing_key,
-            self.idempotency_sealing_key,
-        )
-        return all(len(value) == _MATERIAL_SIZE for value in values) and len(set(values)) == 3
 
 
 class SecretManagerPort(Protocol):
