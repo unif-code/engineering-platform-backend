@@ -1,5 +1,7 @@
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import timedelta
+from threading import Barrier
 
 import pyotp
 import pytest
@@ -10,6 +12,7 @@ from control_plane.app.modules.identity import (
     EffectiveIdentityPolicy,
     IdentityDependencies,
     InvalidAccountTransition,
+    IssuedSession,
     LastEffectiveSuperAdmin,
     LoginChallenge,
     Principal,
@@ -20,6 +23,7 @@ from control_plane.app.modules.identity import (
     consume_temp_password,
     create_account,
     enroll_totp,
+    issue_temp_password,
     login_password_step,
     login_totp_step,
     logout,
@@ -75,6 +79,7 @@ def _login_full(
             code=code,
             dependencies=deps,
         )
+    assert isinstance(issued, IssuedSession)
     return issued.raw_token
 
 
@@ -164,10 +169,13 @@ def test_policy_changes_session_cap_and_idle_boundary(
 ) -> None:
     clock = MutableClock()
     deps = IdentityDependencies(
+        repository_factory=dependencies().repository_factory,
         secret_manager=StaticSecrets(),
         policy=TightSessionPolicy(),
         clock=clock,
         random=SystemRandom(),
+        audit=dependencies().audit,
+        on_auth_change=dependencies().on_auth_change,
     )
     secret, first = _initialize_account(identity_rw_engine, deps, monkeypatch)
     clock.value += timedelta(seconds=30)
@@ -181,6 +189,61 @@ def test_policy_changes_session_cap_and_idle_boundary(
         assert validate_session(db, raw_token=second, dependencies=deps) is None
 
 
+def test_cap_and_idle_revocations_write_audit_and_invoke_auth_hook(
+    clean_identity_db: None,
+    identity_rw_engine: Engine,
+    identity_owner_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = MutableClock()
+    changes = AuthChanges()
+    deps = IdentityDependencies(
+        repository_factory=dependencies().repository_factory,
+        secret_manager=StaticSecrets(),
+        policy=TightSessionPolicy(),
+        clock=clock,
+        random=SystemRandom(),
+        audit=dependencies().audit,
+        on_auth_change=changes,
+    )
+    secret, _ = _initialize_account(identity_rw_engine, deps, monkeypatch)
+    with identity_rw_engine.connect() as db:
+        account_id = str(db.execute(text("SELECT id FROM identity.account")).scalar_one())
+    changes.account_ids.clear()
+    with identity_owner_engine.begin() as db:
+        db.execute(text("TRUNCATE audit.audit_event"))
+
+    clock.value += timedelta(seconds=30)
+    active = _login_full(identity_rw_engine, deps, secret)
+    assert changes.account_ids == [account_id]
+    with identity_owner_engine.connect() as db:
+        assert (
+            db.execute(
+                text(
+                    "SELECT count(*) FROM audit.audit_event "
+                    "WHERE action='identity.sessions.revoked' AND reason='session cap'"
+                )
+            ).scalar_one()
+            == 1
+        )
+
+    changes.account_ids.clear()
+    clock.value += timedelta(minutes=15)
+    with identity_rw_engine.begin() as db:
+        assert validate_session(db, raw_token=active, dependencies=deps) is None
+    assert changes.account_ids == [account_id]
+    with identity_owner_engine.connect() as db:
+        assert (
+            db.execute(
+                text(
+                    "SELECT count(*) FROM audit.audit_event "
+                    "WHERE action='identity.sessions.revoked' AND reason='idle timeout'"
+                )
+            ).scalar_one()
+            == 1
+        )
+
+
 def test_logout_and_bulk_revocation_are_update_only_and_invoke_auth_hook(
     clean_identity_db: None,
     identity_rw_engine: Engine,
@@ -188,10 +251,12 @@ def test_logout_and_bulk_revocation_are_update_only_and_invoke_auth_hook(
 ) -> None:
     changes = AuthChanges()
     deps = IdentityDependencies(
+        repository_factory=dependencies().repository_factory,
         secret_manager=StaticSecrets(),
         policy=dependencies().policy,
         clock=MutableClock(),
         random=SystemRandom(),
+        audit=dependencies().audit,
         on_auth_change=changes,
     )
     _, token = _initialize_account(identity_rw_engine, deps, monkeypatch)
@@ -221,10 +286,12 @@ def test_status_change_rejects_stale_version_revokes_and_guards_last_super_admin
 ) -> None:
     changes = AuthChanges()
     deps = IdentityDependencies(
+        repository_factory=dependencies().repository_factory,
         secret_manager=StaticSecrets(),
         policy=dependencies().policy,
         clock=MutableClock(),
         random=SystemRandom(),
+        audit=dependencies().audit,
         on_auth_change=changes,
     )
     _, token = _initialize_account(identity_rw_engine, deps, monkeypatch)
@@ -305,3 +372,93 @@ def test_status_change_cannot_enable_an_uninitialized_account(
             {"id": account.id},
         ).scalar_one()
     assert status == AccountStatus.PENDING_INIT.value
+
+
+def test_global_super_admin_guard_serializes_disable_and_password_reset(
+    clean_identity_db: None,
+    identity_rw_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    deps = dependencies()
+    _initialize_account(
+        identity_rw_engine,
+        deps,
+        monkeypatch,
+        employee_no="00000001",
+        display_name="Admin A",
+    )
+    _initialize_account(
+        identity_rw_engine,
+        deps,
+        monkeypatch,
+        employee_no="00000002",
+        display_name="Admin B",
+    )
+    with identity_rw_engine.begin() as db:
+        accounts = db.execute(
+            text(
+                "UPDATE identity.account SET is_super_admin=true, version=version+1 "
+                "RETURNING id, employee_no, version"
+            )
+        ).all()
+    by_employee = {row.employee_no.strip(): row for row in accounts}
+    barrier = Barrier(2)
+
+    def disable() -> bool:
+        account = by_employee["00000001"]
+        try:
+            with identity_rw_engine.begin() as db:
+                db.execute(
+                    text("SELECT id FROM identity.account WHERE id=:id FOR UPDATE"),
+                    {"id": account.id},
+                )
+                barrier.wait(timeout=5)
+                set_account_status(
+                    db,
+                    account_id=str(account.id),
+                    status=AccountStatus.DISABLED,
+                    expected_version=account.version,
+                    actor=SYSTEM,
+                    reason="concurrent disable",
+                    dependencies=deps,
+                )
+        except LastEffectiveSuperAdmin:
+            return False
+        return True
+
+    def reset() -> bool:
+        account = by_employee["00000002"]
+        try:
+            with identity_rw_engine.begin() as db:
+                db.execute(
+                    text("SELECT id FROM identity.account WHERE id=:id FOR UPDATE"),
+                    {"id": account.id},
+                )
+                barrier.wait(timeout=5)
+                issue_temp_password(
+                    db,
+                    account_id=str(account.id),
+                    actor=SYSTEM,
+                    reason="concurrent reset",
+                    dependencies=deps,
+                )
+        except LastEffectiveSuperAdmin:
+            return False
+        return True
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = [
+            future.result(timeout=10)
+            for future in [executor.submit(disable), executor.submit(reset)]
+        ]
+
+    assert sorted(outcomes) == [False, True]
+    with identity_rw_engine.connect() as db:
+        effective = db.execute(
+            text(
+                "SELECT count(*) FROM identity.account WHERE is_super_admin=true "
+                "AND status='ENABLED' AND password_hash IS NOT NULL "
+                "AND totp_confirmed_at IS NOT NULL"
+            )
+        ).scalar_one()
+    assert effective == 1

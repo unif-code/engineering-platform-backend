@@ -1,20 +1,19 @@
-from sqlalchemy import Connection, text
+from typing import Any
 
 from control_plane.app.modules.audit.domain.envelope import AuditEnvelope
-from control_plane.app.modules.audit.ports.repository import AuditEventRepository
+from control_plane.app.modules.audit.ports.repository import (
+    AuditEventRepository,
+    TransactionalAuditAppender,
+)
 
 
 def record(envelope: AuditEnvelope, repository: AuditEventRepository) -> None:
     repository.append(envelope)
 
 
-def record_in_transaction(db: Connection, envelope: AuditEnvelope) -> None:
-    """Append through the audit-owned least-privilege surface in the caller transaction."""
-    db.execute(
-        text(
-            "SELECT audit.append_event("
-            ":id, :occurred_at, :actor, :actor_type, :action, :target_type, "
-            ":target_id, :result, :reason, :correlation_id, :schema_version)"
-        ),
-        envelope.model_dump(),
-    )
+def record_in_transaction(
+    db: Any,
+    envelope: AuditEnvelope,
+    appender: TransactionalAuditAppender,
+) -> None:
+    appender.append_in_transaction(db, envelope)

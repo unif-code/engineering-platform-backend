@@ -81,6 +81,7 @@ EXPECTED_COLUMNS = {
         ("expires_hint", "TIMESTAMPTZ", False, None),
         ("revoked_at", "TIMESTAMPTZ", True, None),
         ("revoke_reason", "TEXT", True, None),
+        ("bootstrap_purpose", "TEXT", True, None),
     ],
     "temp_credential": [
         ("id", "UUID", False, None),
@@ -265,7 +266,7 @@ def test_both_independent_alembic_heads_are_installed(identity_owner_engine: Eng
         installed = set(conn.execute(text("SELECT version_num FROM alembic_version")).scalars())
     assert installed == {
         "0002_audit_transactional_append",
-        "0002_identity_backoff_source",
+        "0003_identity_bootstrap_purpose",
     }
 
 

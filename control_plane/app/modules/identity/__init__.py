@@ -2,9 +2,6 @@
 
 from sqlalchemy import Connection
 
-from control_plane.app.modules.identity.adapters.policy import DefaultEffectivePolicy
-from control_plane.app.modules.identity.adapters.runtime import SystemClock, SystemRandom
-from control_plane.app.modules.identity.adapters.sqlalchemy import SqlAlchemyIdentityRepository
 from control_plane.app.modules.identity.application.accounts import (
     consume_temp_password as _consume_temp_password,
 )
@@ -56,6 +53,10 @@ from control_plane.app.modules.identity.domain.errors import (
 from control_plane.app.modules.identity.domain.models import Principal
 from control_plane.app.modules.identity.domain.policy import EffectiveIdentityPolicy
 from control_plane.app.modules.identity.domain.session import (
+    AuthChallengeState,
+    AuthDenialCode,
+    AuthenticationDenial,
+    BootstrapPurpose,
     IssuedSession,
     LoginChallenge,
     SessionKind,
@@ -63,19 +64,7 @@ from control_plane.app.modules.identity.domain.session import (
     TotpEnrollment,
 )
 from control_plane.app.modules.identity.ports.policy import EffectivePolicyPort
-from control_plane.app.shared.db.settings import SecuritySettings
-from control_plane.app.shared.security import FileSecretManager
-
-
-def _dependencies(dependencies: IdentityDependencies | None) -> IdentityDependencies:
-    if dependencies is not None:
-        return dependencies
-    return IdentityDependencies(
-        secret_manager=FileSecretManager(SecuritySettings()),
-        policy=DefaultEffectivePolicy(),
-        clock=SystemClock(),
-        random=SystemRandom(),
-    )
+from control_plane.app.modules.identity.ports.repository import IdentityRepositoryFactory
 
 
 def create_account(
@@ -86,16 +75,16 @@ def create_account(
     actor: Principal,
     reason: str,
     profession: str | None = None,
-    dependencies: IdentityDependencies | None = None,
+    dependencies: IdentityDependencies,
 ) -> tuple[AccountDto, str]:
     return _create_account(
-        SqlAlchemyIdentityRepository(db),
+        dependencies.repository_factory(db),
         employee_no=employee_no,
         display_name=display_name,
         actor=actor,
         reason=reason,
         profession=profession,
-        dependencies=_dependencies(dependencies),
+        dependencies=dependencies,
     )
 
 
@@ -105,14 +94,14 @@ def issue_temp_password(
     account_id: str,
     actor: Principal,
     reason: str,
-    dependencies: IdentityDependencies | None = None,
+    dependencies: IdentityDependencies,
 ) -> str:
     return _issue_temp_password(
-        SqlAlchemyIdentityRepository(db),
+        dependencies.repository_factory(db),
         account_id=account_id,
         actor=actor,
         reason=reason,
-        dependencies=_dependencies(dependencies),
+        dependencies=dependencies,
     )
 
 
@@ -121,13 +110,13 @@ def consume_temp_password(
     *,
     employee_no: str,
     temp_password: str,
-    dependencies: IdentityDependencies | None = None,
+    dependencies: IdentityDependencies,
 ) -> IssuedSession | None:
     return _consume_temp_password(
-        SqlAlchemyIdentityRepository(db),
+        dependencies.repository_factory(db),
         employee_no=employee_no,
         temp_password=temp_password,
-        dependencies=_dependencies(dependencies),
+        dependencies=dependencies,
     )
 
 
@@ -136,13 +125,13 @@ def complete_password_setup(
     *,
     bootstrap_token: str,
     password: str,
-    dependencies: IdentityDependencies | None = None,
+    dependencies: IdentityDependencies,
 ) -> None:
     _complete_password_setup(
-        SqlAlchemyIdentityRepository(db),
+        dependencies.repository_factory(db),
         bootstrap_token=bootstrap_token,
         password=password,
-        dependencies=_dependencies(dependencies),
+        dependencies=dependencies,
     )
 
 
@@ -150,12 +139,12 @@ def enroll_totp(
     db: Connection,
     *,
     bootstrap_token: str,
-    dependencies: IdentityDependencies | None = None,
+    dependencies: IdentityDependencies,
 ) -> TotpEnrollment:
     return _enroll_totp(
-        SqlAlchemyIdentityRepository(db),
+        dependencies.repository_factory(db),
         bootstrap_token=bootstrap_token,
-        dependencies=_dependencies(dependencies),
+        dependencies=dependencies,
     )
 
 
@@ -164,13 +153,13 @@ def confirm_totp(
     *,
     bootstrap_token: str,
     code: str,
-    dependencies: IdentityDependencies | None = None,
+    dependencies: IdentityDependencies,
 ) -> IssuedSession:
     return _confirm_totp(
-        SqlAlchemyIdentityRepository(db),
+        dependencies.repository_factory(db),
         bootstrap_token=bootstrap_token,
         code=code,
-        dependencies=_dependencies(dependencies),
+        dependencies=dependencies,
     )
 
 
@@ -180,14 +169,14 @@ def login_password_step(
     employee_no: str,
     password: str,
     source: str,
-    dependencies: IdentityDependencies | None = None,
-) -> LoginChallenge | IssuedSession:
+    dependencies: IdentityDependencies,
+) -> LoginChallenge | IssuedSession | AuthenticationDenial:
     return _login_password_step(
-        SqlAlchemyIdentityRepository(db),
+        dependencies.repository_factory(db),
         employee_no=employee_no,
         password=password,
         source=source,
-        dependencies=_dependencies(dependencies),
+        dependencies=dependencies,
     )
 
 
@@ -196,13 +185,13 @@ def login_totp_step(
     *,
     challenge_token: str,
     code: str,
-    dependencies: IdentityDependencies | None = None,
-) -> IssuedSession:
+    dependencies: IdentityDependencies,
+) -> IssuedSession | AuthenticationDenial:
     return _login_totp_step(
-        SqlAlchemyIdentityRepository(db),
+        dependencies.repository_factory(db),
         challenge_token=challenge_token,
         code=code,
-        dependencies=_dependencies(dependencies),
+        dependencies=dependencies,
     )
 
 
@@ -210,12 +199,12 @@ def validate_session(
     db: Connection,
     *,
     raw_token: str,
-    dependencies: IdentityDependencies | None = None,
+    dependencies: IdentityDependencies,
 ) -> SessionPrincipal | None:
     return _validate_session(
-        SqlAlchemyIdentityRepository(db),
+        dependencies.repository_factory(db),
         raw_token=raw_token,
-        dependencies=_dependencies(dependencies),
+        dependencies=dependencies,
     )
 
 
@@ -223,12 +212,12 @@ def logout(
     db: Connection,
     *,
     raw_token: str,
-    dependencies: IdentityDependencies | None = None,
+    dependencies: IdentityDependencies,
 ) -> bool:
     return _logout(
-        SqlAlchemyIdentityRepository(db),
+        dependencies.repository_factory(db),
         raw_token=raw_token,
-        dependencies=_dependencies(dependencies),
+        dependencies=dependencies,
     )
 
 
@@ -238,14 +227,14 @@ def revoke_sessions_for(
     account_id: str,
     actor: Principal,
     reason: str,
-    dependencies: IdentityDependencies | None = None,
+    dependencies: IdentityDependencies,
 ) -> int:
     return _revoke_sessions_for(
-        SqlAlchemyIdentityRepository(db),
+        dependencies.repository_factory(db),
         account_id=account_id,
         actor=actor,
         reason=reason,
-        dependencies=_dependencies(dependencies),
+        dependencies=dependencies,
     )
 
 
@@ -257,16 +246,16 @@ def set_account_status(
     expected_version: int,
     actor: Principal,
     reason: str,
-    dependencies: IdentityDependencies | None = None,
+    dependencies: IdentityDependencies,
 ) -> AccountDto:
     return _set_account_status(
-        SqlAlchemyIdentityRepository(db),
+        dependencies.repository_factory(db),
         account_id=account_id,
         status=status,
         expected_version=expected_version,
         actor=actor,
         reason=reason,
-        dependencies=_dependencies(dependencies),
+        dependencies=dependencies,
     )
 
 
@@ -276,10 +265,14 @@ __all__ = [
     "AccountNotFound",
     "AccountStatus",
     "AuthenticationFailed",
-    "DefaultEffectivePolicy",
+    "AuthenticationDenial",
+    "AuthChallengeState",
+    "AuthDenialCode",
+    "BootstrapPurpose",
     "EffectiveIdentityPolicy",
     "EffectivePolicyPort",
     "IdentityDependencies",
+    "IdentityRepositoryFactory",
     "InvalidAccountTransition",
     "IssuedSession",
     "LastEffectiveSuperAdmin",

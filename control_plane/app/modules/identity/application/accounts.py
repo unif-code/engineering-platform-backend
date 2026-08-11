@@ -1,11 +1,12 @@
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy.exc import IntegrityError
-
 from control_plane.app.modules.identity.application.common import audit
 from control_plane.app.modules.identity.application.dependencies import IdentityDependencies
-from control_plane.app.modules.identity.application.sessions import issue_session
+from control_plane.app.modules.identity.application.sessions import (
+    finalize_session_revocations,
+    issue_session,
+)
 from control_plane.app.modules.identity.domain.account import (
     AccountDto,
     AccountStatus,
@@ -13,12 +14,15 @@ from control_plane.app.modules.identity.domain.account import (
     ensure_effective_super_admin_remains,
 )
 from control_plane.app.modules.identity.domain.errors import (
-    AccountConflict,
     AccountNotFound,
     StaleAccountVersion,
 )
 from control_plane.app.modules.identity.domain.models import Principal
-from control_plane.app.modules.identity.domain.session import IssuedSession, SessionKind
+from control_plane.app.modules.identity.domain.session import (
+    BootstrapPurpose,
+    IssuedSession,
+    SessionKind,
+)
 from control_plane.app.modules.identity.ports.repository import IdentityRepository
 from control_plane.app.shared.security import hash_password, verify_password
 
@@ -78,17 +82,14 @@ def create_account(
         raise ValueError("employee number must be an eight-digit string")
     account_id = str(deps.random.uuid4())
     now = deps.clock.now()
-    try:
-        repository.insert_account(
-            id=account_id,
-            employee_no=employee_no,
-            display_name=display_name,
-            profession=profession,
-            status=AccountStatus.PENDING_INIT.value,
-            now=now,
-        )
-    except IntegrityError as exc:
-        raise AccountConflict("employee number already exists") from exc
+    repository.insert_account(
+        id=account_id,
+        employee_no=employee_no,
+        display_name=display_name,
+        profession=profession,
+        status=AccountStatus.PENDING_INIT.value,
+        now=now,
+    )
     temporary_password = _issue_temp(
         repository,
         account_id=account_id,
@@ -98,6 +99,7 @@ def create_account(
     )
     audit(
         db,
+        dependencies=deps,
         actor=actor,
         action="identity.account.created",
         target_type="account",
@@ -107,6 +109,7 @@ def create_account(
     )
     audit(
         db,
+        dependencies=deps,
         actor=actor,
         action="identity.temp_credential.issued",
         target_type="account",
@@ -129,6 +132,7 @@ def issue_temp_password(
 ) -> str:
     deps = dependencies
     db = repository.db
+    repository.lock_super_admin_invariant()
     row = repository.account_by_id(account_id, for_update=True)
     if row is None:
         raise AccountNotFound(account_id)
@@ -151,6 +155,7 @@ def issue_temp_password(
     revoked = repository.revoke_sessions(account_id, now, "PASSWORD_RESET")
     audit(
         db,
+        dependencies=deps,
         actor=actor,
         action="identity.temp_credential.issued",
         target_type="account",
@@ -160,6 +165,7 @@ def issue_temp_password(
     )
     audit(
         db,
+        dependencies=deps,
         actor=actor,
         action="identity.password.reset",
         target_type="account",
@@ -167,16 +173,15 @@ def issue_temp_password(
         result="SUCCESS",
         reason=reason,
     )
-    if revoked:
-        audit(
-            db,
-            actor=actor,
-            action="identity.sessions.revoked",
-            target_type="account",
-            target_id=account_id,
-            result="SUCCESS",
-            reason="password reset",
-        )
+    finalize_session_revocations(
+        repository,
+        account_id=account_id,
+        revoked_session_ids=revoked,
+        actor=actor,
+        reason="password reset",
+        dependencies=deps,
+        invoke_hook=False,
+    )
     deps.on_auth_change(account_id)
     return temporary_password
 
@@ -207,10 +212,16 @@ def consume_temp_password(
         repository,
         account_id=str(credential["account_id"]),
         kind=SessionKind.BOOTSTRAP,
+        bootstrap_purpose=(
+            BootstrapPurpose.PASSWORD_RESET
+            if credential["totp_confirmed_at"] is not None
+            else BootstrapPurpose.INITIAL_SETUP
+        ),
         dependencies=deps,
     )
     audit(
         db,
+        dependencies=deps,
         actor=Principal(employee_id=employee_no, name=employee_no),
         action="identity.temp_credential.consumed",
         target_type="account",
@@ -233,6 +244,7 @@ def set_account_status(
 ) -> AccountDto:
     deps = dependencies
     db = repository.db
+    repository.lock_super_admin_invariant()
     account = repository.account_by_id(account_id, for_update=True)
     if account is None:
         raise AccountNotFound(account_id)
@@ -258,9 +270,19 @@ def set_account_status(
     if updated is None:
         raise StaleAccountVersion(account_id)
     if status is not AccountStatus.ENABLED:
-        repository.revoke_sessions(account_id, now, f"ACCOUNT_{status.value}")
+        revoked = repository.revoke_sessions(account_id, now, f"ACCOUNT_{status.value}")
+        finalize_session_revocations(
+            repository,
+            account_id=account_id,
+            revoked_session_ids=revoked,
+            actor=actor,
+            reason=f"account {status.value.lower()}",
+            dependencies=deps,
+            invoke_hook=False,
+        )
     audit(
         db,
+        dependencies=deps,
         actor=actor,
         action="identity.account.status.changed",
         target_type="account",

@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import Engine, text
 
 from control_plane.app.modules.identity import (
+    AccountConflict,
     AccountStatus,
     EffectiveIdentityPolicy,
     IdentityDependencies,
@@ -18,6 +19,7 @@ from control_plane.app.modules.identity import (
     validate_session,
 )
 from control_plane.app.modules.identity.adapters.runtime import SystemRandom
+from control_plane.app.modules.identity.adapters.sqlalchemy import SqlAlchemyIdentityRepository
 from tests.identity.task5_helpers import MutableClock, StaticSecrets, dependencies
 from tests.identity.test_auth_flow import _initialize_account
 
@@ -30,6 +32,33 @@ class ShortTempPolicy:
     def get_identity_policy(self, db: object) -> EffectiveIdentityPolicy:
         del db
         return EffectiveIdentityPolicy(temp_credential_ttl=timedelta(minutes=5))
+
+
+def test_sqlalchemy_adapter_translates_duplicate_employee_to_domain_conflict(
+    clean_identity_db: None,
+    identity_rw_engine: Engine,
+) -> None:
+    deps = dependencies()
+    with identity_rw_engine.begin() as db:
+        create_account(
+            db,
+            employee_no="00000001",
+            display_name="Alice",
+            actor=SYSTEM,
+            reason="provision",
+            dependencies=deps,
+        )
+
+    with pytest.raises(AccountConflict):
+        with identity_rw_engine.begin() as db:
+            SqlAlchemyIdentityRepository(db).insert_account(
+                id="11111111-1111-4111-8111-111111111111",
+                employee_no="00000001",
+                display_name="Duplicate",
+                profession=None,
+                status=AccountStatus.PENDING_INIT.value,
+                now=deps.clock.now(),
+            )
 
 
 def test_create_account_returns_temp_once_without_persisting_or_auditing_plaintext(
@@ -153,10 +182,13 @@ def test_temp_password_expiry_uses_effective_policy(
 ) -> None:
     clock = MutableClock()
     deps = IdentityDependencies(
+        repository_factory=dependencies().repository_factory,
         secret_manager=StaticSecrets(),
         policy=ShortTempPolicy(),
         clock=clock,
         random=SystemRandom(),
+        audit=dependencies().audit,
+        on_auth_change=dependencies().on_auth_change,
     )
     with identity_rw_engine.begin() as db:
         _, temporary_password = create_account(

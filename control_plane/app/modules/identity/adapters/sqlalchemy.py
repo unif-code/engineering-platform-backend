@@ -2,22 +2,49 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import Connection, text
+from sqlalchemy.exc import IntegrityError
+
+from control_plane.app.modules.identity.domain.errors import AccountConflict
 
 
 class SqlAlchemyIdentityRepository:
     def __init__(self, db: Connection) -> None:
         self.db = db
 
-    def insert_account(self, **values: Any) -> None:
+    def lock_super_admin_invariant(self) -> None:
         self.db.execute(
             text(
-                "INSERT INTO identity.account "
-                "(id, employee_no, display_name, profession, status, version, "
-                "created_at, updated_at) "
-                "VALUES (:id, :employee_no, :display_name, :profession, :status, 1, :now, :now)"
-            ),
-            values,
+                "SELECT pg_advisory_xact_lock("
+                "hashtextextended('identity.effective_super_admin', 0))"
+            )
         )
+
+    def lock_backoff_scope(self, employee_no: str, source: str) -> None:
+        self.db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:scope_key, 0))"),
+            {"scope_key": f"identity.backoff:{employee_no}:{source}"},
+        )
+
+    def lock_account_lifecycle(self, account_id: str) -> None:
+        self.db.execute(
+            text("SELECT id FROM identity.account WHERE id=:account_id FOR UPDATE"),
+            {"account_id": account_id},
+        )
+
+    def insert_account(self, **values: Any) -> None:
+        try:
+            self.db.execute(
+                text(
+                    "INSERT INTO identity.account "
+                    "(id, employee_no, display_name, profession, status, version, "
+                    "created_at, updated_at) "
+                    "VALUES (:id, :employee_no, :display_name, :profession, "
+                    ":status, 1, :now, :now)"
+                ),
+                values,
+            )
+        except IntegrityError as exc:
+            raise AccountConflict("employee number already exists") from exc
 
     def account_by_id(self, account_id: str, *, for_update: bool = False) -> Any:
         suffix = " FOR UPDATE" if for_update else ""
@@ -64,7 +91,8 @@ class SqlAlchemyIdentityRepository:
         return (
             self.db.execute(
                 text(
-                    "SELECT t.id, t.account_id, t.secret_hash FROM identity.temp_credential t "
+                    "SELECT t.id, t.account_id, t.secret_hash, a.totp_confirmed_at "
+                    "FROM identity.temp_credential t "
                     "JOIN identity.account a ON a.id=t.account_id "
                     "WHERE a.employee_no=:employee_no AND t.consumed_at IS NULL "
                     "AND t.expires_at>:now ORDER BY t.created_at DESC, t.id DESC "
@@ -90,8 +118,10 @@ class SqlAlchemyIdentityRepository:
         self.db.execute(
             text(
                 "INSERT INTO identity.session "
-                "(id, account_id, token_hash, kind, created_at, last_seen_at, expires_hint) "
-                "VALUES (:id, :account_id, :token_hash, :kind, :now, :now, :expires_hint)"
+                "(id, account_id, token_hash, kind, bootstrap_purpose, "
+                "created_at, last_seen_at, expires_hint) "
+                "VALUES (:id, :account_id, :token_hash, :kind, :bootstrap_purpose, "
+                ":now, :now, :expires_hint)"
             ),
             values,
         )
@@ -101,7 +131,8 @@ class SqlAlchemyIdentityRepository:
         return (
             self.db.execute(
                 text(
-                    "SELECT s.id AS session_id, s.account_id, s.kind, s.created_at, "
+                    "SELECT s.id AS session_id, s.account_id, s.kind, s.bootstrap_purpose, "
+                    "s.created_at, "
                     "s.last_seen_at, s.revoked_at, a.employee_no, a.display_name, a.status, "
                     "a.password_hash, a.password_set_at, a.totp_sealed, a.totp_confirmed_at, "
                     "a.totp_last_step, a.is_super_admin, a.version "
@@ -151,6 +182,16 @@ class SqlAlchemyIdentityRepository:
             {"account_id": account_id, "step": step, "now": now},
         )
 
+    def restore_password_reset(self, account_id: str, step: int, now: datetime) -> None:
+        self.db.execute(
+            text(
+                "UPDATE identity.account SET totp_last_step=:step, status='ENABLED', "
+                "updated_at=:now, version=version+1 WHERE id=:account_id "
+                "AND password_hash IS NOT NULL AND totp_confirmed_at IS NOT NULL"
+            ),
+            {"account_id": account_id, "step": step, "now": now},
+        )
+
     def revoke_sessions(
         self,
         account_id: str,
@@ -159,7 +200,7 @@ class SqlAlchemyIdentityRepository:
         *,
         except_session_id: str | None = None,
         kind: str | None = None,
-    ) -> int:
+    ) -> list[str]:
         conditions = ["account_id=:account_id", "revoked_at IS NULL"]
         if except_session_id is not None:
             conditions.append("id<>:except_session_id")
@@ -169,6 +210,7 @@ class SqlAlchemyIdentityRepository:
             text(
                 "UPDATE identity.session SET revoked_at=:now, revoke_reason=:reason WHERE "
                 + " AND ".join(conditions)
+                + " RETURNING id"
             ),
             {
                 "account_id": account_id,
@@ -178,7 +220,7 @@ class SqlAlchemyIdentityRepository:
                 "kind": kind,
             },
         )
-        return result.rowcount
+        return [str(value) for value in result.scalars()]
 
     def insert_challenge(self, **values: Any) -> None:
         self.db.execute(
@@ -237,14 +279,15 @@ class SqlAlchemyIdentityRepository:
         )
         return result.rowcount == 1
 
-    def update_totp_step(self, account_id: str, step: int, now: datetime) -> None:
-        self.db.execute(
+    def update_totp_step(self, account_id: str, step: int, now: datetime) -> bool:
+        result = self.db.execute(
             text(
                 "UPDATE identity.account SET totp_last_step=:step, updated_at=:now "
                 "WHERE id=:account_id AND (totp_last_step IS NULL OR totp_last_step<:step)"
             ),
             {"account_id": account_id, "step": step, "now": now},
         )
+        return result.rowcount == 1
 
     def backoff_by_scope(self, employee_no: str, source: str, *, for_update: bool) -> Any:
         suffix = " FOR UPDATE" if for_update else ""
@@ -286,28 +329,30 @@ class SqlAlchemyIdentityRepository:
             },
         )
 
-    def evict_old_full_sessions(self, account_id: str, cap: int, now: datetime) -> None:
-        self.db.execute(
+    def evict_old_full_sessions(self, account_id: str, cap: int, now: datetime) -> list[str]:
+        result = self.db.execute(
             text(
                 "WITH ranked AS (SELECT id, row_number() OVER "
                 "(ORDER BY created_at DESC, id DESC) AS newest_rank "
                 "FROM identity.session WHERE account_id=:account_id "
                 "AND kind='FULL' AND revoked_at IS NULL) "
                 "UPDATE identity.session s SET revoked_at=:now, revoke_reason='SESSION_CAP' "
-                "FROM ranked r WHERE s.id=r.id AND r.newest_rank>:cap"
+                "FROM ranked r WHERE s.id=r.id AND r.newest_rank>:cap RETURNING s.id"
             ),
             {"account_id": account_id, "cap": cap, "now": now},
         )
+        return [str(value) for value in result.scalars()]
 
-    def revoke_session(self, session_id: str, now: datetime, reason: str) -> bool:
+    def revoke_session(self, session_id: str, now: datetime, reason: str) -> str | None:
         result = self.db.execute(
             text(
                 "UPDATE identity.session SET revoked_at=:now, revoke_reason=:reason "
-                "WHERE id=:id AND revoked_at IS NULL"
+                "WHERE id=:id AND revoked_at IS NULL RETURNING id"
             ),
             {"id": session_id, "now": now, "reason": reason},
         )
-        return result.rowcount == 1
+        value = result.scalar_one_or_none()
+        return str(value) if value is not None else None
 
     def touch_session(self, session_id: str, now: datetime, expires_hint: datetime) -> None:
         self.db.execute(

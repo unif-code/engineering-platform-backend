@@ -5,6 +5,7 @@ from control_plane.app.modules.identity.application.dependencies import Identity
 from control_plane.app.modules.identity.domain.account import AccountStatus
 from control_plane.app.modules.identity.domain.models import Principal
 from control_plane.app.modules.identity.domain.session import (
+    BootstrapPurpose,
     IssuedSession,
     SessionKind,
     SessionPrincipal,
@@ -12,24 +13,60 @@ from control_plane.app.modules.identity.domain.session import (
 from control_plane.app.modules.identity.ports.repository import IdentityRepository
 
 
+def finalize_session_revocations(
+    repository: IdentityRepository,
+    *,
+    account_id: str,
+    revoked_session_ids: list[str],
+    actor: Principal,
+    reason: str,
+    dependencies: IdentityDependencies,
+    invoke_hook: bool = True,
+    action: str = "identity.sessions.revoked",
+) -> None:
+    if not revoked_session_ids:
+        return
+    audit(
+        repository.db,
+        dependencies=dependencies,
+        actor=actor,
+        action=action,
+        target_type="account",
+        target_id=account_id,
+        result="SUCCESS",
+        reason=reason,
+    )
+    if invoke_hook:
+        dependencies.on_auth_change(account_id)
+
+
 def issue_session(
     repository: IdentityRepository,
     *,
     account_id: str,
     kind: SessionKind,
+    bootstrap_purpose: BootstrapPurpose | None = None,
     dependencies: IdentityDependencies,
 ) -> IssuedSession:
     now = dependencies.clock.now()
+    if kind is SessionKind.FULL:
+        repository.lock_account_lifecycle(account_id)
     raw_token = dependencies.random.token_urlsafe(32)
     repository.insert_session(
         id=str(dependencies.random.uuid4()),
         account_id=account_id,
         token_hash=token_hash(raw_token),
         kind=kind.value,
+        bootstrap_purpose=bootstrap_purpose.value if bootstrap_purpose is not None else None,
         now=now,
         expires_hint=now + timedelta(days=365),
     )
-    return IssuedSession(account_id=account_id, raw_token=raw_token, kind=kind)
+    return IssuedSession(
+        account_id=account_id,
+        raw_token=raw_token,
+        kind=kind,
+        bootstrap_purpose=bootstrap_purpose,
+    )
 
 
 def validate_session(
@@ -58,8 +95,15 @@ def validate_session(
     now = deps.clock.now()
     policy = deps.policy.get_identity_policy(db)
     if now >= row["last_seen_at"] + policy.session_idle_timeout:
-        repository.revoke_session(str(row["session_id"]), now, "IDLE_TIMEOUT")
-        deps.on_auth_change(str(row["account_id"]))
+        revoked = repository.revoke_session(str(row["session_id"]), now, "IDLE_TIMEOUT")
+        finalize_session_revocations(
+            repository,
+            account_id=str(row["account_id"]),
+            revoked_session_ids=[revoked] if revoked is not None else [],
+            actor=Principal(employee_id=row["employee_no"], name=row["display_name"]),
+            reason="idle timeout",
+            dependencies=deps,
+        )
         return None
     repository.touch_session(
         str(row["session_id"]),
@@ -71,6 +115,11 @@ def validate_session(
         employee_no=row["employee_no"],
         display_name=row["display_name"],
         session_kind=kind,
+        bootstrap_purpose=(
+            BootstrapPurpose(row["bootstrap_purpose"])
+            if row["bootstrap_purpose"] is not None
+            else None
+        ),
         is_super_admin=row["is_super_admin"],
     )
 
@@ -82,24 +131,21 @@ def logout(
     dependencies: IdentityDependencies,
 ) -> bool:
     deps = dependencies
-    db = repository.db
     row = repository.session_with_account(token_hash(raw_token), for_update=True)
     if row is None:
         return False
     account_id = str(row["account_id"])
-    changed = repository.revoke_session(str(row["session_id"]), deps.clock.now(), "LOGOUT")
-    if changed:
-        audit(
-            db,
-            actor=Principal(employee_id=row["employee_no"], name=row["display_name"]),
-            action="identity.session.logout",
-            target_type="account",
-            target_id=account_id,
-            result="SUCCESS",
-            reason="logout",
-        )
-        deps.on_auth_change(account_id)
-    return changed
+    revoked = repository.revoke_session(str(row["session_id"]), deps.clock.now(), "LOGOUT")
+    finalize_session_revocations(
+        repository,
+        account_id=account_id,
+        revoked_session_ids=[revoked] if revoked is not None else [],
+        actor=Principal(employee_id=row["employee_no"], name=row["display_name"]),
+        reason="logout",
+        dependencies=deps,
+        action="identity.session.logout",
+    )
+    return revoked is not None
 
 
 def revoke_sessions_for(
@@ -111,17 +157,14 @@ def revoke_sessions_for(
     dependencies: IdentityDependencies,
 ) -> int:
     deps = dependencies
-    db = repository.db
     now = deps.clock.now()
-    count = repository.revoke_sessions(account_id, now, reason)
-    audit(
-        db,
+    revoked = repository.revoke_sessions(account_id, now, reason)
+    finalize_session_revocations(
+        repository,
+        account_id=account_id,
+        revoked_session_ids=revoked,
         actor=actor,
-        action="identity.sessions.revoked",
-        target_type="account",
-        target_id=account_id,
-        result="SUCCESS",
         reason=reason,
+        dependencies=deps,
     )
-    deps.on_auth_change(account_id)
-    return count
+    return len(revoked)
