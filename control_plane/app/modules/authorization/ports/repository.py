@@ -1,7 +1,14 @@
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
 
 from sqlalchemy import Connection
+
+
+@dataclass(frozen=True, slots=True)
+class PrincipalSettlement:
+    before_version: int
+    after_version: int
 
 
 class AuthorizationRepository(Protocol):

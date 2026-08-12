@@ -3,7 +3,6 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import Connection, text
-from sqlalchemy.exc import IntegrityError
 
 from control_plane.app.modules.identity.domain.errors import AccountConflict
 
@@ -118,19 +117,45 @@ class SqlAlchemyIdentityRepository:
         return result.rowcount == 1
 
     def insert_account(self, **values: Any) -> None:
-        try:
+        inserted = self.db.execute(
+            text(
+                "INSERT INTO identity.account "
+                "(id, employee_no, display_name, profession, status, version, "
+                "created_at, updated_at) "
+                "VALUES (:id, :employee_no, :display_name, :profession, "
+                ":status, 1, :now, :now) "
+                "ON CONFLICT (employee_no) DO NOTHING RETURNING id"
+            ),
+            values,
+        ).scalar_one_or_none()
+        if inserted is None:
+            raise AccountConflict("employee number already exists")
+
+    def list_accounts(
+        self,
+        *,
+        after_employee_no: str | None,
+        after_id: str | None,
+        limit: int,
+    ) -> list[Any]:
+        return list(
             self.db.execute(
                 text(
-                    "INSERT INTO identity.account "
-                    "(id, employee_no, display_name, profession, status, version, "
-                    "created_at, updated_at) "
-                    "VALUES (:id, :employee_no, :display_name, :profession, "
-                    ":status, 1, :now, :now)"
+                    "SELECT * FROM identity.account "
+                    "WHERE (CAST(:after_employee_no AS TEXT) IS NULL OR "
+                    "(employee_no, id) > "
+                    "(CAST(:after_employee_no AS TEXT), CAST(:after_id AS UUID))) "
+                    "ORDER BY employee_no, id LIMIT :limit"
                 ),
-                values,
+                {
+                    "after_employee_no": after_employee_no,
+                    "after_id": after_id,
+                    "limit": limit,
+                },
             )
-        except IntegrityError as exc:
-            raise AccountConflict("employee number already exists") from exc
+            .mappings()
+            .all()
+        )
 
     def account_by_id(self, account_id: str, *, for_update: bool = False) -> Any:
         suffix = " FOR UPDATE" if for_update else ""
@@ -252,14 +277,42 @@ class SqlAlchemyIdentityRepository:
             {"account_id": account_id, "password_hash": password_hash, "now": now},
         )
 
-    def reset_password_state(self, account_id: str, now: datetime) -> None:
-        self.db.execute(
-            text(
-                "UPDATE identity.account SET password_hash=NULL, password_set_at=NULL, "
-                "status='PENDING_INIT', updated_at=:now, version=version+1 "
-                "WHERE id=:account_id"
-            ),
-            {"account_id": account_id, "now": now},
+    def reset_password_state(self, account_id: str, now: datetime) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE identity.account SET password_hash=NULL, password_set_at=NULL, "
+                    "status='PENDING_INIT', updated_at=:now, version=version+1 "
+                    "WHERE id=:account_id RETURNING *"
+                ),
+                {"account_id": account_id, "now": now},
+            )
+            .mappings()
+            .one()
+        )
+
+    def reset_totp_state(
+        self,
+        account_id: str,
+        expected_version: int,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE identity.account SET totp_sealed=NULL, "
+                    "totp_confirmed_at=NULL, totp_last_step=NULL, "
+                    "status='PENDING_INIT', updated_at=:now, version=version+1 "
+                    "WHERE id=:account_id AND version=:expected_version RETURNING *"
+                ),
+                {
+                    "account_id": account_id,
+                    "expected_version": expected_version,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one_or_none()
         )
 
     def reset_recovery_state(self, account_id: str, now: datetime) -> Any:

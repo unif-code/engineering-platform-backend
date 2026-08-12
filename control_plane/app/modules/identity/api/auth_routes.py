@@ -3,7 +3,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy import Engine, text
 
@@ -133,7 +133,8 @@ def _authentication_denial(denial: AuthenticationDenial) -> IdempotentResponse:
     return _problem(401, "Authentication failed")
 
 
-def _render(response: IdempotentResponse) -> JSONResponse:
+def _render(response: IdempotentResponse) -> Response:
+    rendered: Response
     if response.is_problem:
         semantic = dict(response.body)
         title = str(semantic.pop("title"))
@@ -147,6 +148,8 @@ def _render(response: IdempotentResponse) -> JSONResponse:
             extra=semantic,
             headers=response.headers,
         )
+    elif response.status_code == 204:
+        rendered = Response(status_code=204, headers=response.headers)
     else:
         rendered = JSONResponse(
             status_code=response.status_code,
@@ -195,7 +198,7 @@ def _execute(
     key: str,
     body: Mapping[str, object],
     command: Callable[[Any], IdempotentResponse],
-) -> JSONResponse:
+) -> Response:
     change_source = None
     try:
         with runtime.engine.begin() as db:

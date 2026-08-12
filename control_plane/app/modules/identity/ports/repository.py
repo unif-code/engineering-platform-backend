@@ -42,6 +42,14 @@ class IdentityRepository(Protocol):
 
     def insert_account(self, **values: Any) -> None: ...
 
+    def list_accounts(
+        self,
+        *,
+        after_employee_no: str | None,
+        after_id: str | None,
+        limit: int,
+    ) -> list[Any]: ...
+
     def account_by_id(self, account_id: str, *, for_update: bool = False) -> Any: ...
 
     def account_by_employee_no(self, employee_no: str, *, for_update: bool = False) -> Any: ...
@@ -62,7 +70,14 @@ class IdentityRepository(Protocol):
 
     def update_password(self, account_id: str, password_hash: str, now: datetime) -> None: ...
 
-    def reset_password_state(self, account_id: str, now: datetime) -> None: ...
+    def reset_password_state(self, account_id: str, now: datetime) -> Any: ...
+
+    def reset_totp_state(
+        self,
+        account_id: str,
+        expected_version: int,
+        now: datetime,
+    ) -> Any: ...
 
     def reset_recovery_state(self, account_id: str, now: datetime) -> Any: ...
 

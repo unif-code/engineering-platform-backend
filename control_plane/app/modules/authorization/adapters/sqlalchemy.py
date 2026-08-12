@@ -4,6 +4,8 @@ from typing import Any
 
 from sqlalchemy import Connection, text
 
+from control_plane.app.modules.authorization.ports.repository import PrincipalSettlement
+
 
 class SqlAlchemyAuthorizationRepository:
     def __init__(self, db: Connection) -> None:
@@ -474,13 +476,13 @@ class SqlAlchemyAuthorizationRepository:
         bump_version: bool,
         now: datetime,
     ) -> Any:
-        self.db.execute(
+        before = self.db.execute(
             text(
-                'SELECT account_id FROM "authorization".principal_version '
+                'SELECT version FROM "authorization".principal_version '
                 "WHERE account_id=:account_id FOR UPDATE"
             ),
             {"account_id": account_id},
-        ).one()
+        ).scalar_one()
         association = self.db.execute(
             text(
                 'DELETE FROM "authorization".convergence_principal_pending '
@@ -504,7 +506,7 @@ class SqlAlchemyAuthorizationRepository:
             .mappings()
             .one_or_none()
         )
-        return (
+        updated = (
             self.db.execute(
                 text(
                     'UPDATE "authorization".principal_version SET '
@@ -524,6 +526,10 @@ class SqlAlchemyAuthorizationRepository:
             )
             .mappings()
             .one()
+        )
+        return PrincipalSettlement(
+            before_version=int(before),
+            after_version=int(updated["version"]),
         )
 
     def pending_convergence_for_account(self, account_id: str) -> list[str]:

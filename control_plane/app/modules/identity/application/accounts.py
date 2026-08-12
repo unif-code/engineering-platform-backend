@@ -18,6 +18,7 @@ from control_plane.app.modules.identity.domain.account import (
     ensure_effective_super_admin_remains,
 )
 from control_plane.app.modules.identity.domain.errors import (
+    AccountConflict,
     AccountNotFound,
     StaleAccountVersion,
 )
@@ -45,6 +46,11 @@ def _dto(row: Any) -> AccountDto:
     )
 
 
+def _versioned_reason(reason: str, before: int | None, after: int) -> str:
+    before_value = "none" if before is None else str(before)
+    return f"{reason}; beforeVersion={before_value}; afterVersion={after}"
+
+
 def get_organization_account(
     repository: IdentityRepository,
     *,
@@ -60,6 +66,17 @@ def get_organization_account(
         status=AccountStatus(row["status"]),
         initialized=row["password_hash"] is not None and row["totp_confirmed_at"] is not None,
     )
+
+
+def get_account(
+    repository: IdentityRepository,
+    *,
+    account_id: str,
+) -> AccountDto:
+    row = repository.account_by_id(account_id)
+    if row is None:
+        raise AccountNotFound(account_id)
+    return _dto(row)
 
 
 def _issue_temp(
@@ -105,14 +122,28 @@ def create_account(
         raise ValueError("employee number must be an eight-digit string")
     account_id = str(deps.random.uuid4())
     now = deps.clock.now()
-    repository.insert_account(
-        id=account_id,
-        employee_no=employee_no,
-        display_name=display_name,
-        profession=profession,
-        status=AccountStatus.PENDING_INIT.value,
-        now=now,
-    )
+    try:
+        repository.insert_account(
+            id=account_id,
+            employee_no=employee_no,
+            display_name=display_name,
+            profession=profession,
+            status=AccountStatus.PENDING_INIT.value,
+            now=now,
+        )
+    except AccountConflict:
+        audit(
+            db,
+            dependencies=deps,
+            actor=actor,
+            action="identity.account.create",
+            target_type="account",
+            target_id=employee_no,
+            result="DENIED",
+            reason="employee number conflict",
+            correlation_id=correlation_id,
+        )
+        raise
     temporary_password = _issue_temp(
         repository,
         account_id=account_id,
@@ -120,6 +151,9 @@ def create_account(
         now=now,
         dependencies=deps,
     )
+    row = repository.account_by_id(account_id)
+    assert row is not None
+    versioned_reason = _versioned_reason(reason, None, int(row["version"]))
     audit(
         db,
         dependencies=deps,
@@ -128,7 +162,7 @@ def create_account(
         target_type="account",
         target_id=account_id,
         result="SUCCESS",
-        reason=reason,
+        reason=versioned_reason,
         correlation_id=correlation_id,
     )
     audit(
@@ -142,9 +176,24 @@ def create_account(
         reason=reason,
         correlation_id=correlation_id,
     )
-    row = repository.account_by_id(account_id)
-    assert row is not None
     return _dto(row), temporary_password
+
+
+def list_accounts(
+    repository: IdentityRepository,
+    *,
+    after_employee_no: str | None,
+    after_id: str | None,
+    limit: int,
+) -> list[AccountDto]:
+    return [
+        _dto(row)
+        for row in repository.list_accounts(
+            after_employee_no=after_employee_no,
+            after_id=after_id,
+            limit=limit,
+        )
+    ]
 
 
 def issue_temp_password(
@@ -154,6 +203,7 @@ def issue_temp_password(
     actor: Principal,
     reason: str,
     dependencies: IdentityDependencies,
+    expected_version: int | None = None,
 ) -> str:
     deps = dependencies
     db = repository.db
@@ -161,6 +211,8 @@ def issue_temp_password(
     row = repository.account_by_id(account_id, for_update=True)
     if row is None:
         raise AccountNotFound(account_id)
+    if expected_version is not None and row["version"] != expected_version:
+        raise StaleAccountVersion(account_id)
     ensure_effective_super_admin_remains(
         is_super_admin=row["is_super_admin"],
         status=AccountStatus(row["status"]),
@@ -176,7 +228,7 @@ def issue_temp_password(
         now=now,
         dependencies=deps,
     )
-    repository.reset_password_state(account_id, now)
+    updated = repository.reset_password_state(account_id, now)
     revoked = repository.revoke_sessions(account_id, now, "PASSWORD_RESET")
     audit(
         db,
@@ -186,7 +238,7 @@ def issue_temp_password(
         target_type="account",
         target_id=account_id,
         result="SUCCESS",
-        reason=reason,
+        reason=_versioned_reason(reason, int(row["version"]), int(updated["version"])),
     )
     audit(
         db,
@@ -196,7 +248,7 @@ def issue_temp_password(
         target_type="account",
         target_id=account_id,
         result="SUCCESS",
-        reason=reason,
+        reason=_versioned_reason(reason, int(row["version"]), int(updated["version"])),
     )
     finalize_session_revocations(
         repository,
@@ -209,6 +261,77 @@ def issue_temp_password(
     )
     notify_identity_change(deps.on_auth_change, account_id)
     return temporary_password
+
+
+def reset_totp(
+    repository: IdentityRepository,
+    *,
+    account_id: str,
+    expected_version: int,
+    actor: Principal,
+    reason: str,
+    dependencies: IdentityDependencies,
+) -> AccountDto:
+    deps = dependencies
+    repository.lock_super_admin_invariant()
+    row = repository.account_by_id(account_id, for_update=True)
+    if row is None:
+        raise AccountNotFound(account_id)
+    if row["version"] != expected_version:
+        raise StaleAccountVersion(account_id)
+    ensure_effective_super_admin_remains(
+        is_super_admin=row["is_super_admin"],
+        status=AccountStatus(row["status"]),
+        password_initialized=row["password_hash"] is not None,
+        totp_initialized=row["totp_confirmed_at"] is not None,
+        other_effective_super_admins=repository.effective_super_admins_except(account_id),
+    )
+    now = deps.clock.now()
+    updated = repository.reset_totp_state(account_id, expected_version, now)
+    if updated is None:
+        raise StaleAccountVersion(account_id)
+    revoked = repository.revoke_sessions(account_id, now, "TOTP_RESET")
+    finalize_session_revocations(
+        repository,
+        account_id=account_id,
+        revoked_session_ids=revoked,
+        actor=actor,
+        reason="TOTP reset",
+        dependencies=deps,
+        invoke_hook=False,
+    )
+    audit(
+        repository.db,
+        dependencies=deps,
+        actor=actor,
+        action="identity.totp.reset",
+        target_type="account",
+        target_id=account_id,
+        result="SUCCESS",
+        reason=_versioned_reason(reason, int(row["version"]), int(updated["version"])),
+    )
+    notify_identity_change(deps.on_auth_change, account_id)
+    return _dto(updated)
+
+
+def record_account_governance_denial(
+    repository: IdentityRepository,
+    *,
+    account_id: str,
+    operation: str,
+    actor: Principal,
+    dependencies: IdentityDependencies,
+) -> None:
+    audit(
+        repository.db,
+        dependencies=dependencies,
+        actor=actor,
+        action=f"identity.account.{operation}",
+        target_type="account",
+        target_id=account_id,
+        result="DENIED",
+        reason="account governance denied",
+    )
 
 
 def consume_temp_password(
@@ -313,7 +436,11 @@ def set_account_status(
         target_type="account",
         target_id=account_id,
         result="SUCCESS",
-        reason=reason,
+        reason=_versioned_reason(
+            reason,
+            int(account["version"]),
+            int(updated["version"]),
+        ),
     )
     notify_identity_change(deps.on_auth_change, account_id)
     return _dto(updated)

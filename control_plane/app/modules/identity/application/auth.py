@@ -410,6 +410,33 @@ def login_password_step(
             repository.save_backoff(employee_no, source, 0, None, None)
             return issued
     material = deps.secret_manager.load()
+    if (
+        account is not None
+        and account["status"] == AccountStatus.PENDING_INIT.value
+        and account["password_hash"] is not None
+        and account["totp_sealed"] is None
+        and account["totp_confirmed_at"] is None
+        and verify_password(password, account["password_hash"], pepper=material.password_pepper)
+    ):
+        issued = issue_session(
+            repository,
+            account_id=str(account["id"]),
+            kind=SessionKind.BOOTSTRAP,
+            bootstrap_purpose=BootstrapPurpose.INITIAL_SETUP,
+            dependencies=deps,
+        )
+        repository.save_backoff(employee_no, source, 0, None, None)
+        audit(
+            db,
+            dependencies=deps,
+            actor=Principal(employee_id=employee_no, name=account["display_name"]),
+            action="identity.login.password",
+            target_type="account",
+            target_id=str(account["id"]),
+            result="SUCCESS",
+            reason="TOTP re-enrollment required",
+        )
+        return issued
     valid = (
         account is not None
         and account["status"] == AccountStatus.ENABLED.value

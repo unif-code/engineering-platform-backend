@@ -17,12 +17,18 @@ from control_plane.app.modules.identity.application.accounts import (
 from control_plane.app.modules.identity.application.accounts import (
     create_account as _create_account,
 )
+from control_plane.app.modules.identity.application.accounts import get_account as _get_account
 from control_plane.app.modules.identity.application.accounts import (
     get_organization_account as _get_organization_account,
 )
 from control_plane.app.modules.identity.application.accounts import (
     issue_temp_password as _issue_temp_password,
 )
+from control_plane.app.modules.identity.application.accounts import list_accounts as _list_accounts
+from control_plane.app.modules.identity.application.accounts import (
+    record_account_governance_denial as _record_account_governance_denial,
+)
+from control_plane.app.modules.identity.application.accounts import reset_totp as _reset_totp
 from control_plane.app.modules.identity.application.accounts import (
     set_account_status as _set_account_status,
 )
@@ -436,6 +442,22 @@ def create_account(
     )
 
 
+def list_accounts(
+    db: Connection,
+    *,
+    after_employee_no: str | None,
+    after_id: str | None,
+    limit: int,
+    dependencies: IdentityDependencies,
+) -> list[AccountDto]:
+    return _list_accounts(
+        dependencies.repository_factory(db),
+        after_employee_no=after_employee_no,
+        after_id=after_id,
+        limit=limit,
+    )
+
+
 def issue_temp_password(
     db: Connection,
     *,
@@ -443,12 +465,59 @@ def issue_temp_password(
     actor: Principal,
     reason: str,
     dependencies: IdentityDependencies,
+    expected_version: int | None = None,
 ) -> str:
     return _issue_temp_password(
         dependencies.repository_factory(db),
         account_id=account_id,
         actor=actor,
         reason=reason,
+        dependencies=dependencies,
+        expected_version=expected_version,
+    )
+
+
+def get_account(
+    db: Connection,
+    *,
+    account_id: str,
+    dependencies: IdentityDependencies,
+) -> AccountDto:
+    return _get_account(dependencies.repository_factory(db), account_id=account_id)
+
+
+def reset_totp(
+    db: Connection,
+    *,
+    account_id: str,
+    expected_version: int,
+    actor: Principal,
+    reason: str,
+    dependencies: IdentityDependencies,
+) -> AccountDto:
+    return _reset_totp(
+        dependencies.repository_factory(db),
+        account_id=account_id,
+        expected_version=expected_version,
+        actor=actor,
+        reason=reason,
+        dependencies=dependencies,
+    )
+
+
+def record_account_governance_denial(
+    db: Connection,
+    *,
+    account_id: str,
+    operation: str,
+    actor: Principal,
+    dependencies: IdentityDependencies,
+) -> None:
+    _record_account_governance_denial(
+        dependencies.repository_factory(db),
+        account_id=account_id,
+        operation=operation,
+        actor=actor,
         dependencies=dependencies,
     )
 
@@ -916,8 +985,12 @@ __all__ = [
     "issue_super_admin_challenge",
     "identity_change_source",
     "get_organization_account",
+    "get_account",
     "login_password_step",
     "login_totp_step",
+    "list_accounts",
+    "record_account_governance_denial",
+    "reset_totp",
     "list_super_admins",
     "logout",
     "revoke_sessions_for",

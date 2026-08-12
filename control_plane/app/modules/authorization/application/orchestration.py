@@ -4,6 +4,7 @@ from typing import Any
 
 from sqlalchemy import Engine
 
+from control_plane.app.modules.authorization.application.common import audit
 from control_plane.app.modules.authorization.application.dependencies import (
     AuthorizationDependencies,
 )
@@ -281,16 +282,30 @@ class SecurityChangeOrchestrator:
             )
             now = self.dependencies.clock.now()
             for account_id in sorted(dict(row["generation_map"])):
-                if (
-                    repository.settle_pending_principal(
-                        work_id,
-                        str(account_id),
-                        bump_version=True,
-                        now=now,
-                    )
-                    is not None
-                ):
-                    converged.add(str(account_id))
+                updated = repository.settle_pending_principal(
+                    work_id,
+                    str(account_id),
+                    bump_version=True,
+                    now=now,
+                )
+                if updated is None:
+                    continue
+                converged.add(str(account_id))
+                audit(
+                    repository,
+                    dependencies=self.dependencies,
+                    actor=str(row["actor"]),
+                    action=f"authorization.{row['source_module']}.converged",
+                    target_type="authorization_principal",
+                    target_id=str(account_id),
+                    result="SUCCESS",
+                    reason=(
+                        f"sourceOperation={row['operation']}; "
+                        f"beforeAuthorizationVersion={updated.before_version}; "
+                        f"afterAuthorizationVersion={updated.after_version}; "
+                        f"authorizationVersion={updated.after_version}"
+                    ),
+                )
             repository.complete_convergence_work(work_id, now)
         return converged
 

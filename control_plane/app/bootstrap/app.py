@@ -50,6 +50,7 @@ from control_plane.app.modules.identity.adapters.runtime import (
     SystemRandom,
 )
 from control_plane.app.modules.identity.adapters.sqlalchemy import SqlAlchemyIdentityRepository
+from control_plane.app.modules.identity.api.admin_routes import create_admin_account_router
 from control_plane.app.modules.identity.api.auth_routes import (
     IdentityHttpRuntime,
     create_auth_router,
@@ -389,6 +390,13 @@ def create_app(
     app.include_router(create_auth_router(identity_runtime_provider))
     app.include_router(create_authorization_router(authorization_http_runtime))
     protected_principal = current_principal(authorization_http_runtime)
+    app.include_router(
+        create_admin_account_router(
+            identity_runtime_provider,
+            cast(Callable[[], Any], protected_principal),
+            authorization_capability_guard,
+        )
+    )
     app.include_router(
         create_super_admin_router(
             identity_runtime_provider,
