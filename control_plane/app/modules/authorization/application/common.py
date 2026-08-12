@@ -64,6 +64,7 @@ def audit(
     target_id: str,
     result: str,
     reason: str,
+    correlation_id: str | None = None,
 ) -> None:
     record_in_transaction(
         repository.db,
@@ -71,13 +72,15 @@ def audit(
             id=str(dependencies.random.uuid4()),
             occurred_at=dependencies.clock.now(),
             actor=actor,
-            actor_type="HUMAN" if actor != "SYSTEM" else "SYSTEM",
+            actor_type="SYSTEM" if actor == "SYSTEM" or actor.startswith("SYSTEM_") else "HUMAN",
             action=action,
             target_type=target_type,
             target_id=target_id,
             result=result,
             reason=reason,
-            correlation_id=current_request_id() or str(dependencies.random.uuid4()),
+            correlation_id=correlation_id
+            or current_request_id()
+            or str(dependencies.random.uuid4()),
         ),
         dependencies.audit,
     )

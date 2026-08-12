@@ -41,6 +41,10 @@ class AuthorizationRepository(Protocol):
 
     def list_grants(self) -> list[Any]: ...
 
+    def lock_initial_provisioning(self) -> None: ...
+
+    def any_grants(self) -> bool: ...
+
     def effective_grants(
         self,
         *,

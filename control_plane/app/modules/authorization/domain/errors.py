@@ -6,6 +6,10 @@ class InvalidGrant(AuthorizationError):
     pass
 
 
+class InitialProvisioningDenied(AuthorizationError):
+    pass
+
+
 class GrantNotFound(AuthorizationError):
     pass
 

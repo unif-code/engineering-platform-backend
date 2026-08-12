@@ -3,6 +3,7 @@ from .errors import (
     AuthorizationError,
     AuthorizationUnavailable,
     GrantNotFound,
+    InitialProvisioningDenied,
     InvalidGrant,
     StaleGrantVersion,
 )
@@ -31,6 +32,7 @@ __all__ = [
     "GrantDto",
     "GrantNotFound",
     "GrantStatus",
+    "InitialProvisioningDenied",
     "InvalidGrant",
     "PLATFORM_CONFIGURATION_MANAGE",
     "PLATFORM_SUPER_ADMIN_MANAGE",

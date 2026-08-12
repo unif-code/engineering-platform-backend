@@ -107,6 +107,21 @@ class SqlAlchemyAuthorizationRepository:
             ).mappings()
         )
 
+    def lock_initial_provisioning(self) -> None:
+        self.db.execute(
+            text(
+                "SELECT pg_advisory_xact_lock("
+                "hashtextextended('authorization.initial_admin_provisioning', 0))"
+            )
+        )
+
+    def any_grants(self) -> bool:
+        return bool(
+            self.db.execute(
+                text('SELECT EXISTS (SELECT 1 FROM "authorization"."grant")')
+            ).scalar_one()
+        )
+
     def effective_grants(
         self,
         *,

@@ -8,6 +8,7 @@ from control_plane.app.modules.authorization.application.common import audit
 from control_plane.app.modules.authorization.application.dependencies import (
     AuthorizationDependencies,
 )
+from control_plane.app.shared.api.request_id import current_request_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -304,6 +305,13 @@ class SecurityChangeOrchestrator:
                         f"beforeAuthorizationVersion={updated.before_version}; "
                         f"afterAuthorizationVersion={updated.after_version}; "
                         f"authorizationVersion={updated.after_version}"
+                    ),
+                    correlation_id=(
+                        f"cli-{str(row['idempotency_key'])[:32]}"
+                        if str(row["source_module"]) == "identity"
+                        and str(row["actor"]).startswith("SYSTEM_")
+                        and str(row["operation"]).endswith("_cli")
+                        else current_request_id()
                     ),
                 )
             repository.complete_convergence_work(work_id, now)

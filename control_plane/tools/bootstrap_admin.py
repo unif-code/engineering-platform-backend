@@ -8,6 +8,11 @@ from typing import Any, TextIO
 from sqlalchemy import Engine, text
 
 import control_plane.app.modules.identity as identity
+from control_plane.app.modules.authorization import (
+    AuthorizationDependencies,
+    InitialProvisioningDenied,
+    provision_initial_admin_grants,
+)
 from control_plane.app.modules.identity import IdentityDependencies
 
 
@@ -20,8 +25,16 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _runtime() -> tuple[Engine, IdentityDependencies, Any]:
+def _runtime() -> tuple[
+    Engine,
+    IdentityDependencies,
+    Any,
+    Engine,
+    AuthorizationDependencies,
+]:
     from control_plane.app.bootstrap.app import (
+        authorization_dependencies,
+        authorization_runtime_engine,
         identity_dependencies,
         identity_runtime_engine,
         security_change_orchestrator,
@@ -31,6 +44,8 @@ def _runtime() -> tuple[Engine, IdentityDependencies, Any]:
         identity_runtime_engine(),
         identity_dependencies(),
         security_change_orchestrator(),
+        authorization_runtime_engine(),
+        authorization_dependencies(),
     )
 
 
@@ -81,6 +96,8 @@ def main(
     engine: Engine | None = None,
     dependencies: IdentityDependencies | None = None,
     security_changes: Any = None,
+    authorization_engine: Engine | None = None,
+    authorization_dependencies: AuthorizationDependencies | None = None,
     stdout: TextIO | None = None,
     stderr: TextIO | None = None,
 ) -> int:
@@ -88,11 +105,26 @@ def main(
     output = stdout or sys.stdout
     evidence = stderr or sys.stderr
     if engine is None or dependencies is None:
-        runtime_engine, runtime_dependencies, runtime_security_changes = _runtime()
+        (
+            runtime_engine,
+            runtime_dependencies,
+            runtime_security_changes,
+            runtime_authorization_engine,
+            runtime_authorization_dependencies,
+        ) = _runtime()
         engine = engine or runtime_engine
         dependencies = dependencies or runtime_dependencies
         if security_changes is None:
             security_changes = runtime_security_changes
+        authorization_engine = authorization_engine or runtime_authorization_engine
+        authorization_dependencies = (
+            authorization_dependencies or runtime_authorization_dependencies
+        )
+    elif authorization_engine is None or authorization_dependencies is None:
+        # Tests and embedded callers may intentionally exercise the Identity-only
+        # primitive. The real CLI runtime always supplies both authorization values.
+        authorization_engine = None
+        authorization_dependencies = None
 
     execution = None
     commit_attempted = False
@@ -160,15 +192,6 @@ def main(
                     },
                 )
                 return 0
-        _write_evidence_safely(
-            evidence,
-            {
-                "event": "super_admin_bootstrap",
-                "result": "SUCCESS",
-                "employeeNo": args.employee_no,
-                "commandId": execution.correlation_id,
-            },
-        )
     except (ValueError, identity.SuperAdminBootstrapConflict):
         if commit_attempted:
             _write_evidence_safely(
@@ -211,6 +234,56 @@ def main(
             # The committed bootstrap is protected by the persistent fail-closed
             # fence; a non-zero exit would incorrectly invite a second bootstrap.
             pass
+    if (
+        execution is not None
+        and authorization_engine is not None
+        and authorization_dependencies is not None
+    ):
+        provisioning_denial: InitialProvisioningDenied | None = None
+        try:
+            with authorization_engine.begin() as db:
+                try:
+                    provision_initial_admin_grants(
+                        db,
+                        principal_id=execution.account.id,
+                        command_id=execution.correlation_id,
+                        dependencies=authorization_dependencies,
+                    )
+                except InitialProvisioningDenied as error:
+                    # The denial and its idempotency outcome are security evidence.
+                    # Commit them before surfacing the rejected command.
+                    provisioning_denial = error
+        except Exception:
+            _write_evidence_safely(
+                evidence,
+                {
+                    "event": "super_admin_bootstrap",
+                    "result": "FAILED",
+                    "employeeNo": args.employee_no,
+                    "commandId": execution.correlation_id,
+                },
+            )
+            return 4
+        if provisioning_denial is not None:
+            _write_evidence_safely(
+                evidence,
+                {
+                    "event": "super_admin_bootstrap",
+                    "result": "DENIED",
+                    "employeeNo": args.employee_no,
+                    "commandId": execution.correlation_id,
+                },
+            )
+            return 3
+    _write_evidence_safely(
+        evidence,
+        {
+            "event": "super_admin_bootstrap",
+            "result": "SUCCESS",
+            "employeeNo": args.employee_no,
+            "commandId": execution.correlation_id,
+        },
+    )
     return 0
 
 

@@ -36,6 +36,9 @@ from control_plane.app.modules.authorization.application.grants import grant as 
 from control_plane.app.modules.authorization.application.grants import (
     list_grants as _list_grants,
 )
+from control_plane.app.modules.authorization.application.grants import (
+    provision_initial_admin_grants as _provision_initial_admin_grants,
+)
 from control_plane.app.modules.authorization.application.grants import revoke as _revoke
 from control_plane.app.modules.authorization.application.orchestration import (
     SecurityChangeOrchestrator,
@@ -55,6 +58,7 @@ from control_plane.app.modules.authorization.domain import (
     GrantDto,
     GrantNotFound,
     GrantStatus,
+    InitialProvisioningDenied,
     InvalidGrant,
     PrincipalVersionDto,
     Scope,
@@ -76,6 +80,7 @@ def grant(
     source: str = "MANUAL",
     valid_from: datetime | None = None,
     valid_to: datetime | None = None,
+    correlation_id: str | None = None,
 ) -> GrantDto:
     return _grant(
         dependencies.repository_factory(db),
@@ -87,6 +92,22 @@ def grant(
         source=source,
         valid_from=valid_from,
         valid_to=valid_to,
+        correlation_id=correlation_id,
+        dependencies=dependencies,
+    )
+
+
+def provision_initial_admin_grants(
+    db: Connection,
+    *,
+    principal_id: str,
+    command_id: str,
+    dependencies: AuthorizationDependencies,
+) -> list[GrantDto]:
+    return _provision_initial_admin_grants(
+        dependencies.repository_factory(db),
+        principal_id=principal_id,
+        command_id=command_id,
         dependencies=dependencies,
     )
 
@@ -250,6 +271,7 @@ __all__ = [
     "GrantNotFound",
     "GrantStatus",
     "InvalidGrant",
+    "InitialProvisioningDenied",
     "PLATFORM_CONFIGURATION_MANAGE",
     "PLATFORM_SUPER_ADMIN_MANAGE",
     "PrincipalVersionDto",
@@ -270,6 +292,7 @@ __all__ = [
     "mark_fence",
     "principal_version",
     "principal_has_capability",
+    "provision_initial_admin_grants",
     "revoke",
     "resolve_principal",
 ]
