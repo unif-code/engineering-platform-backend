@@ -117,8 +117,16 @@ def _unimplemented() -> None:
 
 
 def _actor(principal: Any) -> Principal:
-    employee_no = getattr(principal, "employee_no", None)
-    display_name = getattr(principal, "display_name", None)
+    employee_no = getattr(principal, "employee_no", None) or getattr(
+        principal,
+        "employee_id",
+        None,
+    )
+    display_name = getattr(principal, "display_name", None) or getattr(
+        principal,
+        "name",
+        None,
+    )
     if not isinstance(employee_no, str) or not isinstance(display_name, str):
         raise HTTPException(status_code=401, detail="Unauthorized")
     return Principal(employee_id=employee_no, name=display_name)
