@@ -39,8 +39,9 @@ Grant 或修改 authorization projection 替代本流程。
 python -m control_plane.tools.bootstrap_admin --employee-no 00000001 --display-name 张三
 ```
 
-成功时退出码为 0，stdout 仅有一行临时密码，stderr 为不含密码的
-`super_admin_bootstrap` JSON 事件。事实变更与 actor 为 `SYSTEM_BOOTSTRAP` 的 Audit 在同一
+成功时退出码为 0，stdout 仅有一行临时密码。stderr 使用 credential-safe JSONL：在数据库提交与
+stdout 凭据交付前，先可靠写入并 flush 带稳定 `commandId` 的 `ATTEMPT`；提交后再写 `SUCCESS`。
+`ATTEMPT` 写入或 flush 不可用时命令 fail closed、回滚且不得输出凭据。事实变更与 actor 为 `SYSTEM_BOOTSTRAP` 的 Audit 在同一
 Identity owner 事务提交；提交后通过持久 authorization convergence 提升版本并撤销不再可信的
 授权缓存。数据库中已有任意 Super Admin 时退出码为 3，且不会创建账号、临时凭据或 Audit。
 
@@ -64,6 +65,10 @@ python -m control_plane.tools.recovery --employee-no <employee-no> --reason <app
 成功会原子地撤销目标全部 Session、清除旧密码/TOTP 初始化状态、签发一次性临时密码并写入
 actor 为 `SYSTEM_RECOVERY` 的 Audit。任何执行前提、数据库事务或 stdout 安全交付失败都会
 回滚；密码写入 stdout 后会在数据库 commit 前显式 flush，缓冲区交付失败不会留下恢复事实。
+在 stdout 之前，CLI 还必须可靠写入并 flush credential-safe `ATTEMPT`；stderr sink 此时不可用同样
+回滚全部事实、不得输出密码并返回 4。提交后的 `SUCCESS`/`OUTCOME_UNKNOWN` 属于终态诊断；若其
+写入失败，不能把已提交或可能已提交的操作报告为非 0，执行人以已持久化的 `ATTEMPT.commandId`
+查询数据库 Audit，并用完全相同参数重放解析幂等结果。
 非 0 退出码表示没有执行恢复。业务前提拒绝时，回滚恢复事务后会用独立短事务追加一条与 stderr
 同 `commandId` 的 `SYSTEM_RECOVERY` `DENIED` Audit；它只含固定 reason code、目标员工号与
 canonical scope，不含命令中的原始 reason 或异常文本。若该拒绝 Audit 自身失败，stderr 仅报告
@@ -80,7 +85,7 @@ authorization 投影暂时不可用时，持久 fence
 | 0 | 命令已提交并交付凭据，或提交结果尚待同参数重放确认 | 已原子提交，或由稳定 command ID 安全解析；绝不把可能已提交的命令报为非 0 |
 | 2 | argparse 结构错误或缺少必填参数 | 未执行 |
 | 3 | 参数值/业务前提不成立 | 恢复未执行；已追加 correlated `DENIED` Audit |
-| 4 | 已确认回滚的事务、stdout 安全输出或 denial Audit 失败 | 已回滚，恢复未执行；stderr 不泄露失败细节 |
+| 4 | 已确认回滚的事务、precommit stderr 证据、stdout 安全输出或 denial Audit 失败 | 已回滚，恢复未执行；stderr 不泄露失败细节 |
 
 ## GitOps 一次性 Job 模板要点
 
@@ -102,8 +107,11 @@ GitOps 仓维护受保护的模板，不在本仓复制生产 YAML。模板至�
 
 ## 执行后验证
 
-1. stderr 应恰有一条对应的结构化事件；它只能包含事件名、结果、员工号、scope、expiry、
-   `reasonCode`、`commandId` 等 credential-safe 字段，不能含临时密码、原始 reason 或异常文本。
+1. 已进入受保护执行的 stderr 通常应有两条同 `commandId` 的结构化 JSONL 事件：提交前已 flush 的
+   `ATTEMPT` 与提交后的 `SUCCESS` 或 `OUTCOME_UNKNOWN`；若终态写入失败，至少必须保留 `ATTEMPT`，
+   并按上文用数据库 Audit 与同参数重放解析。业务前提在执行前被拒绝时仍为单条 `DENIED`。事件只能
+   包含事件名、结果、员工号、scope、expiry、`reasonCode`、`commandId` 等 credential-safe 字段，
+   不能含临时密码、原始 reason 或异常文本。
 2. Audit 中核对 `SYSTEM_BOOTSTRAP` 或 `SYSTEM_RECOVERY`、目标账号、结果、scope 和 expiry。
    denial 只核对固定 reason code，不应出现命令原始 reason；Audit correlation ID 必须与 stderr
    `commandId` 一致。两份证据分别归档。

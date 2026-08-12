@@ -321,7 +321,10 @@ def test_access_governance_closes_the_real_cli_http_grant_and_audit_loop(
     assert exit_code == 0
     temporary_admin_password = stdout.getvalue().strip()
     assert temporary_admin_password
-    bootstrap_evidence = json.loads(stderr.getvalue())
+    bootstrap_evidence_lines = [json.loads(line) for line in stderr.getvalue().splitlines()]
+    assert [item["result"] for item in bootstrap_evidence_lines] == ["ATTEMPT", "SUCCESS"]
+    bootstrap_attempt, bootstrap_evidence = bootstrap_evidence_lines
+    assert bootstrap_attempt["commandId"] == bootstrap_evidence["commandId"]
     assert bootstrap_evidence["result"] == "SUCCESS"
     command_id = bootstrap_evidence["commandId"]
 
@@ -638,8 +641,14 @@ def test_bootstrap_cli_recovers_same_command_after_authorization_outage(
         stderr=replay_stderr,
     )
 
-    first_evidence = json.loads(first_stderr.getvalue())
-    replay_evidence = json.loads(replay_stderr.getvalue())
+    first_evidence_lines = [json.loads(line) for line in first_stderr.getvalue().splitlines()]
+    replay_evidence_lines = [json.loads(line) for line in replay_stderr.getvalue().splitlines()]
+    assert [item["result"] for item in first_evidence_lines] == ["ATTEMPT", "FAILED"]
+    assert [item["result"] for item in replay_evidence_lines] == ["ATTEMPT", "SUCCESS"]
+    first_attempt, first_evidence = first_evidence_lines
+    replay_attempt, replay_evidence = replay_evidence_lines
+    assert first_attempt["commandId"] == first_evidence["commandId"]
+    assert replay_attempt["commandId"] == replay_evidence["commandId"]
     assert first_exit == 4
     assert first_evidence["result"] == "FAILED"
     assert replay_exit == 0

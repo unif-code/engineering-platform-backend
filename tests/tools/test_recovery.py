@@ -38,6 +38,25 @@ class FlushFailingBufferedWriter:
         return self.buffer.getvalue()
 
 
+class FailSecondEvidenceWriter:
+    def __init__(self) -> None:
+        self.buffer = io.StringIO()
+        self.write_calls = 0
+        self.flush_calls = 0
+
+    def write(self, value: str) -> int:
+        self.write_calls += 1
+        if self.write_calls == 2:
+            raise OSError("simulated post-commit evidence failure")
+        return self.buffer.write(value)
+
+    def flush(self) -> None:
+        self.flush_calls += 1
+
+    def getvalue(self) -> str:
+        return self.buffer.getvalue()
+
+
 class UnavailableConvergence:
     def complete(self, _ticket: object) -> None:
         raise RuntimeError("injected convergence outage")
@@ -49,6 +68,10 @@ class UnavailableConvergence:
 class UnavailableAuditAppender:
     def append_in_transaction(self, _db: object, _envelope: object) -> None:
         raise RuntimeError("injected denial Audit outage")
+
+
+def _evidence_lines(writer: object) -> list[dict[str, str]]:
+    return [json.loads(line) for line in writer.getvalue().splitlines()]  # type: ignore[attr-defined]
 
 
 def test_recovery_restricts_last_unavailable_admin_and_atomically_reissues_bootstrap(
@@ -187,9 +210,10 @@ def test_recovery_cli_emits_password_once_and_credential_safe_structured_evidenc
     password_lines = stdout.getvalue().splitlines()
     assert len(password_lines) == 1
     assert len(password_lines[0]) >= 24
-    evidence_lines = stderr.getvalue().splitlines()
-    assert len(evidence_lines) == 1
-    evidence = json.loads(evidence_lines[0])
+    evidence_lines = _evidence_lines(stderr)
+    assert [item["result"] for item in evidence_lines] == ["ATTEMPT", "SUCCESS"]
+    attempt, evidence = evidence_lines
+    assert attempt["commandId"] == evidence["commandId"]
     assert evidence == {
         "event": "super_admin_recovery",
         "result": "SUCCESS",
@@ -684,8 +708,7 @@ def test_recovery_cli_output_failure_rolls_back_all_database_changes(
     )
 
     assert exit_code == 4
-    evidence = json.loads(stderr.getvalue())
-    assert evidence == {"event": "super_admin_recovery", "result": "FAILED"}
+    assert [item["result"] for item in _evidence_lines(stderr)] == ["ATTEMPT", "FAILED"]
     with identity_owner_engine.connect() as db:
         after = (
             db.execute(
@@ -769,10 +792,7 @@ def test_recovery_cli_flush_failure_precedes_commit_and_rolls_back_all_changes(
     assert exit_code == 4
     assert buffered.flush_calls == 1
     assert len(buffered.getvalue().splitlines()) == 1
-    assert json.loads(stderr.getvalue()) == {
-        "event": "super_admin_recovery",
-        "result": "FAILED",
-    }
+    assert [item["result"] for item in _evidence_lines(stderr)] == ["ATTEMPT", "FAILED"]
     with identity_owner_engine.connect() as db:
         after = (
             db.execute(
@@ -822,10 +842,7 @@ def test_bootstrap_cli_flush_failure_precedes_commit_and_leaves_no_partial_state
     assert exit_code == 4
     assert buffered.flush_calls == 1
     assert len(buffered.getvalue().splitlines()) == 1
-    assert json.loads(stderr.getvalue()) == {
-        "event": "super_admin_bootstrap",
-        "result": "FAILED",
-    }
+    assert [item["result"] for item in _evidence_lines(stderr)] == ["ATTEMPT", "FAILED"]
     with identity_owner_engine.connect() as db:
         evidence = (
             db.execute(
@@ -888,7 +905,7 @@ def test_recovery_cli_committed_change_never_reports_nonzero_for_pending_converg
 
     assert exit_code == 0
     assert len(stdout.getvalue().splitlines()) == 1
-    assert json.loads(stderr.getvalue())["result"] == "SUCCESS"
+    assert [item["result"] for item in _evidence_lines(stderr)] == ["ATTEMPT", "SUCCESS"]
     with identity_owner_engine.connect() as db:
         assert (
             db.execute(
@@ -965,8 +982,14 @@ def test_recovery_cli_commit_ack_loss_resolves_claim_and_replays_same_credential
     assert replay_exit == 0
     assert first_stdout.getvalue() == replay_stdout.getvalue()
     assert len(first_stdout.getvalue().splitlines()) == 1
-    assert json.loads(first_stderr.getvalue())["result"] == "SUCCESS"
-    assert json.loads(replay_stderr.getvalue())["result"] == "SUCCESS"
+    assert [item["result"] for item in _evidence_lines(first_stderr)] == [
+        "ATTEMPT",
+        "SUCCESS",
+    ]
+    assert [item["result"] for item in _evidence_lines(replay_stderr)] == [
+        "ATTEMPT",
+        "SUCCESS",
+    ]
     with identity_owner_engine.connect() as db:
         evidence = (
             db.execute(
@@ -1046,7 +1069,10 @@ def test_recovery_cli_commit_ack_loss_and_resolution_outage_never_reports_nonzer
 
     assert exit_code == 0
     assert len(stdout.getvalue().splitlines()) == 1
-    assert json.loads(stderr.getvalue())["result"] == "OUTCOME_UNKNOWN"
+    assert [item["result"] for item in _evidence_lines(stderr)] == [
+        "ATTEMPT",
+        "OUTCOME_UNKNOWN",
+    ]
     with identity_owner_engine.connect() as db:
         assert (
             db.execute(
@@ -1056,7 +1082,7 @@ def test_recovery_cli_commit_ack_loss_and_resolution_outage_never_reports_nonzer
         )
 
 
-def test_recovery_cli_committed_change_ignores_stderr_delivery_failure(
+def test_recovery_cli_stderr_evidence_failure_precedes_output_and_rolls_back(
     clean_identity_db: None,
     identity_rw_engine: Engine,
     identity_owner_engine: Engine,
@@ -1096,15 +1122,105 @@ def test_recovery_cli_committed_change_ignores_stderr_delivery_failure(
         stderr=FailingWriter(),
     )
 
-    assert exit_code == 0
-    assert len(stdout.getvalue().splitlines()) == 1
+    assert exit_code == 4
+    assert stdout.getvalue() == ""
     with identity_owner_engine.connect() as db:
-        assert (
-            db.execute(
-                text("SELECT status FROM identity.account WHERE employee_no='00000001'")
-            ).scalar_one()
-            == "PENDING_INIT"
+        evidence = db.execute(
+            text(
+                "SELECT "
+                "(SELECT status FROM identity.account WHERE employee_no='00000001') AS status, "
+                "(SELECT count(*) FROM identity.temp_credential "
+                "WHERE consumed_at IS NULL) AS active_temps, "
+                "(SELECT count(*) FROM identity.idempotency_record "
+                "WHERE operation='super_admin_recovery_cli') AS claims, "
+                "(SELECT count(*) FROM audit.audit_event "
+                "WHERE action='identity.super_admin.recovered') AS recoveries"
+            )
+        ).one()
+    assert evidence == ("DISABLED", 0, 0, 0)
+
+
+def test_recovery_cli_postcommit_evidence_failure_keeps_attempt_and_replays(
+    clean_identity_db: None,
+    identity_rw_engine: Engine,
+    identity_owner_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dependencies = identity_dependencies()
+    _secret, _old_session = _initialize_account(
+        identity_rw_engine,
+        dependencies,
+        monkeypatch,
+    )
+    with identity_owner_engine.begin() as db:
+        db.execute(
+            text(
+                "UPDATE identity.account SET is_super_admin=true, status='DISABLED', "
+                "version=version+1"
+            )
         )
+    argv = [
+        "--employee-no",
+        "00000001",
+        "--reason",
+        "approved incident INC-1008",
+        "--scope",
+        "SUPER_ADMIN_AUTHENTICATION",
+        "--expires-at",
+        "2026-01-01T00:15:00+00:00",
+    ]
+    recovery_cli = importlib.import_module("control_plane.tools.recovery")
+    first_stdout = io.StringIO()
+    first_stderr = FailSecondEvidenceWriter()
+
+    first_exit = recovery_cli.main(
+        argv,
+        engine=identity_rw_engine,
+        dependencies=dependencies,
+        security_changes=None,
+        stdout=first_stdout,
+        stderr=first_stderr,
+    )
+
+    first_evidence = _evidence_lines(first_stderr)
+    attempt, outcome = first_evidence
+    assert first_exit == 0
+    assert first_stderr.flush_calls == 2
+    assert [item["result"] for item in first_evidence] == ["ATTEMPT", "OUTCOME_UNKNOWN"]
+    assert outcome["commandId"] == attempt["commandId"]
+    assert attempt == {
+        "event": "super_admin_recovery",
+        "result": "ATTEMPT",
+        "employeeNo": "00000001",
+        "scope": "SUPER_ADMIN_AUTHENTICATION",
+        "expiresAt": "2026-01-01T00:15:00+00:00",
+        "commandId": attempt["commandId"],
+    }
+    with identity_owner_engine.connect() as db:
+        committed = db.execute(
+            text(
+                "SELECT a.status, e.correlation_id FROM identity.account a "
+                "JOIN audit.audit_event e ON e.target_id=a.id::text "
+                "WHERE a.employee_no='00000001' "
+                "AND e.action='identity.super_admin.recovered'"
+            )
+        ).one()
+    assert committed == ("PENDING_INIT", attempt["commandId"])
+
+    replay_stdout, replay_stderr = io.StringIO(), io.StringIO()
+    replay_exit = recovery_cli.main(
+        argv,
+        engine=identity_rw_engine,
+        dependencies=dependencies,
+        security_changes=None,
+        stdout=replay_stdout,
+        stderr=replay_stderr,
+    )
+    replay_evidence = _evidence_lines(replay_stderr)
+    assert replay_exit == 0
+    assert replay_stdout.getvalue() == first_stdout.getvalue()
+    assert [item["result"] for item in replay_evidence] == ["ATTEMPT", "SUCCESS"]
+    assert {item["commandId"] for item in replay_evidence} == {attempt["commandId"]}
 
 
 def test_bootstrap_cli_succeeds_once_and_never_persists_plaintext_password(
@@ -1131,13 +1247,22 @@ def test_bootstrap_cli_succeeds_once_and_never_persists_plaintext_password(
     assert len(password_lines) == 1
     temporary_password = password_lines[0]
     assert len(temporary_password) >= 24
-    assert json.loads(stderr.getvalue()) == {
+    evidence = _evidence_lines(stderr)
+    assert [item["result"] for item in evidence] == ["ATTEMPT", "SUCCESS"]
+    attempt, success = evidence
+    assert attempt == {
+        "event": "super_admin_bootstrap",
+        "result": "ATTEMPT",
+        "employeeNo": "00000001",
+        "commandId": success["commandId"],
+    }
+    assert success == {
         "event": "super_admin_bootstrap",
         "result": "SUCCESS",
         "employeeNo": "00000001",
-        "commandId": json.loads(stderr.getvalue())["commandId"],
+        "commandId": success["commandId"],
     }
-    command_id = json.loads(stderr.getvalue())["commandId"]
+    command_id = success["commandId"]
     assert command_id.startswith("cli-")
     second_stdout = io.StringIO()
     second_stderr = io.StringIO()
@@ -1227,8 +1352,14 @@ def test_bootstrap_cli_commit_ack_loss_resolves_claim_and_replays_same_credentia
     assert replay_exit == 0
     assert first_stdout.getvalue() == replay_stdout.getvalue()
     assert len(first_stdout.getvalue().splitlines()) == 1
-    assert json.loads(first_stderr.getvalue())["result"] == "SUCCESS"
-    assert json.loads(replay_stderr.getvalue())["result"] == "SUCCESS"
+    assert [item["result"] for item in _evidence_lines(first_stderr)] == [
+        "ATTEMPT",
+        "SUCCESS",
+    ]
+    assert [item["result"] for item in _evidence_lines(replay_stderr)] == [
+        "ATTEMPT",
+        "SUCCESS",
+    ]
     with identity_owner_engine.connect() as db:
         evidence = (
             db.execute(
@@ -1287,7 +1418,10 @@ def test_bootstrap_cli_commit_ack_loss_and_resolution_outage_never_reports_nonze
 
     assert exit_code == 0
     assert len(stdout.getvalue().splitlines()) == 1
-    assert json.loads(stderr.getvalue())["result"] == "OUTCOME_UNKNOWN"
+    assert [item["result"] for item in _evidence_lines(stderr)] == [
+        "ATTEMPT",
+        "OUTCOME_UNKNOWN",
+    ]
     with identity_owner_engine.connect() as db:
         assert (
             db.execute(
@@ -1297,7 +1431,7 @@ def test_bootstrap_cli_commit_ack_loss_and_resolution_outage_never_reports_nonze
         )
 
 
-def test_bootstrap_cli_committed_change_ignores_stderr_delivery_failure(
+def test_bootstrap_cli_stderr_evidence_failure_precedes_output_and_rolls_back(
     clean_identity_db: None,
     identity_rw_engine: Engine,
     identity_owner_engine: Engine,
@@ -1315,12 +1449,75 @@ def test_bootstrap_cli_committed_change_ignores_stderr_delivery_failure(
         stderr=FailingWriter(),
     )
 
-    assert exit_code == 0
-    assert len(stdout.getvalue().splitlines()) == 1
+    assert exit_code == 4
+    assert stdout.getvalue() == ""
     with identity_owner_engine.connect() as db:
-        assert (
-            db.execute(
-                text("SELECT count(*) FROM identity.account WHERE is_super_admin=true")
-            ).scalar_one()
-            == 1
-        )
+        evidence = db.execute(
+            text(
+                "SELECT "
+                "(SELECT count(*) FROM identity.account) AS accounts, "
+                "(SELECT count(*) FROM identity.temp_credential) AS temps, "
+                "(SELECT count(*) FROM identity.idempotency_record) AS claims, "
+                "(SELECT count(*) FROM audit.audit_event) AS audits"
+            )
+        ).one()
+    assert evidence == (0, 0, 0, 0)
+
+
+def test_bootstrap_cli_postcommit_evidence_failure_keeps_attempt_and_replays(
+    clean_identity_db: None,
+    identity_rw_engine: Engine,
+    identity_owner_engine: Engine,
+) -> None:
+    dependencies = identity_dependencies()
+    argv = ["--employee-no", "00000001", "--display-name", "Alice"]
+    bootstrap_cli = importlib.import_module("control_plane.tools.bootstrap_admin")
+    first_stdout = io.StringIO()
+    first_stderr = FailSecondEvidenceWriter()
+
+    first_exit = bootstrap_cli.main(
+        argv,
+        engine=identity_rw_engine,
+        dependencies=dependencies,
+        security_changes=None,
+        stdout=first_stdout,
+        stderr=first_stderr,
+    )
+
+    first_evidence = _evidence_lines(first_stderr)
+    attempt, outcome = first_evidence
+    assert first_exit == 0
+    assert first_stderr.flush_calls == 2
+    assert [item["result"] for item in first_evidence] == ["ATTEMPT", "OUTCOME_UNKNOWN"]
+    assert outcome["commandId"] == attempt["commandId"]
+    assert attempt == {
+        "event": "super_admin_bootstrap",
+        "result": "ATTEMPT",
+        "employeeNo": "00000001",
+        "commandId": attempt["commandId"],
+    }
+    with identity_owner_engine.connect() as db:
+        committed = db.execute(
+            text(
+                "SELECT a.status, e.correlation_id FROM identity.account a "
+                "JOIN audit.audit_event e ON e.target_id=a.id::text "
+                "WHERE a.employee_no='00000001' "
+                "AND e.action='identity.super_admin.bootstrapped'"
+            )
+        ).one()
+    assert committed == ("PENDING_INIT", attempt["commandId"])
+
+    replay_stdout, replay_stderr = io.StringIO(), io.StringIO()
+    replay_exit = bootstrap_cli.main(
+        argv,
+        engine=identity_rw_engine,
+        dependencies=dependencies,
+        security_changes=None,
+        stdout=replay_stdout,
+        stderr=replay_stderr,
+    )
+    replay_evidence = _evidence_lines(replay_stderr)
+    assert replay_exit == 0
+    assert replay_stdout.getvalue() == first_stdout.getvalue()
+    assert [item["result"] for item in replay_evidence] == ["ATTEMPT", "SUCCESS"]
+    assert {item["commandId"] for item in replay_evidence} == {attempt["commandId"]}

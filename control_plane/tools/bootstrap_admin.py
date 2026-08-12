@@ -51,6 +51,7 @@ def _runtime() -> tuple[
 
 def _write_evidence(evidence: TextIO, payload: dict[str, str]) -> None:
     evidence.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
+    evidence.flush()
 
 
 def _write_evidence_safely(evidence: TextIO, payload: dict[str, str]) -> None:
@@ -60,6 +61,20 @@ def _write_evidence_safely(evidence: TextIO, payload: dict[str, str]) -> None:
         # Evidence delivery cannot make a possibly committed credential change
         # look unexecuted. The database Audit remains the authoritative fact.
         pass
+
+
+def _write_committed_evidence(evidence: TextIO, payload: dict[str, str]) -> None:
+    try:
+        _write_evidence(evidence, payload)
+    except Exception:
+        _write_evidence_safely(
+            evidence,
+            {
+                "event": payload["event"],
+                "result": "OUTCOME_UNKNOWN",
+                "commandId": payload["commandId"],
+            },
+        )
 
 
 def _resolve_committed(
@@ -143,6 +158,15 @@ def main(
                     display_name=args.display_name,
                     source_transaction_id=source_transaction_id,
                     dependencies=dependencies,
+                )
+                _write_evidence(
+                    evidence,
+                    {
+                        "event": "super_admin_bootstrap",
+                        "result": "ATTEMPT",
+                        "employeeNo": args.employee_no,
+                        "commandId": execution.correlation_id,
+                    },
                 )
                 output.write(f"{execution.temporary_password}\n")
                 output.flush()
@@ -275,7 +299,7 @@ def main(
                 },
             )
             return 3
-    _write_evidence_safely(
+    _write_committed_evidence(
         evidence,
         {
             "event": "super_admin_bootstrap",
