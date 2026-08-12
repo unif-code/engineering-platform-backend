@@ -748,10 +748,10 @@ def test_configuration_rw_has_only_publish_and_archive_table_privileges(
     assert table_privileges == {
         "policy_key": {"SELECT"},
         "draft": {"SELECT", "INSERT", "UPDATE"},
-        "version": {"SELECT", "INSERT"},
-        "active_pointer": {"SELECT", "UPDATE"},
+        "version": {"SELECT"},
+        "active_pointer": {"SELECT"},
         "configuration_idempotency_record": {"SELECT", "INSERT", "UPDATE"},
-        "configuration_outbox": {"SELECT", "INSERT"},
+        "configuration_outbox": {"INSERT"},
         "auth_challenge": set(),
     }
     assert audit_dml == set()
@@ -781,6 +781,44 @@ def test_configuration_runtime_cannot_directly_read_identity_credentials_or_chal
     with configuration_rw_engine.connect() as db:
         with pytest.raises(ProgrammingError, match="permission denied"):
             db.execute(text(query)).all()
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        (
+            "INSERT INTO identity.version ("
+            "namespace, scope, version, snapshot, changeset, published_by, reason, "
+            "published_at, schema_revision, snapshot_hash, validation_evidence, "
+            "dependency_versions, preview_evidence) "
+            "SELECT namespace, scope, 999999, snapshot, changeset, published_by, reason, "
+            "published_at, schema_revision, snapshot_hash, validation_evidence, "
+            "dependency_versions, preview_evidence FROM identity.version "
+            "WHERE namespace='identity' AND scope='PLATFORM' AND version=1"
+        ),
+        (
+            "UPDATE identity.active_pointer SET version=version "
+            "WHERE namespace='identity' AND scope='PLATFORM'"
+        ),
+        "SELECT id FROM identity.configuration_outbox LIMIT 1",
+        "UPDATE identity.version SET reason=reason WHERE false",
+        "DELETE FROM identity.version WHERE false",
+    ],
+    ids=[
+        "version-insert",
+        "active-pointer-update",
+        "outbox-select",
+        "version-update",
+        "version-delete",
+    ],
+)
+def test_configuration_runtime_cannot_bypass_identity_owner_publication(
+    configuration_rw_engine: Engine,
+    query: str,
+) -> None:
+    with configuration_rw_engine.connect() as db:
+        with pytest.raises(ProgrammingError, match="permission denied"):
+            db.execute(text(query))
 
 
 def test_configuration_rw_cannot_delete_or_create_identity_objects(

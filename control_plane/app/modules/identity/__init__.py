@@ -1,6 +1,6 @@
 """Public identity facade; other modules must not import identity internals."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Literal
 
 from sqlalchemy import Connection
@@ -36,6 +36,9 @@ from control_plane.app.modules.identity.application.auth import (
 )
 from control_plane.app.modules.identity.application.auth import (
     login_totp_step as _login_totp_step,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
+    active_policy_archive_settings as _active_policy_archive_settings,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
     active_policy_snapshot as _active_policy_snapshot,
@@ -310,6 +313,16 @@ def active_policy_snapshot(db: Connection, namespace: str) -> OwnedPolicySnapsho
 
 def locked_active_policy_snapshot(db: Connection, namespace: str) -> OwnedPolicySnapshot:
     return _locked_active_policy_snapshot(
+        SqlAlchemyIdentityPolicyOwnerRepository(db),
+        namespace,
+    )
+
+
+def active_policy_archive_settings(
+    db: Connection,
+    namespace: str,
+) -> tuple[OwnedPolicySnapshot, timedelta]:
+    return _active_policy_archive_settings(
         SqlAlchemyIdentityPolicyOwnerRepository(db),
         namespace,
     )
@@ -889,6 +902,7 @@ __all__ = [
     "preview_policy_candidate",
     "save_policy_draft_preview",
     "save_policy_draft_validation",
+    "active_policy_archive_settings",
     "update_policy_draft",
     "validate_policy_candidate",
     "confirm_totp",

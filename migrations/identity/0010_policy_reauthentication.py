@@ -16,6 +16,9 @@ _CHALLENGE_UPDATE_COLUMNS = "attempt_count, revoked_at, consumed_at"
 
 
 def upgrade() -> None:
+    op.execute("REVOKE INSERT ON identity.version FROM configuration_rw")
+    op.execute("REVOKE UPDATE ON identity.active_pointer FROM configuration_rw")
+    op.execute("REVOKE SELECT ON identity.configuration_outbox FROM configuration_rw")
     op.execute("REVOKE SELECT ON identity.account FROM configuration_rw")
     op.execute(
         "REVOKE UPDATE (totp_last_step, updated_at) ON identity.account FROM configuration_rw"
@@ -47,6 +50,9 @@ def downgrade() -> None:
     op.execute("REVOKE UPDATE ON identity.active_pointer FROM identity_rw")
     op.execute("REVOKE INSERT ON identity.version FROM identity_rw")
     op.execute("REVOKE SELECT, INSERT, UPDATE ON identity.draft FROM identity_rw")
+    op.execute("GRANT INSERT ON identity.version TO configuration_rw")
+    op.execute("GRANT UPDATE ON identity.active_pointer TO configuration_rw")
+    op.execute("GRANT SELECT ON identity.configuration_outbox TO configuration_rw")
     op.execute("GRANT SELECT ON identity.account TO configuration_rw")
     op.execute("GRANT UPDATE (totp_last_step, updated_at) ON identity.account TO configuration_rw")
     op.execute("GRANT SELECT ON identity.auth_challenge TO configuration_rw")

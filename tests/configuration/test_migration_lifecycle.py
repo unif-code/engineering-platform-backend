@@ -166,3 +166,35 @@ def test_all_migrations_downgrade_and_fresh_reupgrade_cleanly(
         } <= set(inspect(engine).get_table_names(schema="identity"))
     finally:
         engine.dispose()
+
+
+def test_identity_0010_downgrade_restores_0009_configuration_publish_privileges(
+    fresh_configuration_database_url: str,
+) -> None:
+    config = _config(fresh_configuration_database_url)
+    command.upgrade(config, "0010_identity_policy_reauth")
+    engine = create_engine(fresh_configuration_database_url)
+    try:
+
+        def configuration_privileges() -> tuple[bool, bool, bool]:
+            with engine.connect() as db:
+                values = db.execute(
+                    text(
+                        "SELECT "
+                        "has_table_privilege('configuration_rw', 'identity.version', "
+                        "'INSERT'), "
+                        "has_table_privilege('configuration_rw', "
+                        "'identity.active_pointer', 'UPDATE'), "
+                        "has_table_privilege('configuration_rw', "
+                        "'identity.configuration_outbox', 'SELECT')"
+                    )
+                ).one()
+                return bool(values[0]), bool(values[1]), bool(values[2])
+
+        assert configuration_privileges() == (False, False, False)
+        command.downgrade(config, "0009_identity_policy_publish")
+        assert configuration_privileges() == (True, True, True)
+        command.upgrade(config, "0010_identity_policy_reauth")
+        assert configuration_privileges() == (False, False, False)
+    finally:
+        engine.dispose()

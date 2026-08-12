@@ -16,7 +16,10 @@ class PolicyOwnerPort(Protocol):
 
     def active_snapshot(self, namespace: str) -> PolicySnapshot: ...
 
-    def locked_active_snapshot(self, namespace: str) -> PolicySnapshot: ...
+    def active_archive_settings(
+        self,
+        namespace: str,
+    ) -> tuple[PolicySnapshot, timedelta]: ...
 
     def version_snapshot(
         self,
@@ -83,8 +86,6 @@ class PolicyOwnerPort(Protocol):
         evidence: dict[str, Any],
         dependency_versions: dict[str, Any],
     ) -> Draft | None: ...
-
-    def draft_archive_after(self, namespace: str) -> timedelta: ...
 
     def archive_candidates(
         self,

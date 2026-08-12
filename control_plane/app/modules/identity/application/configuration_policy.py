@@ -1,6 +1,6 @@
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from control_plane.app.modules.identity.domain.configuration_policy import (
@@ -190,6 +190,14 @@ def locked_active_policy_snapshot(
     namespace: str,
 ) -> OwnedPolicySnapshot:
     return _active_policy_and_effective(repository, namespace, for_update=True)[0]
+
+
+def active_policy_archive_settings(
+    repository: IdentityPolicyOwnerRepository,
+    namespace: str,
+) -> tuple[OwnedPolicySnapshot, timedelta]:
+    snapshot, policy = _active_policy_and_effective(repository, namespace)
+    return snapshot, policy.draft_archive_after
 
 
 def policy_version_snapshot(

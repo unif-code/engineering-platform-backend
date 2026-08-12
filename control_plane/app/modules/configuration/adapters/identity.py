@@ -14,6 +14,7 @@ from control_plane.app.modules.configuration.domain import (
 )
 from control_plane.app.modules.identity import (
     OwnedPolicySnapshotUnavailable,
+    active_policy_archive_settings,
     active_policy_snapshot,
     archive_policy_candidates,
     archive_policy_draft,
@@ -21,9 +22,7 @@ from control_plane.app.modules.identity import (
     complete_configuration_idempotency,
     configuration_idempotency_by_scope,
     create_policy_draft,
-    effective_identity_policy,
     list_policy_versions,
-    locked_active_policy_snapshot,
     policy_catalog,
     policy_draft,
     policy_version_snapshot,
@@ -90,12 +89,15 @@ class IdentityPolicyOwner:
             raise PolicySnapshotUnavailable(namespace) from exc
         return PolicySnapshot.model_validate(owned.model_dump())
 
-    def locked_active_snapshot(self, namespace: str) -> PolicySnapshot:
+    def active_archive_settings(
+        self,
+        namespace: str,
+    ) -> tuple[PolicySnapshot, timedelta]:
         try:
-            owned = locked_active_policy_snapshot(self.db, namespace)
+            owned, archive_after = active_policy_archive_settings(self.db, namespace)
         except OwnedPolicySnapshotUnavailable as exc:
             raise PolicySnapshotUnavailable(namespace) from exc
-        return PolicySnapshot.model_validate(owned.model_dump())
+        return PolicySnapshot.model_validate(owned.model_dump()), archive_after
 
     def version_snapshot(
         self,
@@ -231,12 +233,6 @@ class IdentityPolicyOwner:
             dependency_versions=dependency_versions,
         )
         return None if owned is None else self._draft(owned)
-
-    def draft_archive_after(self, namespace: str) -> timedelta:
-        try:
-            return effective_identity_policy(self.db, namespace).draft_archive_after
-        except OwnedPolicySnapshotUnavailable as exc:
-            raise PolicySnapshotUnavailable(namespace) from exc
 
     def archive_candidates(
         self,

@@ -21,9 +21,9 @@ def archive_stale_drafts(
     namespace: str = "identity",
     scope: str = "PLATFORM",
 ) -> int:
-    # Keep the policy version and its typed archive interval bound for this run.
-    active = owner.locked_active_snapshot(namespace)
-    cutoff = now - owner.draft_archive_after(namespace)
+    # Identity materializes the version and interval from one active snapshot.
+    active, archive_after = owner.active_archive_settings(namespace)
+    cutoff = now - archive_after
     archived_count = 0
     while True:
         candidates = owner.archive_candidates(

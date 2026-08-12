@@ -12,7 +12,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
-from sqlalchemy.exc import ProgrammingError
 
 from control_plane.app.modules.audit.adapters.transactional import (
     SqlAlchemyTransactionalAuditAppender,
@@ -91,60 +90,6 @@ def _delete_policy_admin(owner_engine: Engine, actor_id: str) -> None:
             text("DELETE FROM identity.account WHERE id=:actor_id"),
             {"actor_id": actor_id},
         )
-
-
-@pytest.mark.integration
-def test_configuration_runtime_can_insert_but_cannot_mutate_published_versions(
-    configuration_rw_engine: Engine,
-    configuration_seed: None,
-) -> None:
-    del configuration_seed
-    snapshot = {"identity.session_idle_timeout": 60}
-    values = {
-        "snapshot": json.dumps(snapshot, separators=(",", ":")),
-        "changeset": json.dumps({"items": []}, separators=(",", ":")),
-        "validation": json.dumps({"valid": True}, separators=(",", ":")),
-        "dependencies": json.dumps({}, separators=(",", ":")),
-        "preview": json.dumps({"items": []}, separators=(",", ":")),
-    }
-
-    with configuration_rw_engine.connect() as db:
-        transaction = db.begin()
-        try:
-            db.execute(
-                text(
-                    "INSERT INTO identity.version ("
-                    "namespace, scope, version, snapshot, changeset, published_by, reason, "
-                    "published_at, schema_revision, snapshot_hash, validation_evidence, "
-                    "dependency_versions, preview_evidence"
-                    ") VALUES ("
-                    "'identity', 'PLATFORM', 999999, CAST(:snapshot AS JSONB), "
-                    "CAST(:changeset AS JSONB), 'permission-test', 'permission test', now(), "
-                    "1, repeat('a', 64), CAST(:validation AS JSONB), "
-                    "CAST(:dependencies AS JSONB), CAST(:preview AS JSONB))"
-                ),
-                values,
-            )
-            nested = db.begin_nested()
-            with pytest.raises(ProgrammingError):
-                db.execute(
-                    text(
-                        "UPDATE identity.version SET reason='mutated' "
-                        "WHERE namespace='identity' AND scope='PLATFORM' AND version=999999"
-                    )
-                )
-            nested.rollback()
-            nested = db.begin_nested()
-            with pytest.raises(ProgrammingError):
-                db.execute(
-                    text(
-                        "DELETE FROM identity.version WHERE namespace='identity' "
-                        "AND scope='PLATFORM' AND version=999999"
-                    )
-                )
-            nested.rollback()
-        finally:
-            transaction.rollback()
 
 
 @pytest.mark.integration
