@@ -245,6 +245,7 @@ def configuration_dependencies() -> ConfigurationDependencies:
         clock=SystemClock(),
         random=SystemRandom(),
         audit=SqlAlchemyTransactionalAuditAppender(),
+        identity=identity_dependencies(),
     )
 
 

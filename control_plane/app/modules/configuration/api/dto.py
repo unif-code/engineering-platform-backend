@@ -8,6 +8,9 @@ from control_plane.app.modules.configuration.domain import (
     DraftValidation,
     PolicyKey,
     PolicySnapshot,
+    Preview,
+    PreviewItem,
+    PublishedVersion,
     ValidationIssue,
 )
 from control_plane.app.shared.api.camel import CamelModel
@@ -56,6 +59,18 @@ class ValidateDraftRequestDto(CamelModel):
     pass
 
 
+class PublishDraftRequestDto(CamelModel):
+    reason: str = Field(min_length=1, max_length=1000)
+    totp_code: str = Field(min_length=6, max_length=8, pattern=r"^[0-9]+$")
+
+
+class RollbackPolicyRequestDto(CamelModel):
+    scope: str = Field(default="PLATFORM", min_length=1)
+    to_version: int = Field(ge=1)
+    reason: str = Field(min_length=1, max_length=1000)
+    totp_code: str = Field(min_length=6, max_length=8, pattern=r"^[0-9]+$")
+
+
 class DraftResponseDto(CamelModel):
     id: str
     namespace: str
@@ -71,6 +86,8 @@ class DraftResponseDto(CamelModel):
     schema_revision: int
     content_hash: str
     validation_evidence: dict[str, Any] | None
+    rollback_from_version: int | None = None
+    preview_evidence: dict[str, Any] | None = None
 
     @classmethod
     def from_domain(cls, value: Draft) -> "DraftResponseDto":
@@ -103,3 +120,55 @@ class DraftValidationResponseDto(CamelModel):
             valid=value.valid,
             issues=[ValidationIssueDto.from_domain(issue) for issue in value.issues],
         )
+
+
+class PreviewItemDto(CamelModel):
+    key: str
+    before: Any
+    after: Any
+    effect_semantics: str
+    impact: str
+
+    @classmethod
+    def from_domain(cls, value: PreviewItem) -> "PreviewItemDto":
+        return cls.model_validate(value.model_dump())
+
+
+class PreviewResponseDto(CamelModel):
+    draft_id: str
+    revision: int
+    content_hash: str
+    base_version: int
+    items: list[PreviewItemDto]
+
+    @classmethod
+    def from_domain(cls, value: Preview) -> "PreviewResponseDto":
+        return cls(
+            draft_id=value.draft_id,
+            revision=value.revision,
+            content_hash=value.content_hash,
+            base_version=value.base_version,
+            items=[PreviewItemDto.from_domain(item) for item in value.items],
+        )
+
+
+class PublishedVersionDto(CamelModel):
+    namespace: str
+    scope: str
+    version: int
+    snapshot: dict[str, Any]
+    snapshot_hash: str
+    published_by: str
+    reason: str
+    published_at: datetime
+    activated_at: datetime
+    schema_revision: int
+
+    @classmethod
+    def from_domain(cls, value: PublishedVersion) -> "PublishedVersionDto":
+        return cls.model_validate(value.model_dump())
+
+
+class PolicyVersionsResponseDto(CamelModel):
+    items: list[PublishedVersionDto]
+    next_cursor: str | None

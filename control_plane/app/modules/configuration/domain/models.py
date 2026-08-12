@@ -47,6 +47,43 @@ class Draft(BaseModel):
     schema_revision: int
     content_hash: str
     validation_evidence: dict[str, Any] | None
+    rollback_from_version: int | None = None
+    preview_evidence: dict[str, Any] | None = None
+
+
+class PreviewItem(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    key: str
+    before: Any
+    after: Any
+    effect_semantics: str
+    impact: str
+
+
+class Preview(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    draft_id: str
+    revision: int
+    content_hash: str
+    base_version: int
+    items: list[PreviewItem]
+
+
+class PublishedVersion(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    namespace: str
+    scope: str
+    version: int
+    snapshot: dict[str, Any]
+    snapshot_hash: str
+    published_by: str
+    reason: str
+    published_at: datetime
+    activated_at: datetime
+    schema_revision: int
 
 
 class ValidationIssue(BaseModel):
@@ -96,4 +133,16 @@ class DraftArchived(ConfigurationError):
 
 
 class InvalidPolicyValue(ConfigurationError):
+    pass
+
+
+class SourceStale(ConfigurationError):
+    pass
+
+
+class PolicyVerificationFailed(ConfigurationError):
+    pass
+
+
+class PolicyVersionNotFound(ConfigurationError):
     pass

@@ -54,7 +54,7 @@ _RECOVERY_DENIAL_CODES = frozenset(
     }
 )
 _CHALLENGE_TTL = timedelta(minutes=5)
-SuperAdminOperation = Literal["ADD", "REMOVE"]
+SuperAdminOperation = Literal["ADD", "REMOVE", "POLICY_PUBLISH", "POLICY_ROLLBACK"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +68,8 @@ class SuperAdminCliExecution:
 
 
 def _purpose(operation: SuperAdminOperation) -> str:
+    if operation in {"POLICY_PUBLISH", "POLICY_ROLLBACK"}:
+        return operation
     return f"SUPER_ADMIN_{operation}"
 
 
@@ -256,6 +258,30 @@ def _consume_super_admin_challenge(
         reason=f"purpose={_purpose(operation)}",
     )
     return actor
+
+
+def verify_admin_totp(
+    repository: IdentityRepository,
+    actor_account_id: str,
+    code: str,
+    *,
+    purpose: Literal["POLICY_PUBLISH", "POLICY_ROLLBACK"],
+    dependencies: IdentityDependencies,
+) -> Principal:
+    challenge = issue_super_admin_challenge(
+        repository,
+        actor_account_id=actor_account_id,
+        operation=purpose,
+        dependencies=dependencies,
+    )
+    return _consume_super_admin_challenge(
+        repository,
+        actor_account_id=actor_account_id,
+        operation=purpose,
+        challenge_token=challenge,
+        totp_code=code,
+        dependencies=dependencies,
+    )
 
 
 def _change_super_admin(

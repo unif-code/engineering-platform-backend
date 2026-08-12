@@ -1,7 +1,7 @@
 """Public identity facade; other modules must not import identity internals."""
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import Connection
 
@@ -38,6 +38,12 @@ from control_plane.app.modules.identity.application.configuration_policy import 
     active_policy_snapshot as _active_policy_snapshot,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
+    archive_policy_candidates as _archive_policy_candidates,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
+    archive_policy_draft as _archive_policy_draft,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
     claim_configuration_idempotency as _claim_configuration_idempotency,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
@@ -53,10 +59,28 @@ from control_plane.app.modules.identity.application.configuration_policy import 
     effective_identity_policy as _effective_identity_policy,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
+    list_policy_versions as _list_policy_versions,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
+    locked_active_policy_snapshot as _locked_active_policy_snapshot,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
     policy_catalog as _policy_catalog,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
     policy_draft as _policy_draft,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
+    policy_version_snapshot as _policy_version_snapshot,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
+    preview_policy_candidate as _preview_policy_candidate,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
+    publish_policy_version as _publish_policy_version,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
+    save_policy_draft_preview as _save_policy_draft_preview,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
     save_policy_draft_validation as _save_policy_draft_validation,
@@ -116,6 +140,9 @@ from control_plane.app.modules.identity.application.super_admin import (
 from control_plane.app.modules.identity.application.super_admin import (
     resolve_recovery_cli as _resolve_recovery_cli,
 )
+from control_plane.app.modules.identity.application.super_admin import (
+    verify_admin_totp as _verify_admin_totp,
+)
 from control_plane.app.modules.identity.domain.account import (
     AccountDto,
     AccountStatus,
@@ -126,9 +153,11 @@ from control_plane.app.modules.identity.domain.account import (
 from control_plane.app.modules.identity.domain.configuration_policy import (
     OwnedPolicyDraft,
     OwnedPolicyKey,
+    OwnedPolicyPreviewItem,
     OwnedPolicySnapshot,
     OwnedPolicySnapshotUnavailable,
     OwnedPolicyValidationIssue,
+    OwnedPublishedPolicyVersion,
 )
 from control_plane.app.modules.identity.domain.errors import (
     AccountConflict,
@@ -245,8 +274,104 @@ def save_policy_draft_validation(
     )
 
 
+def save_policy_draft_preview(
+    db: Connection,
+    draft_id: str,
+    **values: Any,
+) -> OwnedPolicyDraft | None:
+    return _save_policy_draft_preview(
+        SqlAlchemyIdentityPolicyOwnerRepository(db),
+        draft_id,
+        **values,
+    )
+
+
+def preview_policy_candidate(
+    db: Connection,
+    namespace: str,
+    *,
+    before: dict[str, Any],
+    after: dict[str, Any],
+) -> list[OwnedPolicyPreviewItem]:
+    return _preview_policy_candidate(
+        SqlAlchemyIdentityPolicyOwnerRepository(db),
+        namespace,
+        before=before,
+        after=after,
+    )
+
+
 def active_policy_snapshot(db: Connection, namespace: str) -> OwnedPolicySnapshot:
     return _active_policy_snapshot(SqlAlchemyIdentityPolicyOwnerRepository(db), namespace)
+
+
+def locked_active_policy_snapshot(db: Connection, namespace: str) -> OwnedPolicySnapshot:
+    return _locked_active_policy_snapshot(
+        SqlAlchemyIdentityPolicyOwnerRepository(db),
+        namespace,
+    )
+
+
+def policy_version_snapshot(
+    db: Connection,
+    namespace: str,
+    scope: str,
+    version: int,
+) -> OwnedPolicySnapshot | None:
+    return _policy_version_snapshot(
+        SqlAlchemyIdentityPolicyOwnerRepository(db),
+        namespace,
+        scope,
+        version,
+    )
+
+
+def archive_policy_candidates(
+    db: Connection,
+    namespace: str,
+    scope: str,
+    *,
+    cutoff: datetime,
+    limit: int,
+) -> list[OwnedPolicyDraft]:
+    return _archive_policy_candidates(
+        SqlAlchemyIdentityPolicyOwnerRepository(db),
+        namespace,
+        scope,
+        cutoff=cutoff,
+        limit=limit,
+    )
+
+
+def archive_policy_draft(db: Connection, **values: Any) -> bool:
+    return _archive_policy_draft(
+        SqlAlchemyIdentityPolicyOwnerRepository(db),
+        **values,
+    )
+
+
+def list_policy_versions(
+    db: Connection,
+    namespace: str,
+    scope: str,
+    *,
+    before_version: int | None,
+    limit: int,
+) -> list[OwnedPublishedPolicyVersion]:
+    return _list_policy_versions(
+        SqlAlchemyIdentityPolicyOwnerRepository(db),
+        namespace,
+        scope,
+        before_version=before_version,
+        limit=limit,
+    )
+
+
+def publish_policy_version(db: Connection, **values: Any) -> OwnedPublishedPolicyVersion | None:
+    return _publish_policy_version(
+        SqlAlchemyIdentityPolicyOwnerRepository(db),
+        **values,
+    )
 
 
 def validate_policy_candidate(
@@ -455,6 +580,23 @@ def revoke_sessions_for(
         account_id=account_id,
         actor=actor,
         reason=reason,
+        dependencies=dependencies,
+    )
+
+
+def verify_admin_totp(
+    db: Connection,
+    actor: str,
+    code: str,
+    *,
+    purpose: Literal["POLICY_PUBLISH", "POLICY_ROLLBACK"],
+    dependencies: IdentityDependencies,
+) -> Principal:
+    return _verify_admin_totp(
+        dependencies.repository_factory(db),
+        actor,
+        code,
+        purpose=purpose,
         dependencies=dependencies,
     )
 
@@ -705,9 +847,11 @@ __all__ = [
     "OrganizationAccountDto",
     "OwnedPolicySnapshot",
     "OwnedPolicyKey",
+    "OwnedPolicyPreviewItem",
     "OwnedPolicyDraft",
     "OwnedPolicySnapshotUnavailable",
     "OwnedPolicyValidationIssue",
+    "OwnedPublishedPolicyVersion",
     "PasswordFloorViolation",
     "Principal",
     "SessionKind",
@@ -725,6 +869,10 @@ __all__ = [
     "bootstrap_super_admin_cli",
     "add_super_admin",
     "active_policy_snapshot",
+    "archive_policy_candidates",
+    "archive_policy_draft",
+    "locked_active_policy_snapshot",
+    "list_policy_versions",
     "effective_identity_policy",
     "claim_configuration_idempotency",
     "complete_configuration_idempotency",
@@ -732,6 +880,10 @@ __all__ = [
     "create_policy_draft",
     "policy_draft",
     "policy_catalog",
+    "policy_version_snapshot",
+    "publish_policy_version",
+    "preview_policy_candidate",
+    "save_policy_draft_preview",
     "save_policy_draft_validation",
     "update_policy_draft",
     "validate_policy_candidate",
@@ -759,4 +911,5 @@ __all__ = [
     "resolve_bootstrap_cli",
     "set_account_status",
     "validate_session",
+    "verify_admin_totp",
 ]

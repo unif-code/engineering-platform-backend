@@ -18,18 +18,61 @@ class _PolicyDefinition:
     max_value: int | None
     enum_values: list[Any] | None
     effect_semantics: str
+    impact: str
 
 
 _POLICY_DEFINITIONS = {
     "identity.temp_credential_ttl": _PolicyDefinition(
-        "INTEGER", "HOURS", 24, 1, None, None, "NEW_OBJECT"
+        "INTEGER",
+        "HOURS",
+        24,
+        1,
+        None,
+        None,
+        "NEW_OBJECT",
+        (
+            "Only temporary credentials issued after publication use the new lifetime; "
+            "existing credentials keep their recorded expiry."
+        ),
     ),
     "identity.password_max_age": _PolicyDefinition(
-        "ENUM_OR_INTEGER", "DAYS", "NEVER", 1, None, ["NEVER", 90, 180], "IMMEDIATE"
+        "ENUM_OR_INTEGER",
+        "DAYS",
+        "NEVER",
+        1,
+        None,
+        ["NEVER", 90, 180],
+        "IMMEDIATE",
+        (
+            "New interactive login checks use the new maximum age; stored password "
+            "timestamps and running agent attempts are not rewritten."
+        ),
     ),
-    "identity.session_cap": _PolicyDefinition("INTEGER", "SESSIONS", 3, 1, 10, None, "IMMEDIATE"),
+    "identity.session_cap": _PolicyDefinition(
+        "INTEGER",
+        "SESSIONS",
+        3,
+        1,
+        10,
+        None,
+        "IMMEDIATE",
+        (
+            "New session issuance enforces the new cap; existing sessions follow the "
+            "explicit session lifecycle and are not silently rewritten."
+        ),
+    ),
     "identity.session_idle_timeout": _PolicyDefinition(
-        "INTEGER", "MINUTES", 60, 15, 240, None, "IMMEDIATE"
+        "INTEGER",
+        "MINUTES",
+        60,
+        15,
+        240,
+        None,
+        "IMMEDIATE",
+        (
+            "Authenticated API activity uses the new idle limit immediately; expired "
+            "sessions are rejected on their next request."
+        ),
     ),
     "identity.login_backoff": _PolicyDefinition(
         "OBJECT",
@@ -44,12 +87,36 @@ _POLICY_DEFINITIONS = {
         None,
         None,
         "IMMEDIATE",
+        (
+            "New authentication attempts use the new backoff policy; existing failure "
+            "facts are retained."
+        ),
     ),
     "identity.totp_attempt_cap": _PolicyDefinition(
-        "INTEGER", "ATTEMPTS", 5, 1, None, None, "IMMEDIATE"
+        "INTEGER",
+        "ATTEMPTS",
+        5,
+        1,
+        None,
+        None,
+        "IMMEDIATE",
+        (
+            "New and active TOTP challenge checks use the new attempt cap without "
+            "resetting prior attempts."
+        ),
     ),
     "identity.draft_archive_after": _PolicyDefinition(
-        "INTEGER", "DAYS", 30, 1, None, None, "NEXT_SCHEDULE"
+        "INTEGER",
+        "DAYS",
+        30,
+        1,
+        None,
+        None,
+        "NEXT_SCHEDULE",
+        (
+            "The next archive task run uses the new inactivity window; drafts are "
+            "archived without being deleted."
+        ),
     ),
 }
 
@@ -101,6 +168,37 @@ class OwnedPolicyDraft(BaseModel):
     validation_schema_revision: int | None
     validation_base_version: int | None
     validation_dependency_versions: dict[str, Any] | None
+    rollback_from_version: int | None = None
+    preview_evidence: dict[str, Any] | None = None
+    preview_content_hash: str | None = None
+    preview_schema_revision: int | None = None
+    preview_base_version: int | None = None
+    preview_dependency_versions: dict[str, Any] | None = None
+
+
+class OwnedPolicyPreviewItem(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    key: str
+    before: Any
+    after: Any
+    effect_semantics: str
+    impact: str
+
+
+class OwnedPublishedPolicyVersion(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    namespace: str
+    scope: str
+    version: int
+    snapshot: dict[str, Any]
+    snapshot_hash: str
+    published_by: str
+    reason: str
+    published_at: datetime
+    activated_at: datetime
+    schema_revision: int
 
 
 class OwnedPolicySnapshotUnavailable(RuntimeError):
@@ -113,6 +211,23 @@ class OwnedPolicyValidationIssue(BaseModel):
     code: str
     key: str
     message: str
+
+
+def identity_policy_preview(
+    before: dict[str, Any],
+    after: dict[str, Any],
+) -> list[OwnedPolicyPreviewItem]:
+    return [
+        OwnedPolicyPreviewItem(
+            key=key,
+            before=before[key],
+            after=after[key],
+            effect_semantics=_POLICY_DEFINITIONS[key].effect_semantics,
+            impact=_POLICY_DEFINITIONS[key].impact,
+        )
+        for key in sorted(_POLICY_DEFINITIONS)
+        if not _exact_json_equal(before[key], after[key])
+    ]
 
 
 def _issue(code: str, key: str, message: str) -> OwnedPolicyValidationIssue:

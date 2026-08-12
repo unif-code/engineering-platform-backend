@@ -185,9 +185,32 @@
             "title": "Ownerid",
             "type": "string"
           },
+          "previewEvidence": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previewevidence"
+          },
           "revision": {
             "title": "Revision",
             "type": "integer"
+          },
+          "rollbackFromVersion": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rollbackfromversion"
           },
           "schemaRevision": {
             "title": "Schemarevision",
@@ -877,6 +900,101 @@
         "title": "PolicySnapshotDto",
         "type": "object"
       },
+      "PolicyVersionsResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PublishedVersionDto"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextcursor"
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "title": "PolicyVersionsResponseDto",
+        "type": "object"
+      },
+      "PreviewItemDto": {
+        "properties": {
+          "after": {
+            "title": "After"
+          },
+          "before": {
+            "title": "Before"
+          },
+          "effectSemantics": {
+            "title": "Effectsemantics",
+            "type": "string"
+          },
+          "impact": {
+            "title": "Impact",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "before",
+          "after",
+          "effectSemantics",
+          "impact"
+        ],
+        "title": "PreviewItemDto",
+        "type": "object"
+      },
+      "PreviewResponseDto": {
+        "properties": {
+          "baseVersion": {
+            "title": "Baseversion",
+            "type": "integer"
+          },
+          "contentHash": {
+            "title": "Contenthash",
+            "type": "string"
+          },
+          "draftId": {
+            "title": "Draftid",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PreviewItemDto"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "draftId",
+          "revision",
+          "contentHash",
+          "baseVersion",
+          "items"
+        ],
+        "title": "PreviewResponseDto",
+        "type": "object"
+      },
       "PrincipalDto": {
         "properties": {
           "accountId": {
@@ -1002,6 +1120,90 @@
         "title": "Problem",
         "type": "object"
       },
+      "PublishDraftRequestDto": {
+        "properties": {
+          "reason": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "totpCode": {
+            "maxLength": 8,
+            "minLength": 6,
+            "pattern": "^[0-9]+$",
+            "title": "Totpcode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "totpCode"
+        ],
+        "title": "PublishDraftRequestDto",
+        "type": "object"
+      },
+      "PublishedVersionDto": {
+        "properties": {
+          "activatedAt": {
+            "format": "date-time",
+            "title": "Activatedat",
+            "type": "string"
+          },
+          "namespace": {
+            "title": "Namespace",
+            "type": "string"
+          },
+          "publishedAt": {
+            "format": "date-time",
+            "title": "Publishedat",
+            "type": "string"
+          },
+          "publishedBy": {
+            "title": "Publishedby",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "schemaRevision": {
+            "title": "Schemarevision",
+            "type": "integer"
+          },
+          "scope": {
+            "title": "Scope",
+            "type": "string"
+          },
+          "snapshot": {
+            "additionalProperties": true,
+            "title": "Snapshot",
+            "type": "object"
+          },
+          "snapshotHash": {
+            "title": "Snapshothash",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "namespace",
+          "scope",
+          "version",
+          "snapshot",
+          "snapshotHash",
+          "publishedBy",
+          "reason",
+          "publishedAt",
+          "activatedAt",
+          "schemaRevision"
+        ],
+        "title": "PublishedVersionDto",
+        "type": "object"
+      },
       "ReadyDto": {
         "properties": {
           "status": {
@@ -1052,6 +1254,41 @@
           "totpCode"
         ],
         "title": "RemoveSuperAdminRequestDto",
+        "type": "object"
+      },
+      "RollbackPolicyRequestDto": {
+        "properties": {
+          "reason": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "scope": {
+            "default": "PLATFORM",
+            "minLength": 1,
+            "title": "Scope",
+            "type": "string"
+          },
+          "toVersion": {
+            "minimum": 1.0,
+            "title": "Toversion",
+            "type": "integer"
+          },
+          "totpCode": {
+            "maxLength": 8,
+            "minLength": 6,
+            "pattern": "^[0-9]+$",
+            "title": "Totpcode",
+            "type": "string"
+          }
+        },
+        "required": [
+          "toVersion",
+          "reason",
+          "totpCode"
+        ],
+        "title": "RollbackPolicyRequestDto",
         "type": "object"
       },
       "ScopeType": {
@@ -2362,6 +2599,310 @@
         ]
       }
     },
+    "/api/v1/admin/policies/{namespace}/drafts/{draft_id}/preview": {
+      "get": {
+        "operationId": "draft_preview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "draft_id",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Draft Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Strong entity tag in the form \"v<positive-version>\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "description": "Strong entity tag in the form \"v<positive-version>\"",
+              "examples": [
+                "\"v1\""
+              ],
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewResponseDto"
+                }
+              }
+            },
+            "description": "Draft updated",
+            "headers": {
+              "ETag": {
+                "description": "Strong draft revision ETag for the next write",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
+          }
+        },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
+        "summary": "Draft Preview",
+        "tags": [
+          "configuration"
+        ]
+      }
+    },
+    "/api/v1/admin/policies/{namespace}/drafts/{draft_id}/publish": {
+      "post": {
+        "operationId": "draft_publish",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "draft_id",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Draft Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Strong entity tag in the form \"v<positive-version>\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "description": "Strong entity tag in the form \"v<positive-version>\"",
+              "examples": [
+                "\"v1\""
+              ],
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishDraftRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublishedVersionDto"
+                }
+              }
+            },
+            "description": "Policy fact created",
+            "headers": {
+              "ETag": {
+                "description": "Strong draft revision ETag for the next write",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
+          }
+        },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
+        "summary": "Draft Publish",
+        "tags": [
+          "configuration"
+        ]
+      }
+    },
     "/api/v1/admin/policies/{namespace}/drafts/{draft_id}/validate": {
       "post": {
         "operationId": "draft_validate",
@@ -2521,6 +3062,296 @@
           }
         ],
         "summary": "Draft Validate",
+        "tags": [
+          "configuration"
+        ]
+      }
+    },
+    "/api/v1/admin/policies/{namespace}/rollback": {
+      "post": {
+        "operationId": "policy_rollback",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Strong entity tag in the form \"v<positive-version>\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "description": "Strong entity tag in the form \"v<positive-version>\"",
+              "examples": [
+                "\"v1\""
+              ],
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RollbackPolicyRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponseDto"
+                }
+              }
+            },
+            "description": "Policy fact created",
+            "headers": {
+              "ETag": {
+                "description": "Strong draft revision ETag for the next write",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
+          }
+        },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
+        "summary": "Policy Rollback",
+        "tags": [
+          "configuration"
+        ]
+      }
+    },
+    "/api/v1/admin/policies/{namespace}/versions": {
+      "get": {
+        "operationId": "policy_versions",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PolicyVersionsResponseDto"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
+          }
+        },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
+        "summary": "Policy Versions Endpoint",
         "tags": [
           "configuration"
         ]

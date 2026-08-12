@@ -70,12 +70,24 @@ def test_configuration_http_contract_has_exact_operations_security_and_preflight
             "/api/v1/admin/policies/{namespace}/drafts/{draft_id}/validate",
             "post",
         ): "draft_validate",
+        (
+            "/api/v1/admin/policies/{namespace}/drafts/{draft_id}/preview",
+            "get",
+        ): "draft_preview",
+        (
+            "/api/v1/admin/policies/{namespace}/drafts/{draft_id}/publish",
+            "post",
+        ): "draft_publish",
+        ("/api/v1/admin/policies/{namespace}/rollback", "post"): "policy_rollback",
+        ("/api/v1/admin/policies/{namespace}/versions", "get"): "policy_versions",
     }
     for (path, method), operation_id in operations.items():
         operation = schema["paths"][path][method]
         assert operation["operationId"] == operation_id
         assert operation["security"]
-        expected_success = "201" if operation_id == "draft_create" else "200"
+        expected_success = (
+            "201" if operation_id in {"draft_create", "draft_publish", "policy_rollback"} else "200"
+        )
         assert set(operation["responses"]) >= {
             expected_success,
             "401",
@@ -91,15 +103,25 @@ def test_configuration_http_contract_has_exact_operations_security_and_preflight
     validate = schema["paths"]["/api/v1/admin/policies/{namespace}/drafts/{draft_id}/validate"][
         "post"
     ]
+    preview = schema["paths"]["/api/v1/admin/policies/{namespace}/drafts/{draft_id}/preview"]["get"]
+    publish = schema["paths"]["/api/v1/admin/policies/{namespace}/drafts/{draft_id}/publish"][
+        "post"
+    ]
+    rollback = schema["paths"]["/api/v1/admin/policies/{namespace}/rollback"]["post"]
     create_parameters = {value["name"]: value for value in create["parameters"]}
     assert create_parameters["Idempotency-Key"]["required"] is True
-    for operation in (update, validate):
+    for operation in (update, validate, publish, rollback):
         parameters = {value["name"]: value for value in operation["parameters"]}
         assert parameters["Idempotency-Key"]["required"] is True
         assert parameters["If-Match"]["required"] is True
+    preview_parameters = {value["name"]: value for value in preview["parameters"]}
+    assert preview_parameters["If-Match"]["required"] is True
+    assert "Idempotency-Key" not in preview_parameters
     assert create["responses"]["201"]["headers"]["ETag"]["schema"]["type"] == "string"
-    for operation in (update, validate):
+    for operation in (update, validate, preview):
         assert operation["responses"]["200"]["headers"]["ETag"]["schema"]["type"] == "string"
+    assert publish["responses"]["201"]["headers"]["ETag"]["schema"]["type"] == "string"
+    assert rollback["responses"]["201"]["headers"]["ETag"]["schema"]["type"] == "string"
 
 
 @pytest.mark.integration
@@ -226,19 +248,43 @@ def test_configuration_writes_reject_cross_site_before_database_or_guard() -> No
     from control_plane.app.bootstrap.app import create_app
 
     client = TestClient(create_app(), base_url="https://testserver")
-    response = client.post(
-        "/api/v1/admin/policies/identity/drafts",
-        json={"values": {}},
-        headers={
-            "Idempotency-Key": "cross-site-config-1",
-            "Origin": "https://attacker.example",
-            "Sec-Fetch-Site": "cross-site",
-            "X-Request-ID": "req-configcsrf",
-        },
-    )
-    assert response.status_code == 403
-    assert response.headers["content-type"].startswith("application/problem+json")
-    assert response.json()["requestId"] == "req-configcsrf"
+    cases = [
+        (
+            "/api/v1/admin/policies/identity/drafts",
+            {"values": {}},
+            {"Idempotency-Key": "cross-site-config-1"},
+        ),
+        (
+            f"/api/v1/admin/policies/identity/drafts/{uuid4()}/publish",
+            {"reason": "credential-sentinel", "totpCode": "123456"},
+            {"Idempotency-Key": "cross-site-config-2", "If-Match": '"v1"'},
+        ),
+        (
+            "/api/v1/admin/policies/identity/rollback",
+            {
+                "scope": "PLATFORM",
+                "toVersion": 1,
+                "reason": "credential-sentinel",
+                "totpCode": "123456",
+            },
+            {"Idempotency-Key": "cross-site-config-3", "If-Match": '"v1"'},
+        ),
+    ]
+    for index, (path, body, command_headers) in enumerate(cases, start=1):
+        response = client.post(
+            path,
+            json=body,
+            headers={
+                **command_headers,
+                "Origin": "https://attacker.example",
+                "Sec-Fetch-Site": "cross-site",
+                "X-Request-ID": f"req-configcsrf{index}",
+            },
+        )
+        assert response.status_code == 403
+        assert response.headers["content-type"].startswith("application/problem+json")
+        assert response.json()["requestId"] == f"req-configcsrf{index}"
+        assert "credential-sentinel" not in response.text
 
 
 @pytest.mark.integration

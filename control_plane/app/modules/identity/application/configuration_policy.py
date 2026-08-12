@@ -4,11 +4,15 @@ from datetime import datetime
 from typing import Any
 
 from control_plane.app.modules.identity.domain.configuration_policy import (
+    IDENTITY_POLICY_SCHEMA_REVISION,
     OwnedPolicyDraft,
     OwnedPolicyKey,
+    OwnedPolicyPreviewItem,
     OwnedPolicySnapshot,
     OwnedPolicySnapshotUnavailable,
     OwnedPolicyValidationIssue,
+    OwnedPublishedPolicyVersion,
+    identity_policy_preview,
     validate_and_materialize_identity_policy,
     validate_identity_policy_catalog,
 )
@@ -113,11 +117,46 @@ def save_policy_draft_validation(
     )
 
 
+def save_policy_draft_preview(
+    repository: IdentityPolicyOwnerRepository,
+    draft_id: str,
+    *,
+    expected_revision: int,
+    evidence: dict[str, Any],
+    dependency_versions: dict[str, Any],
+) -> OwnedPolicyDraft | None:
+    return repository.save_preview(
+        draft_id,
+        expected_revision=expected_revision,
+        evidence=evidence,
+        dependency_versions=dependency_versions,
+    )
+
+
+def preview_policy_candidate(
+    repository: IdentityPolicyOwnerRepository,
+    namespace: str,
+    *,
+    before: dict[str, Any],
+    after: dict[str, Any],
+) -> list[OwnedPolicyPreviewItem]:
+    policy_catalog(repository, namespace)
+    issues, _policy = validate_and_materialize_identity_policy(
+        IDENTITY_POLICY_SCHEMA_REVISION,
+        after,
+    )
+    if issues:
+        raise OwnedPolicySnapshotUnavailable(namespace)
+    return identity_policy_preview(before, after)
+
+
 def _active_policy_and_effective(
     repository: IdentityPolicyOwnerRepository,
     namespace: str,
+    *,
+    for_update: bool = False,
 ) -> tuple[OwnedPolicySnapshot, EffectiveIdentityPolicy]:
-    snapshot = repository.active_snapshot(namespace)
+    snapshot = repository.active_snapshot(namespace, for_update=for_update)
     if snapshot is None:
         raise OwnedPolicySnapshotUnavailable(namespace)
     canonical = json.dumps(
@@ -144,6 +183,106 @@ def active_policy_snapshot(
     namespace: str,
 ) -> OwnedPolicySnapshot:
     return _active_policy_and_effective(repository, namespace)[0]
+
+
+def locked_active_policy_snapshot(
+    repository: IdentityPolicyOwnerRepository,
+    namespace: str,
+) -> OwnedPolicySnapshot:
+    return _active_policy_and_effective(repository, namespace, for_update=True)[0]
+
+
+def policy_version_snapshot(
+    repository: IdentityPolicyOwnerRepository,
+    namespace: str,
+    scope: str,
+    version: int,
+) -> OwnedPolicySnapshot | None:
+    snapshot = repository.version_snapshot(namespace, scope, version)
+    if snapshot is None:
+        return None
+    canonical = json.dumps(
+        snapshot.values,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    if hashlib.sha256(canonical).hexdigest() != snapshot.snapshot_hash:
+        raise OwnedPolicySnapshotUnavailable(namespace)
+    if validate_identity_policy_catalog(repository.catalog(namespace)):
+        raise OwnedPolicySnapshotUnavailable(namespace)
+    issues, policy = validate_and_materialize_identity_policy(
+        snapshot.schema_revision,
+        snapshot.values,
+    )
+    if issues or policy is None:
+        raise OwnedPolicySnapshotUnavailable(namespace)
+    return snapshot
+
+
+def list_policy_versions(
+    repository: IdentityPolicyOwnerRepository,
+    namespace: str,
+    scope: str,
+    *,
+    before_version: int | None,
+    limit: int,
+) -> list[OwnedPublishedPolicyVersion]:
+    policy_catalog(repository, namespace)
+    versions = repository.list_versions(
+        namespace,
+        scope,
+        before_version=before_version,
+        limit=limit,
+    )
+    for version in versions:
+        canonical = json.dumps(
+            version.snapshot,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        issues, policy = validate_and_materialize_identity_policy(
+            version.schema_revision,
+            version.snapshot,
+        )
+        if (
+            hashlib.sha256(canonical).hexdigest() != version.snapshot_hash
+            or issues
+            or policy is None
+        ):
+            raise OwnedPolicySnapshotUnavailable(namespace)
+    return versions
+
+
+def publish_policy_version(
+    repository: IdentityPolicyOwnerRepository,
+    **values: Any,
+) -> OwnedPublishedPolicyVersion | None:
+    return repository.publish_version(**values)
+
+
+def archive_policy_candidates(
+    repository: IdentityPolicyOwnerRepository,
+    namespace: str,
+    scope: str,
+    *,
+    cutoff: datetime,
+    limit: int,
+) -> list[OwnedPolicyDraft]:
+    return repository.archive_candidates(
+        namespace,
+        scope,
+        cutoff=cutoff,
+        limit=limit,
+    )
+
+
+def archive_policy_draft(
+    repository: IdentityPolicyOwnerRepository,
+    **values: Any,
+) -> bool:
+    return repository.archive_draft(**values)
 
 
 def validate_policy_candidate(

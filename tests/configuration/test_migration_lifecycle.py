@@ -18,7 +18,7 @@ def fresh_configuration_database_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[str]:
     owner_url = make_url(os.environ["MIGRATION_DATABASE_URL"])
-    database_name = f"task11_configuration_{uuid4().hex}"
+    database_name = f"task12_configuration_{uuid4().hex}"
     maintenance = create_engine(
         owner_url.set(database="postgres"),
         isolation_level="AUTOCOMMIT",
@@ -83,14 +83,14 @@ def test_fresh_upgrade_installs_independent_heads_and_deterministic_seed(
             ).one()
         assert expected_heads == {
             "0006_audit_configuration_grant",
-            "0008_identity_policy_catalog",
+            "0009_identity_policy_publish",
             "0001_organization_base",
             "0001_workspace_base",
             "0004_authorization_pending_set",
         }
         assert installed_heads == {
             "0006_audit_configuration_grant",
-            "0008_identity_policy_catalog",
+            "0009_identity_policy_publish",
             "0004_authorization_pending_set",
         }
         assert counts == (7, 1, 1, 1)
@@ -162,6 +162,7 @@ def test_all_migrations_downgrade_and_fresh_reupgrade_cleanly(
             "version",
             "active_pointer",
             "configuration_idempotency_record",
+            "configuration_outbox",
         } <= set(inspect(engine).get_table_names(schema="identity"))
     finally:
         engine.dispose()

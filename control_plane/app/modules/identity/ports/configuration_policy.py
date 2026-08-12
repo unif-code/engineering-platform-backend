@@ -5,6 +5,7 @@ from control_plane.app.modules.identity.domain.configuration_policy import (
     OwnedPolicyDraft,
     OwnedPolicyKey,
     OwnedPolicySnapshot,
+    OwnedPublishedPolicyVersion,
 )
 
 
@@ -32,7 +33,28 @@ class IdentityPolicyOwnerRepository(Protocol):
 
     def catalog(self, namespace: str) -> list[OwnedPolicyKey]: ...
 
-    def active_snapshot(self, namespace: str) -> OwnedPolicySnapshot | None: ...
+    def active_snapshot(
+        self,
+        namespace: str,
+        *,
+        for_update: bool = False,
+    ) -> OwnedPolicySnapshot | None: ...
+
+    def version_snapshot(
+        self,
+        namespace: str,
+        scope: str,
+        version: int,
+    ) -> OwnedPolicySnapshot | None: ...
+
+    def list_versions(
+        self,
+        namespace: str,
+        scope: str,
+        *,
+        before_version: int | None,
+        limit: int,
+    ) -> list[OwnedPublishedPolicyVersion]: ...
 
     def insert_draft(self, **values: Any) -> OwnedPolicyDraft: ...
 
@@ -60,3 +82,25 @@ class IdentityPolicyOwnerRepository(Protocol):
         dependency_versions: dict[str, Any],
         now: datetime,
     ) -> OwnedPolicyDraft | None: ...
+
+    def save_preview(
+        self,
+        draft_id: str,
+        *,
+        expected_revision: int,
+        evidence: dict[str, Any],
+        dependency_versions: dict[str, Any],
+    ) -> OwnedPolicyDraft | None: ...
+
+    def publish_version(self, **values: Any) -> OwnedPublishedPolicyVersion | None: ...
+
+    def archive_candidates(
+        self,
+        namespace: str,
+        scope: str,
+        *,
+        cutoff: datetime,
+        limit: int,
+    ) -> list[OwnedPolicyDraft]: ...
+
+    def archive_draft(self, **values: Any) -> bool: ...

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from sqlalchemy import Connection
@@ -8,17 +8,28 @@ from control_plane.app.modules.configuration.domain import (
     PolicyKey,
     PolicySnapshot,
     PolicySnapshotUnavailable,
+    PreviewItem,
+    PublishedVersion,
     ValidationIssue,
 )
 from control_plane.app.modules.identity import (
     OwnedPolicySnapshotUnavailable,
     active_policy_snapshot,
+    archive_policy_candidates,
+    archive_policy_draft,
     claim_configuration_idempotency,
     complete_configuration_idempotency,
     configuration_idempotency_by_scope,
     create_policy_draft,
+    effective_identity_policy,
+    list_policy_versions,
+    locked_active_policy_snapshot,
     policy_catalog,
     policy_draft,
+    policy_version_snapshot,
+    preview_policy_candidate,
+    publish_policy_version,
+    save_policy_draft_preview,
     save_policy_draft_validation,
     update_policy_draft,
     validate_policy_candidate,
@@ -79,6 +90,45 @@ class IdentityPolicyOwner:
         except OwnedPolicySnapshotUnavailable as exc:
             raise PolicySnapshotUnavailable(namespace) from exc
         return PolicySnapshot.model_validate(owned.model_dump())
+
+    def locked_active_snapshot(self, namespace: str) -> PolicySnapshot:
+        try:
+            owned = locked_active_policy_snapshot(self.db, namespace)
+        except OwnedPolicySnapshotUnavailable as exc:
+            raise PolicySnapshotUnavailable(namespace) from exc
+        return PolicySnapshot.model_validate(owned.model_dump())
+
+    def version_snapshot(
+        self,
+        namespace: str,
+        scope: str,
+        version: int,
+    ) -> PolicySnapshot | None:
+        try:
+            owned = policy_version_snapshot(self.db, namespace, scope, version)
+        except OwnedPolicySnapshotUnavailable as exc:
+            raise PolicySnapshotUnavailable(namespace) from exc
+        return None if owned is None else PolicySnapshot.model_validate(owned.model_dump())
+
+    def list_versions(
+        self,
+        namespace: str,
+        scope: str,
+        *,
+        before_version: int | None,
+        limit: int,
+    ) -> list[PublishedVersion]:
+        try:
+            owned = list_policy_versions(
+                self.db,
+                namespace,
+                scope,
+                before_version=before_version,
+                limit=limit,
+            )
+        except OwnedPolicySnapshotUnavailable as exc:
+            raise PolicySnapshotUnavailable(namespace) from exc
+        return [PublishedVersion.model_validate(item.model_dump()) for item in owned]
 
     def validate_candidate(
         self,
@@ -147,3 +197,68 @@ class IdentityPolicyOwner:
             now=now,
         )
         return None if owned is None else self._draft(owned)
+
+    def preview_candidate(
+        self,
+        namespace: str,
+        *,
+        before: dict[str, Any],
+        after: dict[str, Any],
+    ) -> list[PreviewItem]:
+        try:
+            owned = preview_policy_candidate(
+                self.db,
+                namespace,
+                before=before,
+                after=after,
+            )
+        except OwnedPolicySnapshotUnavailable as exc:
+            raise PolicySnapshotUnavailable(namespace) from exc
+        return [PreviewItem.model_validate(item.model_dump()) for item in owned]
+
+    def save_preview(
+        self,
+        draft_id: str,
+        *,
+        expected_revision: int,
+        evidence: dict[str, Any],
+        dependency_versions: dict[str, Any],
+    ) -> Draft | None:
+        owned = save_policy_draft_preview(
+            self.db,
+            draft_id,
+            expected_revision=expected_revision,
+            evidence=evidence,
+            dependency_versions=dependency_versions,
+        )
+        return None if owned is None else self._draft(owned)
+
+    def publish_version(self, **values: Any) -> PublishedVersion | None:
+        owned = publish_policy_version(self.db, **values)
+        return None if owned is None else PublishedVersion.model_validate(owned.model_dump())
+
+    def draft_archive_after(self, namespace: str) -> timedelta:
+        try:
+            return effective_identity_policy(self.db, namespace).draft_archive_after
+        except OwnedPolicySnapshotUnavailable as exc:
+            raise PolicySnapshotUnavailable(namespace) from exc
+
+    def archive_candidates(
+        self,
+        namespace: str,
+        scope: str,
+        *,
+        cutoff: datetime,
+        limit: int,
+    ) -> list[Draft]:
+        owned = archive_policy_candidates(
+            self.db,
+            namespace,
+            scope,
+            cutoff=cutoff,
+            limit=limit,
+        )
+        return [self._draft(item) for item in owned]
+
+    def archive_draft(self, **values: Any) -> bool:
+        return archive_policy_draft(self.db, **values)

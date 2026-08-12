@@ -27,12 +27,18 @@ def _rollback(engine: Engine) -> Iterator[Connection]:
             transaction.rollback()
 
 
-def test_identity_owns_the_four_policy_lifecycle_tables(
+def test_identity_owns_policy_publish_and_archive_lifecycle_tables(
     configuration_owner_engine: Engine,
 ) -> None:
     tables = set(inspect(configuration_owner_engine).get_table_names(schema="identity"))
 
-    assert {"policy_key", "draft", "version", "active_pointer"} <= tables
+    assert {
+        "policy_key",
+        "draft",
+        "version",
+        "active_pointer",
+        "configuration_outbox",
+    } <= tables
     assert _columns(configuration_owner_engine, "policy_key") == {
         "key": ("TEXT", False),
         "namespace": ("TEXT", False),
@@ -64,6 +70,12 @@ def test_identity_owns_the_four_policy_lifecycle_tables(
         "validation_schema_revision": ("INTEGER", True),
         "validation_base_version": ("BIGINT", True),
         "validation_dependency_versions": ("JSONB", True),
+        "rollback_from_version": ("BIGINT", True),
+        "preview_evidence": ("JSONB", True),
+        "preview_content_hash": ("TEXT", True),
+        "preview_schema_revision": ("INTEGER", True),
+        "preview_base_version": ("BIGINT", True),
+        "preview_dependency_versions": ("JSONB", True),
     }
     assert _columns(configuration_owner_engine, "version") == {
         "namespace": ("TEXT", False),
@@ -79,11 +91,22 @@ def test_identity_owns_the_four_policy_lifecycle_tables(
         "validation_evidence": ("JSONB", False),
         "dependency_versions": ("JSONB", False),
         "preview_evidence": ("JSONB", False),
+        "activated_at": ("TIMESTAMP", False),
     }
     assert _columns(configuration_owner_engine, "active_pointer") == {
         "namespace": ("TEXT", False),
         "scope": ("TEXT", False),
         "version": ("BIGINT", False),
+    }
+    assert _columns(configuration_owner_engine, "configuration_outbox") == {
+        "id": ("UUID", False),
+        "namespace": ("TEXT", False),
+        "scope": ("TEXT", False),
+        "event_type": ("TEXT", False),
+        "aggregate_id": ("TEXT", False),
+        "payload": ("JSONB", False),
+        "occurred_at": ("TIMESTAMP", False),
+        "delivered_at": ("TIMESTAMP", True),
     }
 
 
@@ -601,7 +624,7 @@ def test_missing_configuration_privilege_role_is_nologin(
     assert can_login is False
 
 
-def test_configuration_rw_has_only_task11_table_privileges(
+def test_configuration_rw_has_only_publish_and_archive_table_privileges(
     configuration_owner_engine: Engine,
     configuration_rw_engine: Engine,
 ) -> None:
@@ -641,6 +664,8 @@ def test_configuration_rw_has_only_task11_table_privileges(
                 "version",
                 "active_pointer",
                 "configuration_idempotency_record",
+                "configuration_outbox",
+                "auth_challenge",
             )
         }
         audit_dml = {
@@ -651,20 +676,99 @@ def test_configuration_rw_has_only_task11_table_privileges(
                 {"p": privilege},
             ).scalar_one()
         }
-        account_access = db.execute(
-            text("SELECT has_table_privilege('configuration_rw', 'identity.account', 'SELECT')")
-        ).scalar_one()
+        account_privileges = {
+            privilege
+            for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE")
+            if db.execute(
+                text(
+                    "SELECT has_table_privilege('configuration_rw', 'identity.account', :privilege)"
+                ),
+                {"privilege": privilege},
+            ).scalar_one()
+        }
+        account_update_columns = {
+            column
+            for column in ("totp_last_step", "updated_at", "password_hash", "status")
+            if db.execute(
+                text(
+                    "SELECT has_column_privilege("
+                    "'configuration_rw', 'identity.account', :column, 'UPDATE')"
+                ),
+                {"column": column},
+            ).scalar_one()
+        }
+        challenge_insert_columns = {
+            column
+            for column in (
+                "id",
+                "token_hash",
+                "purpose",
+                "account_id",
+                "actor_id",
+                "issued_at",
+                "expires_at",
+                "attempt_limit",
+                "attempt_count",
+                "consumed_at",
+                "revoked_at",
+            )
+            if db.execute(
+                text(
+                    "SELECT has_column_privilege("
+                    "'configuration_rw', 'identity.auth_challenge', :column, 'INSERT')"
+                ),
+                {"column": column},
+            ).scalar_one()
+        }
+        challenge_update_columns = {
+            column
+            for column in (
+                "id",
+                "token_hash",
+                "purpose",
+                "account_id",
+                "actor_id",
+                "issued_at",
+                "expires_at",
+                "attempt_limit",
+                "attempt_count",
+                "consumed_at",
+                "revoked_at",
+            )
+            if db.execute(
+                text(
+                    "SELECT has_column_privilege("
+                    "'configuration_rw', 'identity.auth_challenge', :column, 'UPDATE')"
+                ),
+                {"column": column},
+            ).scalar_one()
+        }
 
     assert schema_privileges == {"USAGE"}
     assert table_privileges == {
         "policy_key": {"SELECT"},
         "draft": {"SELECT", "INSERT", "UPDATE"},
-        "version": {"SELECT"},
-        "active_pointer": {"SELECT"},
+        "version": {"SELECT", "INSERT"},
+        "active_pointer": {"SELECT", "UPDATE"},
         "configuration_idempotency_record": {"SELECT", "INSERT", "UPDATE"},
+        "configuration_outbox": {"SELECT", "INSERT"},
+        "auth_challenge": {"SELECT"},
     }
     assert audit_dml == set()
-    assert account_access is False
+    assert account_privileges == {"SELECT"}
+    assert account_update_columns == {"totp_last_step", "updated_at"}
+    assert challenge_insert_columns == {
+        "id",
+        "token_hash",
+        "purpose",
+        "account_id",
+        "actor_id",
+        "issued_at",
+        "expires_at",
+        "attempt_limit",
+        "attempt_count",
+    }
+    assert challenge_update_columns == {"attempt_count", "consumed_at", "revoked_at"}
 
 
 def test_configuration_rw_cannot_delete_or_create_identity_objects(

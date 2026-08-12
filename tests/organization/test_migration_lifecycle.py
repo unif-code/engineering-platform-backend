@@ -58,7 +58,7 @@ def test_fresh_database_upgrade_heads_installs_all_visible_module_heads(
             )
         assert expected_heads == {
             "0006_audit_configuration_grant",
-            "0008_identity_policy_catalog",
+            "0009_identity_policy_publish",
             "0001_organization_base",
             "0001_workspace_base",
             "0004_authorization_pending_set",
@@ -68,7 +68,7 @@ def test_fresh_database_upgrade_heads_installs_all_visible_module_heads(
         # in the script graph and their schemas have dedicated lifecycle coverage.
         assert installed_heads == {
             "0006_audit_configuration_grant",
-            "0008_identity_policy_catalog",
+            "0009_identity_policy_publish",
             "0004_authorization_pending_set",
         }
         assert set(inspect(engine).get_table_names(schema="organization")) == {

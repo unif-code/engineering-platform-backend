@@ -22,6 +22,7 @@ IDENTITY_TABLES = {
 IDENTITY_CONFIGURATION_TABLES = {
     "active_pointer",
     "configuration_idempotency_record",
+    "configuration_outbox",
     "draft",
     "policy_key",
     "version",
@@ -274,7 +275,7 @@ def test_current_alembic_heads_are_installed(identity_owner_engine: Engine) -> N
         installed = set(conn.execute(text("SELECT version_num FROM alembic_version")).scalars())
     assert installed == {
         "0006_audit_configuration_grant",
-        "0008_identity_policy_catalog",
+        "0009_identity_policy_publish",
         "0004_authorization_pending_set",
     }
 

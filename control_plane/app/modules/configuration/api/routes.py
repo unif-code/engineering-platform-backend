@@ -2,7 +2,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy import Engine
 
@@ -15,13 +15,22 @@ from control_plane.app.modules.configuration import (
     DraftOwnerRequired,
     InvalidPolicyValue,
     PolicySnapshotUnavailable,
+    PolicyVerificationFailed,
+    PolicyVersionNotFound,
+    SourceStale,
     StaleDraftBase,
     StaleDraftRevision,
     active_snapshot,
     catalog,
     create_draft,
+    preview,
+    publish,
+    rollback,
     update_draft,
     validate_draft,
+)
+from control_plane.app.modules.configuration import (
+    policy_versions as list_policy_versions,
 )
 from control_plane.app.modules.configuration.adapters import IdentityPolicyOwner
 from control_plane.app.modules.configuration.api.dto import (
@@ -31,6 +40,11 @@ from control_plane.app.modules.configuration.api.dto import (
     PolicyCatalogResponseDto,
     PolicyKeyDto,
     PolicySnapshotDto,
+    PolicyVersionsResponseDto,
+    PreviewResponseDto,
+    PublishDraftRequestDto,
+    PublishedVersionDto,
+    RollbackPolicyRequestDto,
     ValidateDraftRequestDto,
 )
 from control_plane.app.shared.api.concurrency import entity_tag, require_if_match
@@ -70,6 +84,10 @@ _WRITE_RESPONSES = cast(
     dict[int | str, dict[str, Any]],
     {**_PROBLEMS, 200: {"description": "Draft updated", "headers": _ETAG_HEADER}},
 )
+_PUBLISH_RESPONSES = cast(
+    dict[int | str, dict[str, Any]],
+    {**_PROBLEMS, 201: {"description": "Policy fact created", "headers": _ETAG_HEADER}},
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +108,11 @@ class _VersionedPreflight:
     expected_revision: int
 
 
+@dataclass(frozen=True, slots=True)
+class _RevisionPreflight:
+    expected_revision: int
+
+
 def _required_raw_header(request: Request, name: str) -> str:
     value = request.headers.get(name)
     if value is None:
@@ -104,6 +127,10 @@ def _assert_create_preflight(request: Request) -> None:
 
 def _assert_versioned_preflight(request: Request) -> None:
     _assert_create_preflight(request)
+    require_if_match(_required_raw_header(request, "If-Match"))
+
+
+def _assert_revision_preflight(request: Request) -> None:
     require_if_match(_required_raw_header(request, "If-Match"))
 
 
@@ -124,6 +151,12 @@ def _versioned_preflight(
     return _VersionedPreflight(idempotency_key, expected_revision)
 
 
+def _revision_preflight(
+    expected_revision: Annotated[int, Depends(require_if_match)],
+) -> _RevisionPreflight:
+    return _RevisionPreflight(expected_revision)
+
+
 def _account_id(principal: Any) -> str:
     account_id = getattr(principal, "account_id", None)
     if not isinstance(account_id, str) or not account_id:
@@ -138,6 +171,24 @@ def _problem(error: ConfigurationError) -> IdempotentResponse:
         status, title = 403, "Draft owner required"
     elif isinstance(error, InvalidPolicyValue):
         status, title = 422, "Invalid policy value"
+    elif isinstance(error, PolicyVerificationFailed):
+        return IdempotentResponse(
+            status_code=403,
+            body={
+                "title": "Policy reauthentication failed",
+                "status": 403,
+                "code": "REAUTHENTICATION_FAILED",
+            },
+            is_problem=True,
+        )
+    elif isinstance(error, PolicyVersionNotFound):
+        status, title = 404, "Policy version not found"
+    elif isinstance(error, SourceStale):
+        return IdempotentResponse(
+            status_code=409,
+            body={"title": "Source policy is stale", "status": 409, "code": "SOURCE_STALE"},
+            is_problem=True,
+        )
     elif isinstance(error, (StaleDraftRevision, StaleDraftBase)):
         status, title = 409, "Stale draft revision"
     elif isinstance(error, DraftArchived):
@@ -395,6 +446,186 @@ def create_configuration_router(
             key=preflight.idempotency_key,
             body=body_data,
             command=command,
+        )
+
+    @router.get(
+        "/policies/{namespace}/drafts/{draft_id}/preview",
+        operation_id="draft_preview",
+        response_model=PreviewResponseDto,
+        responses=_WRITE_RESPONSES,
+        dependencies=[Depends(_assert_revision_preflight)],
+    )
+    def draft_preview(
+        namespace: Annotated[str, Path(min_length=1)],
+        draft_id: Annotated[str, Path(min_length=1)],
+        principal: Annotated[Any, Depends(principal_provider)],
+        preflight: Annotated[_RevisionPreflight, Depends(_revision_preflight)],
+    ) -> Response:
+        capability_guard(principal, PLATFORM_CONFIGURATION_MANAGE, None)
+        runtime = runtime_provider()
+        actor_id = _account_id(principal)
+        try:
+            with runtime.engine.begin() as db:
+                result = preview(
+                    db,
+                    namespace=namespace,
+                    draft_id=draft_id,
+                    actor_id=actor_id,
+                    expected_revision=preflight.expected_revision,
+                    dependencies=runtime.dependencies,
+                )
+        except ConfigurationError as error:
+            return _render(_problem(error))
+        except PolicySnapshotUnavailable:
+            return problem_response(503, "Effective policy unavailable")
+        dto = PreviewResponseDto.from_domain(result)
+        return JSONResponse(
+            status_code=200,
+            content=dto.model_dump(mode="json", by_alias=True),
+            headers={"ETag": entity_tag(result.revision)},
+        )
+
+    @router.post(
+        "/policies/{namespace}/drafts/{draft_id}/publish",
+        operation_id="draft_publish",
+        status_code=201,
+        response_model=PublishedVersionDto,
+        responses=_PUBLISH_RESPONSES,
+        dependencies=[Depends(_assert_versioned_preflight), Depends(_versioned_preflight)],
+    )
+    def draft_publish(
+        namespace: Annotated[str, Path(min_length=1)],
+        draft_id: Annotated[str, Path(min_length=1)],
+        body: PublishDraftRequestDto,
+        request: Request,
+        principal: Annotated[Any, Depends(principal_provider)],
+        preflight: Annotated[_VersionedPreflight, Depends(_versioned_preflight)],
+    ) -> Response:
+        capability_guard(principal, PLATFORM_CONFIGURATION_MANAGE, None)
+        runtime = runtime_provider()
+        actor_id = _account_id(principal)
+        body_data: dict[str, object] = {
+            **body.model_dump(mode="json", by_alias=True),
+            "expectedRevision": preflight.expected_revision,
+        }
+
+        def command(db: Any) -> IdempotentResponse:
+            try:
+                result = publish(
+                    db,
+                    namespace=namespace,
+                    draft_id=draft_id,
+                    actor_id=actor_id,
+                    expected_revision=preflight.expected_revision,
+                    reason=body.reason,
+                    totp_code=body.totp_code,
+                    dependencies=runtime.dependencies,
+                )
+            except ConfigurationError as error:
+                return _problem(error)
+            dto = PublishedVersionDto.from_domain(result)
+            return IdempotentResponse(
+                status_code=201,
+                body=dto.model_dump(mode="json", by_alias=True),
+                headers={"ETag": entity_tag(result.version)},
+            )
+
+        return _execute(
+            runtime,
+            actor_id=actor_id,
+            operation="draft_publish",
+            method="POST",
+            path=request.url.path,
+            key=preflight.idempotency_key,
+            body=body_data,
+            command=command,
+        )
+
+    @router.post(
+        "/policies/{namespace}/rollback",
+        operation_id="policy_rollback",
+        status_code=201,
+        response_model=DraftResponseDto,
+        responses=_PUBLISH_RESPONSES,
+        dependencies=[Depends(_assert_versioned_preflight), Depends(_versioned_preflight)],
+    )
+    def policy_rollback(
+        namespace: Annotated[str, Path(min_length=1)],
+        body: RollbackPolicyRequestDto,
+        request: Request,
+        principal: Annotated[Any, Depends(principal_provider)],
+        preflight: Annotated[_VersionedPreflight, Depends(_versioned_preflight)],
+    ) -> Response:
+        capability_guard(principal, PLATFORM_CONFIGURATION_MANAGE, None)
+        runtime = runtime_provider()
+        actor_id = _account_id(principal)
+        body_data: dict[str, object] = {
+            **body.model_dump(mode="json", by_alias=True),
+            "expectedVersion": preflight.expected_revision,
+        }
+
+        def command(db: Any) -> IdempotentResponse:
+            try:
+                result = rollback(
+                    db,
+                    namespace=namespace,
+                    scope=body.scope,
+                    to_version=body.to_version,
+                    actor_id=actor_id,
+                    expected_version=preflight.expected_revision,
+                    reason=body.reason,
+                    totp_code=body.totp_code,
+                    dependencies=runtime.dependencies,
+                )
+            except ConfigurationError as error:
+                return _problem(error)
+            dto = DraftResponseDto.from_domain(result)
+            return IdempotentResponse(
+                status_code=201,
+                body=dto.model_dump(mode="json", by_alias=True),
+                headers={"ETag": entity_tag(result.revision)},
+            )
+
+        return _execute(
+            runtime,
+            actor_id=actor_id,
+            operation="policy_rollback",
+            method="POST",
+            path=request.url.path,
+            key=preflight.idempotency_key,
+            body=body_data,
+            command=command,
+        )
+
+    @router.get(
+        "/policies/{namespace}/versions",
+        operation_id="policy_versions",
+        response_model=PolicyVersionsResponseDto,
+        responses=_PROBLEMS,
+    )
+    def policy_versions_endpoint(
+        namespace: Annotated[str, Path(min_length=1)],
+        principal: Annotated[Any, Depends(principal_provider)],
+        cursor: Annotated[str | None, Query()] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    ) -> PolicyVersionsResponseDto | Response:
+        capability_guard(principal, PLATFORM_CONFIGURATION_MANAGE, None)
+        if cursor is not None and (not cursor.isascii() or not cursor.isdecimal()):
+            return problem_response(422, "Invalid policy version cursor")
+        runtime = runtime_provider()
+        try:
+            with runtime.engine.connect() as db:
+                items, next_cursor = list_policy_versions(
+                    db,
+                    namespace,
+                    before_version=None if cursor is None else int(cursor),
+                    limit=limit,
+                )
+        except PolicySnapshotUnavailable:
+            return problem_response(503, "Effective policy unavailable")
+        return PolicyVersionsResponseDto(
+            items=[PublishedVersionDto.from_domain(item) for item in items],
+            next_cursor=None if next_cursor is None else str(next_cursor),
         )
 
     return router
