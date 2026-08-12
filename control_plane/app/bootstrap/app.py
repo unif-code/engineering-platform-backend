@@ -11,6 +11,7 @@ from control_plane.app import __version__
 from control_plane.app.modules.audit.adapters.transactional import (
     SqlAlchemyTransactionalAuditAppender,
 )
+from control_plane.app.modules.audit.api import AUDIT_READ_CAPABILITY, create_audit_router
 from control_plane.app.modules.authorization import (
     AuthorizationDependencies,
     AuthorizationPrincipal,
@@ -30,7 +31,10 @@ from control_plane.app.modules.authorization.api import (
     AuthorizationHttpRuntime,
     create_authorization_router,
 )
-from control_plane.app.modules.authorization.api.dependencies import current_principal
+from control_plane.app.modules.authorization.api.dependencies import (
+    current_principal,
+    require_capability,
+)
 from control_plane.app.modules.configuration import ConfigurationDependencies
 from control_plane.app.modules.configuration.adapters import IdentityEffectivePolicy
 from control_plane.app.modules.configuration.api import (
@@ -423,6 +427,15 @@ def create_app(
             configuration_http_runtime,
             cast(Callable[[], Any], protected_principal),
             authorization_capability_guard,
+        )
+    )
+    app.include_router(
+        create_audit_router(
+            runtime_engine,
+            require_capability(
+                AUDIT_READ_CAPABILITY,
+                runtime_provider=authorization_http_runtime,
+            ),
         )
     )
 

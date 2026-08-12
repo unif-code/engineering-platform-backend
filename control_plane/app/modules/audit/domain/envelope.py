@@ -17,4 +17,5 @@ class AuditEnvelope(BaseModel):
     result: str
     reason: str | None = None
     correlation_id: str
+    request_id: str | None = None
     schema_version: int = 1
