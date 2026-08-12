@@ -28,7 +28,6 @@ from control_plane.app.modules.identity import (
     policy_draft,
     policy_version_snapshot,
     preview_policy_candidate,
-    publish_policy_version,
     save_policy_draft_preview,
     save_policy_draft_validation,
     update_policy_draft,
@@ -232,10 +231,6 @@ class IdentityPolicyOwner:
             dependency_versions=dependency_versions,
         )
         return None if owned is None else self._draft(owned)
-
-    def publish_version(self, **values: Any) -> PublishedVersion | None:
-        owned = publish_policy_version(self.db, **values)
-        return None if owned is None else PublishedVersion.model_validate(owned.model_dump())
 
     def draft_archive_after(self, namespace: str) -> timedelta:
         try:

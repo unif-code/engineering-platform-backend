@@ -752,23 +752,35 @@ def test_configuration_rw_has_only_publish_and_archive_table_privileges(
         "active_pointer": {"SELECT", "UPDATE"},
         "configuration_idempotency_record": {"SELECT", "INSERT", "UPDATE"},
         "configuration_outbox": {"SELECT", "INSERT"},
-        "auth_challenge": {"SELECT"},
+        "auth_challenge": set(),
     }
     assert audit_dml == set()
-    assert account_privileges == {"SELECT"}
-    assert account_update_columns == {"totp_last_step", "updated_at"}
-    assert challenge_insert_columns == {
-        "id",
-        "token_hash",
-        "purpose",
-        "account_id",
-        "actor_id",
-        "issued_at",
-        "expires_at",
-        "attempt_limit",
-        "attempt_count",
-    }
-    assert challenge_update_columns == {"attempt_count", "consumed_at", "revoked_at"}
+    assert account_privileges == set()
+    assert account_update_columns == set()
+    assert challenge_insert_columns == set()
+    assert challenge_update_columns == set()
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "SELECT password_hash FROM identity.account LIMIT 1",
+        "SELECT totp_sealed FROM identity.account LIMIT 1",
+        "SELECT token_hash FROM identity.auth_challenge LIMIT 1",
+        (
+            "SELECT id FROM identity.auth_challenge "
+            "WHERE purpose NOT IN ('POLICY_PUBLISH', 'POLICY_ROLLBACK') LIMIT 1"
+        ),
+    ],
+    ids=["password-hash", "sealed-totp", "challenge-token", "unrelated-challenge"],
+)
+def test_configuration_runtime_cannot_directly_read_identity_credentials_or_challenges(
+    configuration_rw_engine: Engine,
+    query: str,
+) -> None:
+    with configuration_rw_engine.connect() as db:
+        with pytest.raises(ProgrammingError, match="permission denied"):
+            db.execute(text(query)).all()
 
 
 def test_configuration_rw_cannot_delete_or_create_identity_objects(
@@ -782,7 +794,7 @@ def test_configuration_rw_cannot_delete_or_create_identity_objects(
             db.execute(text("CREATE TABLE identity.configuration_runtime_ddl_forbidden (id int)"))
 
 
-def test_identity_runtime_can_only_read_the_effective_policy_tables(
+def test_identity_runtime_has_exact_policy_command_owner_privileges(
     configuration_owner_engine: Engine,
 ) -> None:
     with configuration_owner_engine.connect() as db:
@@ -804,15 +816,17 @@ def test_identity_runtime_can_only_read_the_effective_policy_tables(
                 "version",
                 "active_pointer",
                 "configuration_idempotency_record",
+                "configuration_outbox",
             )
         }
 
     assert privileges == {
         "policy_key": {"SELECT"},
-        "draft": set(),
-        "version": {"SELECT"},
-        "active_pointer": {"SELECT"},
-        "configuration_idempotency_record": set(),
+        "draft": {"SELECT", "INSERT", "UPDATE"},
+        "version": {"SELECT", "INSERT"},
+        "active_pointer": {"SELECT", "UPDATE"},
+        "configuration_idempotency_record": {"SELECT", "INSERT", "UPDATE"},
+        "configuration_outbox": {"INSERT"},
     }
 
 

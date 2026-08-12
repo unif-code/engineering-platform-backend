@@ -39,6 +39,7 @@ from control_plane.app.modules.configuration.api import (
 )
 from control_plane.app.modules.identity import (
     IdentityDependencies,
+    IdentityPolicyCommandRuntime,
     OwnedPolicySnapshotUnavailable,
     SessionPrincipal,
     current_identity_change_source,
@@ -245,7 +246,6 @@ def configuration_dependencies() -> ConfigurationDependencies:
         clock=SystemClock(),
         random=SystemRandom(),
         audit=SqlAlchemyTransactionalAuditAppender(),
-        identity=identity_dependencies(),
     )
 
 
@@ -255,6 +255,10 @@ def configuration_http_runtime() -> ConfigurationHttpRuntime:
         engine=configuration_runtime_engine(),
         dependencies=configuration_dependencies(),
         secret_manager=FileSecretManager(SecuritySettings()),
+        policy_commands=IdentityPolicyCommandRuntime(
+            identity_runtime_engine(),
+            identity_dependencies(),
+        ),
     )
 
 

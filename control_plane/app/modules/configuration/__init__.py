@@ -16,8 +16,6 @@ from control_plane.app.modules.configuration.application import catalog as _cata
 from control_plane.app.modules.configuration.application import create_draft as _create_draft
 from control_plane.app.modules.configuration.application import policy_versions as _policy_versions
 from control_plane.app.modules.configuration.application import preview as _preview
-from control_plane.app.modules.configuration.application import publish as _publish
-from control_plane.app.modules.configuration.application import rollback as _rollback
 from control_plane.app.modules.configuration.application import update_draft as _update_draft
 from control_plane.app.modules.configuration.application import validate_draft as _validate_draft
 from control_plane.app.modules.configuration.domain import (
@@ -149,56 +147,6 @@ def preview(
     )
 
 
-def publish(
-    db: Connection,
-    *,
-    namespace: str,
-    draft_id: str,
-    actor_id: str,
-    expected_revision: int,
-    reason: str,
-    totp_code: str,
-    dependencies: ConfigurationDependencies,
-) -> PublishedVersion:
-    return _publish(
-        db,
-        IdentityPolicyOwner(db),
-        namespace=namespace,
-        draft_id=draft_id,
-        actor_id=actor_id,
-        expected_revision=expected_revision,
-        reason=reason,
-        totp_code=totp_code,
-        dependencies=dependencies,
-    )
-
-
-def rollback(
-    db: Connection,
-    *,
-    namespace: str,
-    scope: str,
-    to_version: int,
-    actor_id: str,
-    expected_version: int,
-    reason: str,
-    totp_code: str,
-    dependencies: ConfigurationDependencies,
-) -> Draft:
-    return _rollback(
-        db,
-        IdentityPolicyOwner(db),
-        namespace=namespace,
-        scope=scope,
-        to_version=to_version,
-        actor_id=actor_id,
-        expected_version=expected_version,
-        reason=reason,
-        totp_code=totp_code,
-        dependencies=dependencies,
-    )
-
-
 def policy_versions(
     db: Connection,
     namespace: str,
@@ -243,8 +191,6 @@ __all__ = [
     "create_draft",
     "preview",
     "policy_versions",
-    "publish",
-    "rollback",
     "update_draft",
     "validate_draft",
 ]

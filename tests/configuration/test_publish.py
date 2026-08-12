@@ -1,9 +1,10 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
+from dataclasses import fields, replace
 from datetime import UTC, datetime, timedelta
 from threading import Barrier
 from types import SimpleNamespace
+from typing import Any
 from uuid import UUID, uuid4
 
 import pyotp
@@ -18,6 +19,7 @@ from control_plane.app.modules.audit.adapters.transactional import (
 )
 from control_plane.app.modules.configuration import ConfigurationDependencies
 from control_plane.app.modules.configuration.adapters import IdentityEffectivePolicy
+from control_plane.app.modules.identity import IdentityPolicyCommandRuntime
 from control_plane.app.shared.api.problem import register_problem_handlers
 from control_plane.app.shared.api.request_id import request_id_middleware
 from control_plane.app.shared.security import seal
@@ -40,6 +42,10 @@ def _dependencies() -> ConfigurationDependencies:
         random=_Random(),
         audit=SqlAlchemyTransactionalAuditAppender(),
     )
+
+
+def test_configuration_dependencies_do_not_expose_identity_runtime() -> None:
+    assert "identity" not in {field.name for field in fields(ConfigurationDependencies)}
 
 
 def _insert_policy_admin(
@@ -255,30 +261,52 @@ def test_edit_after_preview_invalidates_preview_binding(
 
 
 @pytest.mark.integration
-def test_identity_facade_verifies_fresh_purpose_bound_policy_publish_totp(
+def test_identity_owner_runtime_publishes_with_reauthentication_in_one_transaction(
     configuration_rw_engine: Engine,
+    identity_rw_engine: Engine,
     configuration_owner_engine: Engine,
     configuration_seed: None,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     del configuration_seed
-    from control_plane.app.modules.identity import verify_admin_totp
+    from control_plane.app.modules.configuration import create_draft
+    from control_plane.app.modules.identity import IdentityPolicyCommandRuntime
 
-    dependencies = identity_dependencies()
-    dependencies = replace(dependencies, policy=IdentityEffectivePolicy())
+    identity_deps = replace(identity_dependencies(), policy=IdentityEffectivePolicy())
     actor_id, secret = _insert_policy_admin(
         configuration_owner_engine,
-        dependencies=dependencies,
+        dependencies=identity_deps,
     )
-    now = dependencies.clock.now()
+    configuration_deps = ConfigurationDependencies(
+        clock=_Clock(),
+        random=_Random(),
+        audit=SqlAlchemyTransactionalAuditAppender(),
+    )
+    with configuration_rw_engine.begin() as db:
+        draft = create_draft(
+            db,
+            namespace="identity",
+            values={"identity.session_idle_timeout": 31},
+            actor_id=actor_id,
+            dependencies=configuration_deps,
+        )
+    code = pyotp.TOTP(secret).at(identity_deps.clock.now())
+    monkeypatch.setattr(
+        "control_plane.app.shared.security.totp.time.time",
+        lambda: identity_deps.clock.now().timestamp(),
+    )
+    key = f"identity-owner-publish-{uuid4()}"
+    runtime = IdentityPolicyCommandRuntime(identity_rw_engine, identity_deps)
     try:
-        with configuration_rw_engine.begin() as db:
-            actor = verify_admin_totp(
-                db,
-                actor_id,
-                pyotp.TOTP(secret).now(),
-                purpose="POLICY_PUBLISH",
-                dependencies=dependencies,
-            )
+        response = runtime.publish(
+            actor_id=actor_id,
+            namespace="identity",
+            draft_id=draft.id,
+            expected_revision=1,
+            reason="publish through the Identity owner transaction",
+            totp_code=code,
+            idempotency_key=key,
+        )
         with configuration_owner_engine.connect() as db:
             challenge = db.execute(
                 text(
@@ -287,27 +315,128 @@ def test_identity_facade_verifies_fresh_purpose_bound_policy_publish_totp(
                 ),
                 {"actor_id": actor_id},
             ).one()
-        assert actor.name == "Policy Admin"
+            pointer = db.execute(
+                text(
+                    "SELECT version FROM identity.active_pointer "
+                    "WHERE namespace='identity' AND scope='PLATFORM'"
+                )
+            ).scalar_one()
+        assert response.status_code == 201
+        assert response.body["version"] == pointer == 2
         assert challenge.purpose == "POLICY_PUBLISH"
-        assert challenge.consumed_at == now
+        assert challenge.consumed_at == identity_deps.clock.now()
         assert challenge.attempt_count == 0
     finally:
+        with configuration_owner_engine.begin() as db:
+            db.execute(
+                text("DELETE FROM identity.configuration_idempotency_record WHERE actor=:actor"),
+                {"actor": actor_id},
+            )
+            db.execute(
+                text(
+                    "UPDATE identity.active_pointer SET version=1 "
+                    "WHERE namespace='identity' AND scope='PLATFORM'"
+                )
+            )
+            db.execute(
+                text(
+                    "DELETE FROM identity.configuration_outbox "
+                    "WHERE aggregate_id='identity:PLATFORM:2'"
+                )
+            )
+            db.execute(
+                text(
+                    "DELETE FROM identity.version WHERE namespace='identity' "
+                    "AND scope='PLATFORM' AND version=2"
+                )
+            )
+            db.execute(text("DELETE FROM identity.draft WHERE id=:id"), {"id": draft.id})
+        _delete_policy_admin(configuration_owner_engine, actor_id)
+
+
+@pytest.mark.integration
+def test_identity_owner_runtime_creates_rollback_draft_in_one_transaction(
+    identity_rw_engine: Engine,
+    configuration_owner_engine: Engine,
+    configuration_seed: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del configuration_seed
+    from control_plane.app.modules.identity import IdentityPolicyCommandRuntime
+
+    identity_deps = replace(identity_dependencies(), policy=IdentityEffectivePolicy())
+    actor_id, secret = _insert_policy_admin(
+        configuration_owner_engine,
+        dependencies=identity_deps,
+    )
+    monkeypatch.setattr(
+        "control_plane.app.shared.security.totp.time.time",
+        lambda: identity_deps.clock.now().timestamp(),
+    )
+    runtime = IdentityPolicyCommandRuntime(identity_rw_engine, identity_deps)
+    key = f"identity-owner-rollback-{uuid4()}"
+    draft_id: str | None = None
+    try:
+        response = runtime.rollback(
+            actor_id=actor_id,
+            namespace="identity",
+            scope="PLATFORM",
+            to_version=1,
+            expected_version=1,
+            reason="prepare rollback through the Identity owner transaction",
+            totp_code=pyotp.TOTP(secret).at(identity_deps.clock.now()),
+            idempotency_key=key,
+        )
+        draft_id = str(response.body["id"])
+        with configuration_owner_engine.connect() as db:
+            pointer = db.execute(
+                text(
+                    "SELECT version FROM identity.active_pointer "
+                    "WHERE namespace='identity' AND scope='PLATFORM'"
+                )
+            ).scalar_one()
+            stored = db.execute(
+                text(
+                    "SELECT base_version, rollback_from_version FROM identity.draft "
+                    "WHERE id=:draft_id"
+                ),
+                {"draft_id": draft_id},
+            ).one()
+            challenge = db.execute(
+                text(
+                    "SELECT purpose, consumed_at FROM identity.auth_challenge "
+                    "WHERE account_id=:actor_id"
+                ),
+                {"actor_id": actor_id},
+            ).one()
+        assert response.status_code == 201
+        assert pointer == 1
+        assert tuple(stored) == (1, 1)
+        assert tuple(challenge) == ("POLICY_ROLLBACK", identity_deps.clock.now())
+    finally:
+        with configuration_owner_engine.begin() as db:
+            db.execute(
+                text("DELETE FROM identity.configuration_idempotency_record WHERE actor=:actor"),
+                {"actor": actor_id},
+            )
+            if draft_id is not None:
+                db.execute(
+                    text("DELETE FROM identity.draft WHERE id=:draft_id"),
+                    {"draft_id": draft_id},
+                )
         _delete_policy_admin(configuration_owner_engine, actor_id)
 
 
 @pytest.mark.integration
 def test_concurrent_publish_has_one_winner_without_duplicate_totp_side_effect(
     configuration_rw_engine: Engine,
+    identity_rw_engine: Engine,
     configuration_owner_engine: Engine,
     configuration_seed: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     del configuration_seed
-    from control_plane.app.modules.configuration import (
-        SourceStale,
-        create_draft,
-        publish,
-    )
+    from control_plane.app.modules.configuration import create_draft
 
     identity_deps = replace(identity_dependencies(), policy=IdentityEffectivePolicy())
     actor_id, secret = _insert_policy_admin(
@@ -318,7 +447,6 @@ def test_concurrent_publish_has_one_winner_without_duplicate_totp_side_effect(
         clock=_Clock(),
         random=_Random(),
         audit=SqlAlchemyTransactionalAuditAppender(),
-        identity=identity_deps,
     )
     monkeypatch.setattr(
         "control_plane.app.shared.security.totp.time.time",
@@ -340,24 +468,24 @@ def test_concurrent_publish_has_one_winner_without_duplicate_totp_side_effect(
             dependencies=dependencies,
         )
     ready = Barrier(2)
+    owner_runtime = IdentityPolicyCommandRuntime(identity_rw_engine, identity_deps)
 
     def attempt(draft_id: str, revision: int) -> tuple[str, int | None]:
         ready.wait()
-        with configuration_rw_engine.begin() as db:
-            try:
-                result = publish(
-                    db,
-                    namespace="identity",
-                    draft_id=draft_id,
-                    actor_id=actor_id,
-                    expected_revision=revision,
-                    reason=f"concurrent publish {draft_id}",
-                    totp_code=pyotp.TOTP(secret).at(identity_deps.clock.now()),
-                    dependencies=dependencies,
-                )
-            except SourceStale:
-                return "SOURCE_STALE", None
-            return "PUBLISHED", result.version
+        response = owner_runtime.publish(
+            namespace="identity",
+            draft_id=draft_id,
+            actor_id=actor_id,
+            expected_revision=revision,
+            reason=f"concurrent publish {draft_id}",
+            totp_code=pyotp.TOTP(secret).at(identity_deps.clock.now()),
+            idempotency_key=f"concurrent-{draft_id}",
+        )
+        if response.status_code == 409:
+            assert response.body["code"] == "SOURCE_STALE"
+            return "SOURCE_STALE", None
+        assert response.status_code == 201
+        return "PUBLISHED", int(response.body["version"])
 
     try:
         with ThreadPoolExecutor(max_workers=2) as executor:
@@ -429,6 +557,10 @@ def test_concurrent_publish_has_one_winner_without_duplicate_totp_side_effect(
     finally:
         with configuration_owner_engine.begin() as db:
             db.execute(
+                text("DELETE FROM identity.configuration_idempotency_record WHERE actor=:actor"),
+                {"actor": actor_id},
+            )
+            db.execute(
                 text(
                     "UPDATE identity.active_pointer SET version=1 "
                     "WHERE namespace='identity' AND scope='PLATFORM'"
@@ -456,6 +588,7 @@ def test_concurrent_publish_has_one_winner_without_duplicate_totp_side_effect(
 @pytest.mark.integration
 def test_policy_http_lifecycle_replays_source_stale_and_uses_fresh_totp_once(
     configuration_rw_engine: Engine,
+    identity_rw_engine: Engine,
     configuration_owner_engine: Engine,
     configuration_seed: None,
     monkeypatch: pytest.MonkeyPatch,
@@ -476,7 +609,6 @@ def test_policy_http_lifecycle_replays_source_stale_and_uses_fresh_totp_once(
         clock=_Clock(),
         random=_Random(),
         audit=SqlAlchemyTransactionalAuditAppender(),
-        identity=identity_deps,
     )
     monkeypatch.setattr(
         "control_plane.app.shared.security.totp.time.time",
@@ -502,6 +634,7 @@ def test_policy_http_lifecycle_replays_source_stale_and_uses_fresh_totp_once(
         engine=configuration_rw_engine,
         dependencies=dependencies,
         secret_manager=identity_deps.secret_manager,
+        policy_commands=IdentityPolicyCommandRuntime(identity_rw_engine, identity_deps),
     )
     app = FastAPI()
     register_problem_handlers(app)
@@ -689,6 +822,7 @@ def test_policy_http_lifecycle_replays_source_stale_and_uses_fresh_totp_once(
 @pytest.mark.integration
 def test_wrong_publish_totp_replays_one_safe_denial_without_domain_facts(
     configuration_rw_engine: Engine,
+    identity_rw_engine: Engine,
     configuration_owner_engine: Engine,
     configuration_seed: None,
     monkeypatch: pytest.MonkeyPatch,
@@ -709,7 +843,6 @@ def test_wrong_publish_totp_replays_one_safe_denial_without_domain_facts(
         clock=_Clock(),
         random=_Random(),
         audit=SqlAlchemyTransactionalAuditAppender(),
-        identity=identity_deps,
     )
     monkeypatch.setattr(
         "control_plane.app.shared.security.totp.time.time",
@@ -729,6 +862,7 @@ def test_wrong_publish_totp_replays_one_safe_denial_without_domain_facts(
         engine=configuration_rw_engine,
         dependencies=dependencies,
         secret_manager=identity_deps.secret_manager,
+        policy_commands=IdentityPolicyCommandRuntime(identity_rw_engine, identity_deps),
     )
     app = FastAPI()
     register_problem_handlers(app)
@@ -823,8 +957,180 @@ def test_wrong_publish_totp_replays_one_safe_denial_without_domain_facts(
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("operation", ["publish", "rollback"])
+def test_current_super_admin_recheck_denial_is_durable_after_guard_race(
+    operation: str,
+    configuration_rw_engine: Engine,
+    identity_rw_engine: Engine,
+    configuration_owner_engine: Engine,
+    configuration_seed: None,
+) -> None:
+    del configuration_seed
+    from control_plane.app.modules.configuration import create_draft
+    from control_plane.app.modules.configuration.api import (
+        ConfigurationHttpRuntime,
+        create_configuration_router,
+    )
+
+    identity_deps = replace(identity_dependencies(), policy=IdentityEffectivePolicy())
+    actor_id, secret = _insert_policy_admin(
+        configuration_owner_engine,
+        dependencies=identity_deps,
+    )
+    dependencies = ConfigurationDependencies(
+        clock=_Clock(),
+        random=_Random(),
+        audit=SqlAlchemyTransactionalAuditAppender(),
+    )
+    with configuration_rw_engine.begin() as db:
+        draft = create_draft(
+            db,
+            namespace="identity",
+            values={"identity.session_idle_timeout": 31},
+            actor_id=actor_id,
+            dependencies=dependencies,
+        )
+
+    runtime = ConfigurationHttpRuntime(
+        engine=configuration_rw_engine,
+        dependencies=dependencies,
+        secret_manager=identity_deps.secret_manager,
+        policy_commands=IdentityPolicyCommandRuntime(identity_rw_engine, identity_deps),
+    )
+    guard_calls = 0
+    runtime_calls = 0
+
+    def capability_guard(_principal: object, _capability: str, _scope: str | None) -> None:
+        nonlocal guard_calls
+        guard_calls += 1
+
+    def runtime_provider() -> ConfigurationHttpRuntime:
+        nonlocal runtime_calls
+        runtime_calls += 1
+        assert guard_calls == runtime_calls
+        if runtime_calls == 1:
+            with configuration_owner_engine.begin() as db:
+                changed = db.execute(
+                    text(
+                        "UPDATE identity.account SET status='DISABLED', updated_at=:now "
+                        "WHERE id=:actor_id AND status='ENABLED'"
+                    ),
+                    {"actor_id": actor_id, "now": dependencies.clock.now()},
+                )
+                assert changed.rowcount == 1
+        return runtime
+
+    app = FastAPI()
+    register_problem_handlers(app)
+    app.middleware("http")(request_id_middleware)
+    app.include_router(
+        create_configuration_router(
+            runtime_provider,
+            lambda: SimpleNamespace(account_id=actor_id),
+            capability_guard,
+        )
+    )
+    client = TestClient(app, base_url="https://testserver", raise_server_exceptions=False)
+    key = f"current-admin-race-{operation}-{uuid4()}"
+    if operation == "publish":
+        path = f"/api/v1/admin/policies/identity/drafts/{draft.id}/publish"
+        body: dict[str, Any] = {
+            "reason": "publish only after owner transaction recheck",
+            "totpCode": pyotp.TOTP(secret).at(identity_deps.clock.now()),
+        }
+        expected_audit = "configuration.policy.publish_denied"
+        expected_idempotency_operation = "draft_publish"
+    else:
+        path = "/api/v1/admin/policies/identity/rollback"
+        body = {
+            "scope": "PLATFORM",
+            "toVersion": 1,
+            "reason": "rollback only after owner transaction recheck",
+            "totpCode": pyotp.TOTP(secret).at(identity_deps.clock.now()),
+        }
+        expected_audit = "configuration.policy.rollback_denied"
+        expected_idempotency_operation = "policy_rollback"
+    headers = {
+        "Origin": "https://testserver",
+        "Sec-Fetch-Site": "same-origin",
+        "Idempotency-Key": key,
+        "If-Match": '"v1"',
+    }
+    first_request_id = f"req-admin{operation}first"
+    replay_request_id = f"req-admin{operation}replay"
+    try:
+        first = client.post(
+            path,
+            json=body,
+            headers={**headers, "X-Request-ID": first_request_id},
+        )
+        replay = client.post(
+            path,
+            json=body,
+            headers={**headers, "X-Request-ID": replay_request_id},
+        )
+        with configuration_owner_engine.connect() as db:
+            facts = db.execute(
+                text(
+                    "SELECT "
+                    "(SELECT version FROM identity.active_pointer "
+                    " WHERE namespace='identity' AND scope='PLATFORM'), "
+                    "(SELECT count(*) FROM identity.version "
+                    " WHERE namespace='identity' AND scope='PLATFORM' AND version>1), "
+                    "(SELECT count(*) FROM identity.configuration_outbox), "
+                    "(SELECT count(*) FROM identity.auth_challenge "
+                    " WHERE account_id=:actor_uuid AND purpose IN "
+                    " ('POLICY_PUBLISH', 'POLICY_ROLLBACK'))"
+                ),
+                {"actor_uuid": actor_id},
+            ).one()
+            denials = db.execute(
+                text(
+                    "SELECT action, reason, correlation_id FROM audit.audit_event "
+                    "WHERE actor=:actor_id AND action=:action ORDER BY occurred_at"
+                ),
+                {"actor_id": actor_id, "action": expected_audit},
+            ).all()
+            idempotency = db.execute(
+                text(
+                    "SELECT state, http_status FROM identity.configuration_idempotency_record "
+                    "WHERE actor=:actor_id AND operation=:operation AND idempotency_key=:key"
+                ),
+                {
+                    "actor_id": actor_id,
+                    "operation": expected_idempotency_operation,
+                    "key": key,
+                },
+            ).one()
+
+        assert first.status_code == replay.status_code == 403
+        assert first.json()["code"] == replay.json()["code"] == "REAUTHENTICATION_FAILED"
+        assert first.json()["requestId"] == first_request_id
+        assert replay.json()["requestId"] == replay_request_id
+        assert facts == (1, 0, 0, 0)
+        assert [tuple(row) for row in denials] == [
+            (
+                expected_audit,
+                "namespace=identity; reasonCode=REAUTHENTICATION_FAILED",
+                first_request_id,
+            )
+        ]
+        assert tuple(idempotency) == ("COMPLETED", 403)
+        assert guard_calls == runtime_calls == 2
+    finally:
+        with configuration_owner_engine.begin() as db:
+            db.execute(
+                text("DELETE FROM identity.configuration_idempotency_record WHERE actor=:actor"),
+                {"actor": actor_id},
+            )
+            db.execute(text("DELETE FROM identity.draft WHERE id=:id"), {"id": draft.id})
+        _delete_policy_admin(configuration_owner_engine, actor_id)
+
+
+@pytest.mark.integration
 def test_unexpected_publish_failure_rolls_back_every_fact_and_idempotency_claim(
     configuration_rw_engine: Engine,
+    identity_rw_engine: Engine,
     configuration_owner_engine: Engine,
     configuration_seed: None,
     monkeypatch: pytest.MonkeyPatch,
@@ -849,7 +1155,6 @@ def test_unexpected_publish_failure_rolls_back_every_fact_and_idempotency_claim(
         clock=_Clock(),
         random=_Random(),
         audit=SqlAlchemyTransactionalAuditAppender(),
-        identity=identity_deps,
     )
     with configuration_rw_engine.begin() as db:
         draft = create_draft(
@@ -859,7 +1164,11 @@ def test_unexpected_publish_failure_rolls_back_every_fact_and_idempotency_claim(
             actor_id=actor_id,
             dependencies=setup_dependencies,
         )
-    failing_dependencies = replace(setup_dependencies, audit=_FailingAudit())
+    failing_identity_deps = replace(identity_deps, audit=_FailingAudit())
+    failing_dependencies = replace(
+        setup_dependencies,
+        audit=_FailingAudit(),
+    )
     monkeypatch.setattr(
         "control_plane.app.shared.security.totp.time.time",
         lambda: identity_deps.clock.now().timestamp(),
@@ -868,6 +1177,10 @@ def test_unexpected_publish_failure_rolls_back_every_fact_and_idempotency_claim(
         engine=configuration_rw_engine,
         dependencies=failing_dependencies,
         secret_manager=identity_deps.secret_manager,
+        policy_commands=IdentityPolicyCommandRuntime(
+            identity_rw_engine,
+            failing_identity_deps,
+        ),
     )
     app = FastAPI()
     register_problem_handlers(app)
@@ -932,11 +1245,13 @@ def test_unexpected_publish_failure_rolls_back_every_fact_and_idempotency_claim(
 @pytest.mark.integration
 def test_publish_atomically_activates_immutable_version_and_stales_other_drafts(
     configuration_rw_engine: Engine,
+    identity_rw_engine: Engine,
     configuration_owner_engine: Engine,
     configuration_seed: None,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     del configuration_seed
-    from control_plane.app.modules.configuration import create_draft, preview, publish
+    from control_plane.app.modules.configuration import create_draft, preview
 
     identity_deps = replace(identity_dependencies(), policy=IdentityEffectivePolicy())
     actor_id, secret = _insert_policy_admin(
@@ -947,87 +1262,89 @@ def test_publish_atomically_activates_immutable_version_and_stales_other_drafts(
         clock=_Clock(),
         random=_Random(),
         audit=SqlAlchemyTransactionalAuditAppender(),
-        identity=identity_deps,
     )
+    monkeypatch.setattr(
+        "control_plane.app.shared.security.totp.time.time",
+        lambda: identity_deps.clock.now().timestamp(),
+    )
+    with configuration_owner_engine.connect() as db:
+        history_before = db.execute(
+            text(
+                "SELECT snapshot::text, snapshot_hash FROM identity.version "
+                "WHERE namespace='identity' AND scope='PLATFORM' AND version=1"
+            )
+        ).one()
+    with configuration_rw_engine.begin() as db:
+        other = create_draft(
+            db,
+            namespace="identity",
+            values={"identity.session_cap": 4},
+            actor_id=actor_id,
+            dependencies=dependencies,
+        )
+        source = create_draft(
+            db,
+            namespace="identity",
+            values={"identity.session_idle_timeout": 30},
+            actor_id=actor_id,
+            dependencies=dependencies,
+        )
+        preview(
+            db,
+            namespace="identity",
+            draft_id=source.id,
+            actor_id=actor_id,
+            expected_revision=source.revision,
+            dependencies=dependencies,
+        )
+    owner_runtime = IdentityPolicyCommandRuntime(identity_rw_engine, identity_deps)
     try:
-        with configuration_rw_engine.connect() as db:
-            transaction = db.begin()
-            try:
-                history_before = db.execute(
+        published = owner_runtime.publish(
+            namespace="identity",
+            draft_id=source.id,
+            actor_id=actor_id,
+            expected_revision=source.revision,
+            reason="reduce idle exposure",
+            totp_code=pyotp.TOTP(secret).at(identity_deps.clock.now()),
+            idempotency_key=f"atomic-publish-{uuid4()}",
+        )
+        with configuration_owner_engine.connect() as db:
+            active_version = db.execute(
+                text(
+                    "SELECT version FROM identity.active_pointer "
+                    "WHERE namespace='identity' AND scope='PLATFORM'"
+                )
+            ).scalar_one()
+            stored = (
+                db.execute(
                     text(
-                        "SELECT snapshot::text, snapshot_hash FROM identity.version "
-                        "WHERE namespace='identity' AND scope='PLATFORM' AND version=1"
+                        "SELECT snapshot, changeset, validation_evidence, preview_evidence, "
+                        "published_at, activated_at FROM identity.version "
+                        "WHERE namespace='identity' AND scope='PLATFORM' AND version=2"
                     )
-                ).one()
-                other = create_draft(
-                    db,
-                    namespace="identity",
-                    values={"identity.session_cap": 4},
-                    actor_id=actor_id,
-                    dependencies=dependencies,
                 )
-                source = create_draft(
-                    db,
-                    namespace="identity",
-                    values={"identity.session_idle_timeout": 30},
-                    actor_id=actor_id,
-                    dependencies=dependencies,
+                .mappings()
+                .one()
+            )
+            history_after = db.execute(
+                text(
+                    "SELECT snapshot::text, snapshot_hash FROM identity.version "
+                    "WHERE namespace='identity' AND scope='PLATFORM' AND version=1"
                 )
-                preview(
-                    db,
-                    namespace="identity",
-                    draft_id=source.id,
-                    actor_id=actor_id,
-                    expected_revision=source.revision,
-                    dependencies=dependencies,
+            ).one()
+            other_stale = db.execute(
+                text("SELECT stale FROM identity.draft WHERE id=:draft_id"),
+                {"draft_id": other.id},
+            ).scalar_one()
+            outbox_count = db.execute(
+                text(
+                    "SELECT count(*) FROM identity.configuration_outbox "
+                    "WHERE event_type='POLICY_PUBLISHED' AND aggregate_id='identity:PLATFORM:2'"
                 )
-                published = publish(
-                    db,
-                    namespace="identity",
-                    draft_id=source.id,
-                    actor_id=actor_id,
-                    expected_revision=source.revision,
-                    reason="reduce idle exposure",
-                    totp_code=pyotp.TOTP(secret).now(),
-                    dependencies=dependencies,
-                )
-                active_version = db.execute(
-                    text(
-                        "SELECT version FROM identity.active_pointer "
-                        "WHERE namespace='identity' AND scope='PLATFORM'"
-                    )
-                ).scalar_one()
-                stored = (
-                    db.execute(
-                        text(
-                            "SELECT snapshot, changeset, validation_evidence, preview_evidence, "
-                            "published_at, activated_at FROM identity.version "
-                            "WHERE namespace='identity' AND scope='PLATFORM' AND version=2"
-                        )
-                    )
-                    .mappings()
-                    .one()
-                )
-                history_after = db.execute(
-                    text(
-                        "SELECT snapshot::text, snapshot_hash FROM identity.version "
-                        "WHERE namespace='identity' AND scope='PLATFORM' AND version=1"
-                    )
-                ).one()
-                other_stale = db.execute(
-                    text("SELECT stale FROM identity.draft WHERE id=:draft_id"),
-                    {"draft_id": other.id},
-                ).scalar_one()
-                outbox_count = db.execute(
-                    text(
-                        "SELECT count(*) FROM identity.configuration_outbox "
-                        "WHERE event_type='POLICY_PUBLISHED' AND aggregate_id='identity:PLATFORM:2'"
-                    )
-                ).scalar_one()
-            finally:
-                transaction.rollback()
+            ).scalar_one()
 
-        assert published.version == active_version == 2
+        assert published.status_code == 201
+        assert published.body["version"] == active_version == 2
         assert stored["snapshot"]["identity.session_idle_timeout"] == 30
         assert stored["changeset"]["items"] == [
             {
@@ -1043,18 +1360,46 @@ def test_publish_atomically_activates_immutable_version_and_stales_other_drafts(
         assert other_stale is True
         assert outbox_count == 1
     finally:
+        with configuration_owner_engine.begin() as db:
+            db.execute(
+                text("DELETE FROM identity.configuration_idempotency_record WHERE actor=:actor"),
+                {"actor": actor_id},
+            )
+            db.execute(
+                text(
+                    "UPDATE identity.active_pointer SET version=1 "
+                    "WHERE namespace='identity' AND scope='PLATFORM'"
+                )
+            )
+            db.execute(
+                text(
+                    "DELETE FROM identity.configuration_outbox "
+                    "WHERE aggregate_id='identity:PLATFORM:2'"
+                )
+            )
+            db.execute(
+                text(
+                    "DELETE FROM identity.version WHERE namespace='identity' "
+                    "AND scope='PLATFORM' AND version=2"
+                )
+            )
+            db.execute(
+                text("DELETE FROM identity.draft WHERE id IN (:other, :source)"),
+                {"other": other.id, "source": source.id},
+            )
         _delete_policy_admin(configuration_owner_engine, actor_id)
 
 
 @pytest.mark.integration
 def test_rollback_creates_a_new_draft_and_republish_uses_a_higher_version(
     configuration_rw_engine: Engine,
+    identity_rw_engine: Engine,
     configuration_owner_engine: Engine,
     configuration_seed: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     del configuration_seed
-    from control_plane.app.modules.configuration import publish, rollback
+    del configuration_rw_engine
 
     identity_deps = replace(identity_dependencies(), policy=IdentityEffectivePolicy())
     actor_id, secret = _insert_policy_admin(
@@ -1119,64 +1464,60 @@ def test_rollback_creates_a_new_draft_and_republish_uses_a_higher_version(
                 "WHERE namespace='identity' AND scope='PLATFORM'"
             )
         )
-    dependencies = ConfigurationDependencies(
-        clock=_Clock(),
-        random=_Random(),
-        audit=SqlAlchemyTransactionalAuditAppender(),
-        identity=identity_deps,
-    )
     monkeypatch.setattr(
         "control_plane.app.shared.security.totp.time.time",
         lambda: identity_deps.clock.now().timestamp(),
     )
+    owner_runtime = IdentityPolicyCommandRuntime(identity_rw_engine, identity_deps)
+    rollback_draft_id: str | None = None
     try:
-        with configuration_rw_engine.connect() as db:
-            transaction = db.begin()
-            try:
-                draft = rollback(
-                    db,
-                    namespace="identity",
-                    scope="PLATFORM",
-                    to_version=1,
-                    actor_id=actor_id,
-                    expected_version=2,
-                    reason="restore prior idle policy",
-                    totp_code=pyotp.TOTP(secret).at(identity_deps.clock.now()),
-                    dependencies=dependencies,
+        draft = owner_runtime.rollback(
+            namespace="identity",
+            scope="PLATFORM",
+            to_version=1,
+            actor_id=actor_id,
+            expected_version=2,
+            reason="restore prior idle policy",
+            totp_code=pyotp.TOTP(secret).at(identity_deps.clock.now()),
+            idempotency_key=f"rollback-history-{uuid4()}",
+        )
+        rollback_draft_id = str(draft.body["id"])
+        with configuration_owner_engine.connect() as db:
+            pointer_after_draft = db.execute(
+                text(
+                    "SELECT version FROM identity.active_pointer "
+                    "WHERE namespace='identity' AND scope='PLATFORM'"
                 )
-                pointer_after_draft = db.execute(
-                    text(
-                        "SELECT version FROM identity.active_pointer "
-                        "WHERE namespace='identity' AND scope='PLATFORM'"
-                    )
-                ).scalar_one()
-                identity_deps.clock.value += timedelta(seconds=30)  # type: ignore[attr-defined]
-                published = publish(
-                    db,
-                    namespace="identity",
-                    draft_id=draft.id,
-                    actor_id=actor_id,
-                    expected_revision=draft.revision,
-                    reason="publish reviewed rollback",
-                    totp_code=pyotp.TOTP(secret).at(identity_deps.clock.now()),
-                    dependencies=dependencies,
+            ).scalar_one()
+        identity_deps.clock.value += timedelta(seconds=30)  # type: ignore[attr-defined]
+        published = owner_runtime.publish(
+            namespace="identity",
+            draft_id=rollback_draft_id,
+            actor_id=actor_id,
+            expected_revision=int(draft.body["revision"]),
+            reason="publish reviewed rollback",
+            totp_code=pyotp.TOTP(secret).at(identity_deps.clock.now()),
+            idempotency_key=f"publish-rollback-{uuid4()}",
+        )
+        with configuration_owner_engine.connect() as db:
+            history_after = db.execute(
+                text(
+                    "SELECT snapshot::text, snapshot_hash FROM identity.version "
+                    "WHERE namespace='identity' AND scope='PLATFORM' AND version=1"
                 )
-                history_after = db.execute(
-                    text(
-                        "SELECT snapshot::text, snapshot_hash FROM identity.version "
-                        "WHERE namespace='identity' AND scope='PLATFORM' AND version=1"
-                    )
-                ).one()
-            finally:
-                transaction.rollback()
+            ).one()
 
-        assert draft.base_version == pointer_after_draft == 2
-        assert draft.rollback_from_version == 1
-        assert published.version == 3
-        assert published.snapshot == draft.content
+        assert draft.body["baseVersion"] == pointer_after_draft == 2
+        assert draft.body["rollbackFromVersion"] == 1
+        assert published.body["version"] == 3
+        assert published.body["snapshot"] == draft.body["content"]
         assert history_after == history_before
     finally:
         with configuration_owner_engine.begin() as db:
+            db.execute(
+                text("DELETE FROM identity.configuration_idempotency_record WHERE actor=:actor"),
+                {"actor": actor_id},
+            )
             db.execute(
                 text(
                     "UPDATE identity.active_pointer SET version=1 "
@@ -1195,4 +1536,9 @@ def test_rollback_creates_a_new_draft_and_republish_uses_a_higher_version(
                     "AND scope='PLATFORM' AND version IN (2, 3)"
                 )
             )
+            if rollback_draft_id is not None:
+                db.execute(
+                    text("DELETE FROM identity.draft WHERE id=:draft_id"),
+                    {"draft_id": rollback_draft_id},
+                )
         _delete_policy_admin(configuration_owner_engine, actor_id)

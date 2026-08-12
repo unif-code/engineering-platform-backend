@@ -1,5 +1,4 @@
 import json
-from dataclasses import replace
 from datetime import timedelta
 from io import StringIO
 from typing import Any
@@ -12,9 +11,7 @@ from control_plane.app.modules.audit.adapters.transactional import (
     SqlAlchemyTransactionalAuditAppender,
 )
 from control_plane.app.modules.configuration import ConfigurationDependencies, create_draft
-from control_plane.app.modules.configuration.adapters import IdentityEffectivePolicy
 from tests.configuration.test_publish import _Clock, _Random
-from tests.identity.task5_helpers import dependencies as identity_dependencies
 
 
 @pytest.mark.integration
@@ -26,12 +23,10 @@ def test_archive_uses_active_policy_boundary_is_idempotent_and_only_transitions_
     del configuration_seed
     from control_plane.app.modules.configuration import archive_stale_drafts
 
-    identity_deps = replace(identity_dependencies(), policy=IdentityEffectivePolicy())
     dependencies = ConfigurationDependencies(
         clock=_Clock(),
         random=_Random(),
         audit=SqlAlchemyTransactionalAuditAppender(),
-        identity=identity_deps,
     )
     owner_id = f"archive-owner-{uuid4()}"
     now = dependencies.clock.now()

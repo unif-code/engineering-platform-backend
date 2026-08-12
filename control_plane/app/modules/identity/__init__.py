@@ -8,6 +8,9 @@ from sqlalchemy import Connection
 from control_plane.app.modules.identity.adapters.configuration_policy import (
     SqlAlchemyIdentityPolicyOwnerRepository,
 )
+from control_plane.app.modules.identity.adapters.policy_commands import (
+    IdentityPolicyCommandRuntime,
+)
 from control_plane.app.modules.identity.application.accounts import (
     consume_temp_password as _consume_temp_password,
 )
@@ -838,6 +841,7 @@ __all__ = [
     "EffectivePolicyPort",
     "IdentityDependencies",
     "IdentityChangeSource",
+    "IdentityPolicyCommandRuntime",
     "IdentityRepositoryFactory",
     "InvalidAccountTransition",
     "IssuedSession",

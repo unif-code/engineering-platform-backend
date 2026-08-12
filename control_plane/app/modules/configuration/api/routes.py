@@ -24,8 +24,6 @@ from control_plane.app.modules.configuration import (
     catalog,
     create_draft,
     preview,
-    publish,
-    rollback,
     update_draft,
     validate_draft,
 )
@@ -46,6 +44,10 @@ from control_plane.app.modules.configuration.api.dto import (
     PublishedVersionDto,
     RollbackPolicyRequestDto,
     ValidateDraftRequestDto,
+)
+from control_plane.app.modules.identity import (
+    IdentityPolicyCommandRuntime,
+    OwnedPolicySnapshotUnavailable,
 )
 from control_plane.app.shared.api.concurrency import entity_tag, require_if_match
 from control_plane.app.shared.api.idempotency import require_idempotency_key
@@ -95,6 +97,7 @@ class ConfigurationHttpRuntime:
     engine: Engine
     dependencies: ConfigurationDependencies
     secret_manager: SecretManagerPort
+    policy_commands: IdentityPolicyCommandRuntime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,6 +264,23 @@ def _execute(
     except PolicySnapshotUnavailable:
         return problem_response(503, "Effective policy unavailable")
     return _render(execution.response)
+
+
+def _policy_commands(runtime: ConfigurationHttpRuntime) -> IdentityPolicyCommandRuntime:
+    if runtime.policy_commands is None:
+        raise RuntimeError("Identity policy command runtime is unavailable")
+    return runtime.policy_commands
+
+
+def _execute_policy_command(command: Callable[[], IdempotentResponse]) -> Response:
+    try:
+        return _render(command())
+    except IdempotencyConflict:
+        return problem_response(409, "Idempotency conflict")
+    except IdempotencyReplayUnavailable:
+        return problem_response(409, "Idempotency replay unavailable")
+    except OwnedPolicySnapshotUnavailable:
+        return problem_response(503, "Effective policy unavailable")
 
 
 def create_configuration_router(
@@ -504,41 +524,16 @@ def create_configuration_router(
         capability_guard(principal, PLATFORM_CONFIGURATION_MANAGE, None)
         runtime = runtime_provider()
         actor_id = _account_id(principal)
-        body_data: dict[str, object] = {
-            **body.model_dump(mode="json", by_alias=True),
-            "expectedRevision": preflight.expected_revision,
-        }
-
-        def command(db: Any) -> IdempotentResponse:
-            try:
-                result = publish(
-                    db,
-                    namespace=namespace,
-                    draft_id=draft_id,
-                    actor_id=actor_id,
-                    expected_revision=preflight.expected_revision,
-                    reason=body.reason,
-                    totp_code=body.totp_code,
-                    dependencies=runtime.dependencies,
-                )
-            except ConfigurationError as error:
-                return _problem(error)
-            dto = PublishedVersionDto.from_domain(result)
-            return IdempotentResponse(
-                status_code=201,
-                body=dto.model_dump(mode="json", by_alias=True),
-                headers={"ETag": entity_tag(result.version)},
+        return _execute_policy_command(
+            lambda: _policy_commands(runtime).publish(
+                actor_id=actor_id,
+                namespace=namespace,
+                draft_id=draft_id,
+                expected_revision=preflight.expected_revision,
+                reason=body.reason,
+                totp_code=body.totp_code,
+                idempotency_key=preflight.idempotency_key,
             )
-
-        return _execute(
-            runtime,
-            actor_id=actor_id,
-            operation="draft_publish",
-            method="POST",
-            path=request.url.path,
-            key=preflight.idempotency_key,
-            body=body_data,
-            command=command,
         )
 
     @router.post(
@@ -559,42 +554,17 @@ def create_configuration_router(
         capability_guard(principal, PLATFORM_CONFIGURATION_MANAGE, None)
         runtime = runtime_provider()
         actor_id = _account_id(principal)
-        body_data: dict[str, object] = {
-            **body.model_dump(mode="json", by_alias=True),
-            "expectedVersion": preflight.expected_revision,
-        }
-
-        def command(db: Any) -> IdempotentResponse:
-            try:
-                result = rollback(
-                    db,
-                    namespace=namespace,
-                    scope=body.scope,
-                    to_version=body.to_version,
-                    actor_id=actor_id,
-                    expected_version=preflight.expected_revision,
-                    reason=body.reason,
-                    totp_code=body.totp_code,
-                    dependencies=runtime.dependencies,
-                )
-            except ConfigurationError as error:
-                return _problem(error)
-            dto = DraftResponseDto.from_domain(result)
-            return IdempotentResponse(
-                status_code=201,
-                body=dto.model_dump(mode="json", by_alias=True),
-                headers={"ETag": entity_tag(result.revision)},
+        return _execute_policy_command(
+            lambda: _policy_commands(runtime).rollback(
+                actor_id=actor_id,
+                namespace=namespace,
+                scope=body.scope,
+                to_version=body.to_version,
+                expected_version=preflight.expected_revision,
+                reason=body.reason,
+                totp_code=body.totp_code,
+                idempotency_key=preflight.idempotency_key,
             )
-
-        return _execute(
-            runtime,
-            actor_id=actor_id,
-            operation="policy_rollback",
-            method="POST",
-            path=request.url.path,
-            key=preflight.idempotency_key,
-            body=body_data,
-            command=command,
         )
 
     @router.get(

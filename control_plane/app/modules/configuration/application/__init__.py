@@ -8,9 +8,7 @@ from control_plane.app.modules.configuration.application.drafts import (
     validate_draft,
 )
 from control_plane.app.modules.configuration.application.preview import preview
-from control_plane.app.modules.configuration.application.publish import publish
 from control_plane.app.modules.configuration.application.queries import active_snapshot, catalog
-from control_plane.app.modules.configuration.application.rollback import rollback
 from control_plane.app.modules.configuration.application.versions import policy_versions
 
 __all__ = [
@@ -20,9 +18,7 @@ __all__ = [
     "catalog",
     "create_draft",
     "preview",
-    "publish",
     "policy_versions",
-    "rollback",
     "update_draft",
     "validate_draft",
 ]
