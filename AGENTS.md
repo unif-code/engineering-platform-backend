@@ -54,3 +54,10 @@ summary，gitops 仓按 digest 引用部署。镜像同时承载 API 与迁移 J
 
 线性历史、Conventional Commits（如 `feat(identity): ...`），每次提交单一主题。
 依赖、迁移或 CI 变更必须在提交信息中明确标注。禁止提交凭据；`.env` 仅本地。
+
+## Codex 原生记忆
+
+- 平台共享记忆位于同级 `engineering-platform-docs/memories_1.sqlite`，同步规则以该仓 `MEMORIES.md` 为准。
+- 仅当用户明确发送 `【同步记忆】` 时，进入同级 `engineering-platform-docs` 运行 `npm run memory:sync`；禁止直接复制或覆盖任一 SQLite 文件。
+- 共享记忆同步进本机 Codex 原生数据库后由 Codex 自身消费，不在成员仓展开、复制或提交记忆正文。
+- 记忆与事实冲突时，以当前用户指令、本仓当前 Git/代码、docs 架构文档和可执行测试为准。
