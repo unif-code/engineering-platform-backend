@@ -61,3 +61,10 @@ summary，gitops 仓按 digest 引用部署。镜像同时承载 API 与迁移 J
 - 仅当用户明确发送 `【同步记忆】` 时，进入同级 `engineering-platform-docs` 运行 `npm run memory:sync`；禁止直接复制或覆盖任一 SQLite 文件。
 - 共享记忆同步进本机 Codex 原生数据库后由 Codex 自身消费，不在成员仓展开、复制或提交记忆正文。
 - 记忆与事实冲突时，以当前用户指令、本仓当前 Git/代码、docs 架构文档和可执行测试为准。
+
+## Superpowers 开发进度
+
+- 开始或恢复开发任务时，先读取 `docs/superpowers/progress/current.md`；验证其中 `Based On Commit` 存在且是当前 HEAD 的祖先，再检查该提交之后的 Git log、工作树与测试证据。
+- 恢复顺序固定为 `current.md → active plan/spec → Git log/status → 测试证据 → Codex memory`。信息冲突时，优先级为当前用户指令、当前 Git/代码、架构文档与测试、progress、memory。
+- 仅当用户明确发送 `【同步进度】` 时更新本仓 `current.md` 并推送；不得自动提交业务源码，不得复制 `.superpowers/sdd`、会话或工作树 diff。首次初始化允许同一提交包含本节与 `current.md`。
+- `Remote Recoverable: yes` 只表示继续开发所需的源码、计划和证据均已提交并推送；存在本机独有改动时必须写 `no`。
