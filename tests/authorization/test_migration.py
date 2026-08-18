@@ -9,6 +9,174 @@ from sqlalchemy.exc import IntegrityError, ProgrammingError
 pytestmark = pytest.mark.integration
 
 
+def test_authorization_0005_installs_exact_v02_routes_and_preserves_extensions(
+    authorization_owner_engine: Engine,
+) -> None:
+    config = Config("alembic.ini")
+    managed_route_keys = (
+        "audit",
+        "admin.workspaces",
+        "admin.organization",
+        "admin.users",
+        "admin.grants",
+        "admin.policies",
+    )
+    expected_managed_routes = [
+        ("audit", "audit.read", "PLATFORM", 7, {"name": "审计看板", "order": 7}),
+        (
+            "admin.workspaces",
+            "platform.workspace.manage",
+            "PLATFORM",
+            8,
+            {"name": "工作区管理", "order": 8},
+        ),
+        (
+            "admin.organization",
+            "platform.organization.manage",
+            "PLATFORM",
+            9,
+            {"name": "组织管理", "order": 9},
+        ),
+        (
+            "admin.users",
+            "identity.account.manage",
+            "PLATFORM",
+            13,
+            {"name": "用户管理", "order": 13},
+        ),
+        (
+            "admin.grants",
+            "platform.authorization.manage",
+            "PLATFORM",
+            14,
+            {"name": "Grant 管理", "order": 14},
+        ),
+        (
+            "admin.policies",
+            "platform.configuration.manage",
+            "PLATFORM",
+            15,
+            {"name": "Policy 发布", "order": 15},
+        ),
+    ]
+    extension = (
+        "custom.extension",
+        "custom.extension.read",
+        "PLATFORM",
+        99,
+        {"name": "Custom Extension", "order": 99, "owner": "extension"},
+    )
+    command.downgrade(config, "0004_authorization_pending_set")
+    try:
+        with authorization_owner_engine.begin() as db:
+            db.execute(
+                text(
+                    'INSERT INTO "authorization".route_registry '
+                    "(route_key, capability, scope_type, sort, meta) VALUES "
+                    "(:route_key, :capability, :scope_type, :sort, CAST(:meta AS JSONB))"
+                ),
+                {
+                    "route_key": extension[0],
+                    "capability": extension[1],
+                    "scope_type": extension[2],
+                    "sort": extension[3],
+                    "meta": '{"name":"Custom Extension","order":99,"owner":"extension"}',
+                },
+            )
+
+        command.upgrade(config, "heads")
+        with authorization_owner_engine.connect() as db:
+            managed_routes = [
+                tuple(row)
+                for row in db.execute(
+                    text(
+                        "SELECT route_key, capability, scope_type, sort, meta "
+                        'FROM "authorization".route_registry '
+                        "WHERE route_key = ANY(:route_keys) ORDER BY sort, route_key"
+                    ),
+                    {"route_keys": list(managed_route_keys)},
+                )
+            ]
+            preserved_extension = tuple(
+                db.execute(
+                    text(
+                        "SELECT route_key, capability, scope_type, sort, meta "
+                        'FROM "authorization".route_registry WHERE route_key=:route_key'
+                    ),
+                    {"route_key": extension[0]},
+                ).one()
+            )
+        assert managed_routes == expected_managed_routes
+        assert preserved_extension == extension
+
+        with authorization_owner_engine.begin() as db:
+            db.execute(
+                text(
+                    'UPDATE "authorization".route_registry '
+                    "SET meta=jsonb_set(meta, '{name}', to_jsonb('环境审计'::text)) "
+                    "WHERE route_key='audit'"
+                )
+            )
+        command.downgrade(config, "0004_authorization_pending_set")
+        with authorization_owner_engine.connect() as db:
+            remaining = [
+                tuple(row)
+                for row in db.execute(
+                    text(
+                        "SELECT route_key, capability, scope_type, sort, meta "
+                        'FROM "authorization".route_registry '
+                        "WHERE route_key = ANY(:route_keys) ORDER BY route_key"
+                    ),
+                    {"route_keys": [*managed_route_keys, extension[0]]},
+                )
+            ]
+        assert remaining == [
+            (
+                "audit",
+                "audit.read",
+                "PLATFORM",
+                7,
+                {"name": "环境审计", "order": 7},
+            ),
+            extension,
+        ]
+    finally:
+        command.downgrade(config, "0004_authorization_pending_set")
+        with authorization_owner_engine.begin() as db:
+            db.execute(
+                text(
+                    'DELETE FROM "authorization".route_registry WHERE route_key = ANY(:route_keys)'
+                ),
+                {"route_keys": [*managed_route_keys, extension[0]]},
+            )
+        command.upgrade(config, "heads")
+
+
+def test_authorization_0005_rejects_conflicting_managed_route(
+    authorization_owner_engine: Engine,
+) -> None:
+    config = Config("alembic.ini")
+    command.downgrade(config, "0004_authorization_pending_set")
+    try:
+        with authorization_owner_engine.begin() as db:
+            db.execute(
+                text(
+                    'INSERT INTO "authorization".route_registry '
+                    "(route_key, capability, scope_type, sort, meta) VALUES "
+                    "('audit', 'wrong.capability', 'PLATFORM', 7, "
+                    "jsonb_build_object('name', '审计看板', 'order', 7))"
+                )
+            )
+
+        with pytest.raises(ProgrammingError, match="conflicting managed route: audit"):
+            command.upgrade(config, "heads")
+    finally:
+        command.downgrade(config, "0004_authorization_pending_set")
+        with authorization_owner_engine.begin() as db:
+            db.execute(text("DELETE FROM \"authorization\".route_registry WHERE route_key='audit'"))
+        command.upgrade(config, "heads")
+
+
 def test_authorization_0004_roundtrip_backfills_and_preserves_pending_work(
     authorization_owner_engine: Engine,
 ) -> None:

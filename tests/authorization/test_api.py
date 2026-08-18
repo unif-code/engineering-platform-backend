@@ -11,7 +11,12 @@ from fastapi.testclient import TestClient
 from httpx import Response as HttpxResponse
 from sqlalchemy import Engine, create_engine, text
 
-from control_plane.app.modules.authorization import AuthorizationPrincipal, Scope, grant
+from control_plane.app.modules.authorization import (
+    V02_SUPER_ADMIN_PLATFORM_CAPABILITIES,
+    AuthorizationPrincipal,
+    Scope,
+    grant,
+)
 from control_plane.app.modules.authorization.adapters import (
     SqlAlchemyAuthorizationRepository,
     SqlAlchemyIdentitySessionValidator,
@@ -126,6 +131,70 @@ def _management_client(
     return client, account_id
 
 
+def test_super_admin_me_and_navigation_are_exact_v02_projection(
+    clean_authorization_db: None,
+    authorization_rw_engine: Engine,
+    authorization_identity_engine: Engine,
+    authorization_owner_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _secret, token = _initialize_account(
+        authorization_identity_engine,
+        identity_dependencies(),
+        monkeypatch,
+    )
+    with authorization_owner_engine.begin() as db:
+        account_id = str(
+            db.execute(
+                text(
+                    "UPDATE identity.account SET is_super_admin=true, version=version+1 "
+                    "RETURNING id"
+                )
+            ).scalar_one()
+        )
+    with authorization_rw_engine.begin() as db:
+        db.execute(
+            text(
+                'INSERT INTO "authorization".principal_version '
+                "(account_id, version, fence_generation, updated_at) "
+                "VALUES (:account_id, 1, 0, now())"
+            ),
+            {"account_id": account_id},
+        )
+
+    runtime = _runtime(authorization_rw_engine, authorization_identity_engine, AlwaysMember())
+    client = _client(lambda: runtime)
+    client.cookies.set("ep_session", token)
+
+    me = client.get("/api/v1/me")
+    navigation = client.get("/api/v1/navigation")
+
+    assert me.status_code == 200
+    assert navigation.status_code == 200
+    expected_route_keys = [
+        "home",
+        "admin",
+        "audit",
+        "admin.workspaces",
+        "admin.organization",
+        "admin.users",
+        "admin.grants",
+        "admin.policies",
+    ]
+    assert [item["routeKey"] for item in navigation.json()] == expected_route_keys
+    assert {item["capability"] for item in me.json()["capabilities"]} == set(
+        V02_SUPER_ADMIN_PLATFORM_CAPABILITIES
+    )
+    assert not {
+        "tasks",
+        "workspaces",
+        "admin.skills",
+        "admin.models",
+        "admin.roles",
+        "admin.menus",
+    } & set(expected_route_keys)
+
+
 def test_real_me_navigation_and_grant_lifecycle_are_protected_and_compatible(
     clean_authorization_db: None,
     authorization_rw_engine: Engine,
@@ -193,7 +262,15 @@ def test_real_me_navigation_and_grant_lifecycle_are_protected_and_compatible(
             "capability": "platform.home.read",
             "scopeType": "PLATFORM",
             "meta": {"name": "首页", "order": 1},
-        }
+        },
+        {
+            "routeKey": "admin.grants",
+            "name": "Grant 管理",
+            "order": 14,
+            "capability": AUTHORIZATION_MANAGE_CAPABILITY,
+            "scopeType": "PLATFORM",
+            "meta": {"name": "Grant 管理", "order": 14},
+        },
     ]
 
     create_headers = {
