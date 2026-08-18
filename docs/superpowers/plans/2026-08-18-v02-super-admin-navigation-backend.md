@@ -159,6 +159,7 @@ def is_v02_super_admin_platform_capability(
 ```python
 values: dict[tuple[str, ScopeType, str | None], ScopedCapability] = {}
 
+
 def add_capability(item: ScopedCapability) -> None:
     values.setdefault(
         (item.capability, item.scope.scope_type, item.scope.scope_id),
@@ -171,9 +172,7 @@ def add_capability(item: ScopedCapability) -> None:
 ```python
 if is_super_admin:
     for capability in sorted(V02_SUPER_ADMIN_PLATFORM_CAPABILITIES):
-        add_capability(
-            ScopedCapability(capability=capability, scope=Scope.platform())
-        )
+        add_capability(ScopedCapability(capability=capability, scope=Scope.platform()))
 return tuple(values.values())
 ```
 
