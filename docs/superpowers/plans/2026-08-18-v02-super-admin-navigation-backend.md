@@ -408,7 +408,7 @@ git commit -m "feat(authorization): activate V0.2 navigation routes" -m "真实 
 **Interfaces:**
 
 - Consumes: Task 1–2 的后端行为；现有 release workflow 的 tag/version 等值门。
-- Produces: `api-v0.2.1` OpenAPI bytes，预期 SHA-256 `8a388c120e7f6417405888caa4302c3a4d00ac9f6c3881254dd46db981571f36`。
+- Produces: `api-v0.2.1` OpenAPI bytes，预期 SHA-256 `624712f97f8f8f3fe9d8e57422df7a62ae88cfa9c1059a316f0b188fb19a6b1a`。
 
 - [ ] **Step 1: 先更新版本测试并观察 RED**
 
@@ -448,7 +448,7 @@ git diff -- openapi.json
 (Get-FileHash openapi.json -Algorithm SHA256).Hash.ToLowerInvariant()
 ```
 
-Expected: OpenAPI diff 只有 `info.version: 0.2.0 → 0.2.1`；LF 文件 digest 为 `8a388c120e7f6417405888caa4302c3a4d00ac9f6c3881254dd46db981571f36`。若出现任何 path/schema/status/security 差异或 digest 不同，停止发布并解释契约变化，不能更新本计划中的前端锁值掩盖漂移。
+Expected: OpenAPI diff 只有 `info.version: 0.2.0 → 0.2.1`；LF 文件 digest 为 `624712f97f8f8f3fe9d8e57422df7a62ae88cfa9c1059a316f0b188fb19a6b1a`。若出现任何 path/schema/status/security 差异或 digest 不同，停止发布并解释契约变化，不能更新本计划中的前端锁值掩盖漂移。
 
 - [ ] **Step 4: 运行版本 GREEN 并提交**
 
@@ -559,7 +559,7 @@ Invoke-WebRequest https://github.com/unif-code/engineering-platform-backend/rele
 (Get-FileHash $env:TEMP/api-v0.2.1-openapi.json -Algorithm SHA256).Hash.ToLowerInvariant()
 ```
 
-Expected: digest 精确为 `8a388c120e7f6417405888caa4302c3a4d00ac9f6c3881254dd46db981571f36`，`info.version` 为 `0.2.1`。若 GitHub Release 不可达或摘要不同，前端计划不得开始 Artifact 锁定。
+Expected: digest 精确为 `624712f97f8f8f3fe9d8e57422df7a62ae88cfa9c1059a316f0b188fb19a6b1a`，`info.version` 为 `0.2.1`。若 GitHub Release 不可达或摘要不同，前端计划不得开始 Artifact 锁定。
 
 - [ ] **Step 6: 仅在尚未 Bootstrap 的目标环境创建首个 Super Admin**
 

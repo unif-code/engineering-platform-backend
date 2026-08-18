@@ -14,9 +14,9 @@ def render() -> str:
 
 
 def main() -> int:
-    content = render()
+    content = render().encode("utf-8")
     if "--check" in sys.argv:
-        if not OUT.exists() or OUT.read_text(encoding="utf-8") != content:
+        if not OUT.exists() or OUT.read_bytes() != content:
             print(
                 "openapi.json 与代码不一致：运行 uv run python scripts/export_openapi.py",
                 file=sys.stderr,
@@ -24,7 +24,7 @@ def main() -> int:
             return 1
         print("openapi.json 与代码一致")
         return 0
-    OUT.write_text(content, encoding="utf-8")
+    OUT.write_bytes(content)
     print(f"openapi.json 已导出（version={create_app().version}）")
     return 0
 

@@ -1,3 +1,4 @@
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -70,3 +71,20 @@ def test_check_detects_tampered_artifact(
     assert export_openapi.main() == 1
     assert "不一致" in capsys.readouterr().err
     assert artifact.read_text(encoding="utf-8") == tampered  # --check 绝不写文件
+
+
+def test_check_rejects_semantically_equal_crlf_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    artifact = tmp_path / "openapi.json"
+    crlf_content = render().replace("\n", "\r\n")
+    artifact.write_bytes(crlf_content.encode("utf-8"))
+    assert json.loads(artifact.read_bytes()) == json.loads(render())
+
+    monkeypatch.setattr(export_openapi, "OUT", artifact)
+    monkeypatch.setattr(sys, "argv", ["export_openapi.py", "--check"])
+
+    assert export_openapi.main() == 1
+    assert "不一致" in capsys.readouterr().err
