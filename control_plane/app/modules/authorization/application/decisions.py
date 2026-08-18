@@ -8,15 +8,15 @@ from control_plane.app.modules.authorization.application.dependencies import (
     DecisionDependencies,
 )
 from control_plane.app.modules.authorization.domain import (
-    PLATFORM_CONFIGURATION_MANAGE,
-    PLATFORM_SUPER_ADMIN_MANAGE,
     RESERVED_PLATFORM_CAPABILITIES,
+    V02_SUPER_ADMIN_PLATFORM_CAPABILITIES,
     AuthorizationDecision,
     AuthorizationPrincipal,
     DecisionCode,
     Scope,
     ScopedCapability,
     ScopeType,
+    is_v02_super_admin_platform_capability,
 )
 from control_plane.app.modules.authorization.domain.errors import AuthorizationUnavailable
 from control_plane.app.modules.authorization.ports import AuthorizationRepository
@@ -106,7 +106,14 @@ def _principal_capabilities(
     decision_dependencies: DecisionDependencies,
     dependencies: AuthorizationDependencies,
 ) -> tuple[ScopedCapability, ...]:
-    values: list[ScopedCapability] = []
+    values: dict[tuple[str, ScopeType, str | None], ScopedCapability] = {}
+
+    def add_capability(item: ScopedCapability) -> None:
+        values.setdefault(
+            (item.capability, item.scope.scope_type, item.scope.scope_id),
+            item,
+        )
+
     rows = repository.effective_grants(
         principal_id=account_id,
         capability=None,
@@ -125,21 +132,11 @@ def _principal_capabilities(
                 account_id,
             ):
                 continue
-        values.append(ScopedCapability(capability=item.capability, scope=item.scope))
+        add_capability(ScopedCapability(capability=item.capability, scope=item.scope))
     if is_super_admin:
-        values.extend(
-            (
-                ScopedCapability(
-                    capability=PLATFORM_CONFIGURATION_MANAGE,
-                    scope=Scope.platform(),
-                ),
-                ScopedCapability(
-                    capability=PLATFORM_SUPER_ADMIN_MANAGE,
-                    scope=Scope.platform(),
-                ),
-            )
-        )
-    return tuple(values)
+        for capability in sorted(V02_SUPER_ADMIN_PLATFORM_CAPABILITIES):
+            add_capability(ScopedCapability(capability=capability, scope=Scope.platform()))
+    return tuple(values.values())
 
 
 def authorize(
@@ -213,38 +210,42 @@ def authorize(
                 version=state.version,
                 reason="authorization convergence pending",
             )
-    if capability in RESERVED_PLATFORM_CAPABILITIES:
-        if scope.scope_type is ScopeType.PLATFORM and bool(session.is_super_admin):
-            try:
-                capabilities = _principal_capabilities(
-                    repository,
-                    account_id=account_id,
-                    is_super_admin=True,
-                    decision_dependencies=decision_dependencies,
-                    dependencies=dependencies,
-                )
-            except Exception:
-                return _unavailable(
-                    repository,
-                    dependencies=dependencies,
-                    actor=account_id,
-                    capability=capability,
-                    scope=scope,
-                    version=state.version,
-                    reason="effective capability projection unavailable",
-                )
-            return AuthorizationDecision(
-                allowed=True,
-                code=DecisionCode.ALLOW,
-                principal=AuthorizationPrincipal(
-                    account_id=account_id,
-                    employee_id=str(session.employee_no),
-                    name=str(session.display_name),
-                    is_super_admin=True,
-                    authorization_version=state.version,
-                    capabilities=capabilities,
-                ),
+    if is_v02_super_admin_platform_capability(
+        capability,
+        scope,
+        is_super_admin=bool(session.is_super_admin),
+    ):
+        try:
+            capabilities = _principal_capabilities(
+                repository,
+                account_id=account_id,
+                is_super_admin=True,
+                decision_dependencies=decision_dependencies,
+                dependencies=dependencies,
             )
+        except Exception:
+            return _unavailable(
+                repository,
+                dependencies=dependencies,
+                actor=account_id,
+                capability=capability,
+                scope=scope,
+                version=state.version,
+                reason="effective capability projection unavailable",
+            )
+        return AuthorizationDecision(
+            allowed=True,
+            code=DecisionCode.ALLOW,
+            principal=AuthorizationPrincipal(
+                account_id=account_id,
+                employee_id=str(session.employee_no),
+                name=str(session.display_name),
+                is_super_admin=True,
+                authorization_version=state.version,
+                capabilities=capabilities,
+            ),
+        )
+    if capability in RESERVED_PLATFORM_CAPABILITIES:
         return _denial(
             repository,
             dependencies=dependencies,
@@ -466,9 +467,13 @@ def principal_has_capability(
     state = principal_version_dto(state_row)
     if state.dirty_generation is not None or state.version != principal.authorization_version:
         raise AuthorizationUnavailable("authorization principal changed")
+    if is_v02_super_admin_platform_capability(
+        capability,
+        scope,
+        is_super_admin=principal.is_super_admin,
+    ):
+        return True
     if capability in RESERVED_PLATFORM_CAPABILITIES:
-        if scope.scope_type is ScopeType.PLATFORM and principal.is_super_admin:
-            return True
         _decision_audit(
             repository,
             dependencies=dependencies,

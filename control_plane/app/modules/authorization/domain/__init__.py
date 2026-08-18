@@ -11,6 +11,7 @@ from .models import (
     PLATFORM_CONFIGURATION_MANAGE,
     PLATFORM_SUPER_ADMIN_MANAGE,
     RESERVED_PLATFORM_CAPABILITIES,
+    V02_SUPER_ADMIN_PLATFORM_CAPABILITIES,
     AuthorizationDecision,
     AuthorizationPrincipal,
     DecisionCode,
@@ -20,6 +21,7 @@ from .models import (
     Scope,
     ScopedCapability,
     ScopeType,
+    is_v02_super_admin_platform_capability,
 )
 
 __all__ = [
@@ -42,4 +44,6 @@ __all__ = [
     "ScopedCapability",
     "ScopeType",
     "StaleGrantVersion",
+    "V02_SUPER_ADMIN_PLATFORM_CAPABILITIES",
+    "is_v02_super_admin_platform_capability",
 ]

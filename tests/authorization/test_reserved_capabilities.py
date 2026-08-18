@@ -4,8 +4,7 @@ import pytest
 from sqlalchemy import Engine, text
 
 from control_plane.app.modules.authorization import (
-    PLATFORM_CONFIGURATION_MANAGE,
-    PLATFORM_SUPER_ADMIN_MANAGE,
+    V02_SUPER_ADMIN_PLATFORM_CAPABILITIES,
     AuthorizationPrincipal,
     DecisionCode,
     DecisionDependencies,
@@ -24,6 +23,18 @@ from tests.identity.task5_helpers import dependencies as identity_dependencies
 from tests.identity.test_auth_flow import _initialize_account
 
 pytestmark = pytest.mark.integration
+
+EXPECTED_V02_SUPER_ADMIN_CAPABILITIES = {
+    "platform.home.read",
+    "platform.admin.access",
+    "audit.read",
+    "identity.account.manage",
+    "platform.organization.manage",
+    "platform.workspace.manage",
+    "platform.authorization.manage",
+    "platform.configuration.manage",
+    "platform.super_admin.manage",
+}
 
 
 @dataclass
@@ -127,7 +138,7 @@ def test_reserved_capability_ignores_ordinary_grant_in_decision_and_resource_gua
         )
 
 
-def test_current_super_admin_fact_confers_both_reserved_capabilities_without_grants(
+def test_current_super_admin_fact_confers_exact_v02_platform_capabilities_without_grants(
     clean_authorization_db: None,
     authorization_rw_engine: Engine,
     authorization_identity_engine: Engine,
@@ -168,23 +179,18 @@ def test_current_super_admin_fact_confers_both_reserved_capabilities_without_gra
             decision_dependencies=decision_dependencies,
         )
     assert resolved.principal is not None
+    assert V02_SUPER_ADMIN_PLATFORM_CAPABILITIES == EXPECTED_V02_SUPER_ADMIN_CAPABILITIES
     assert {
         (item.capability, item.scope.scope_type.value, item.scope.scope_id)
         for item in resolved.principal.capabilities
-    } == {
-        (PLATFORM_CONFIGURATION_MANAGE, "PLATFORM", None),
-        (PLATFORM_SUPER_ADMIN_MANAGE, "PLATFORM", None),
-    }
+    } == {(capability, "PLATFORM", None) for capability in EXPECTED_V02_SUPER_ADMIN_CAPABILITIES}
 
-    for reserved_capability in (
-        PLATFORM_CONFIGURATION_MANAGE,
-        PLATFORM_SUPER_ADMIN_MANAGE,
-    ):
+    for capability in EXPECTED_V02_SUPER_ADMIN_CAPABILITIES:
         with authorization_rw_engine.begin() as db:
             decision = authorize(
                 db,
                 raw_token=token,
-                capability=reserved_capability,
+                capability=capability,
                 scope=Scope.platform(),
                 dependencies=dependencies,
                 decision_dependencies=decision_dependencies,
@@ -195,8 +201,30 @@ def test_current_super_admin_fact_confers_both_reserved_capabilities_without_gra
             assert principal_has_capability(
                 db,
                 principal=decision.principal,
-                capability=reserved_capability,
+                capability=capability,
                 scope=Scope.platform(),
                 dependencies=dependencies,
                 decision_dependencies=decision_dependencies,
             )
+
+    with authorization_rw_engine.begin() as db:
+        future = authorize(
+            db,
+            raw_token=token,
+            capability="platform.future.manage",
+            scope=Scope.platform(),
+            dependencies=dependencies,
+            decision_dependencies=decision_dependencies,
+        )
+    assert future.code is DecisionCode.DENIED
+
+    with authorization_rw_engine.begin() as db:
+        workspace_scoped = authorize(
+            db,
+            raw_token=token,
+            capability="platform.workspace.manage",
+            scope=Scope.workspace("workspace-1"),
+            dependencies=dependencies,
+            decision_dependencies=decision_dependencies,
+        )
+    assert workspace_scoped.code is DecisionCode.DENIED

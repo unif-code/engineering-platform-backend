@@ -8,6 +8,19 @@ PLATFORM_SUPER_ADMIN_MANAGE = "platform.super_admin.manage"
 RESERVED_PLATFORM_CAPABILITIES = frozenset(
     {PLATFORM_CONFIGURATION_MANAGE, PLATFORM_SUPER_ADMIN_MANAGE}
 )
+V02_SUPER_ADMIN_PLATFORM_CAPABILITIES = frozenset(
+    {
+        "platform.home.read",
+        "platform.admin.access",
+        "audit.read",
+        "identity.account.manage",
+        "platform.organization.manage",
+        "platform.workspace.manage",
+        "platform.authorization.manage",
+        PLATFORM_CONFIGURATION_MANAGE,
+        PLATFORM_SUPER_ADMIN_MANAGE,
+    }
+)
 
 
 class ScopeType(StrEnum):
@@ -46,6 +59,19 @@ class Scope(BaseModel):
     @classmethod
     def workspace(cls, workspace_id: str) -> "Scope":
         return cls(scope_type=ScopeType.WORKSPACE, scope_id=workspace_id)
+
+
+def is_v02_super_admin_platform_capability(
+    capability: str,
+    scope: Scope,
+    *,
+    is_super_admin: bool,
+) -> bool:
+    return (
+        is_super_admin
+        and scope.scope_type is ScopeType.PLATFORM
+        and capability in V02_SUPER_ADMIN_PLATFORM_CAPABILITIES
+    )
 
 
 class GrantStatus(StrEnum):
