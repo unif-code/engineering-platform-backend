@@ -217,6 +217,18 @@ def test_current_super_admin_fact_confers_exact_v02_platform_capabilities_withou
             decision_dependencies=decision_dependencies,
         )
     assert future.code is DecisionCode.DENIED
+    with authorization_rw_engine.begin() as db:
+        assert (
+            principal_has_capability(
+                db,
+                principal=resolved.principal,
+                capability="platform.future.manage",
+                scope=Scope.platform(),
+                dependencies=dependencies,
+                decision_dependencies=decision_dependencies,
+            )
+            is False
+        )
 
     with authorization_rw_engine.begin() as db:
         workspace_scoped = authorize(
@@ -228,3 +240,15 @@ def test_current_super_admin_fact_confers_exact_v02_platform_capabilities_withou
             decision_dependencies=decision_dependencies,
         )
     assert workspace_scoped.code is DecisionCode.DENIED
+    with authorization_rw_engine.begin() as db:
+        assert (
+            principal_has_capability(
+                db,
+                principal=resolved.principal,
+                capability="platform.workspace.manage",
+                scope=Scope.workspace("workspace-1"),
+                dependencies=dependencies,
+                decision_dependencies=decision_dependencies,
+            )
+            is False
+        )
