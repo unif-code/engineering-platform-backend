@@ -35,9 +35,13 @@ Grant 或修改 authorization projection 替代本流程。
 
 在受控终端执行：
 
-```text
-python -m control_plane.tools.bootstrap_admin --employee-no 00000001 --display-name 张三
+```powershell
+uv run python -m control_plane.tools.bootstrap_admin --employee-no 00000000 --display-name 平台超级管理员
 ```
+
+- 仅在目标环境尚无任何 Super Admin 时运行；已有首个 Super Admin 时不得重建或覆盖账号。
+- 临时密码只允许在受控交互终端一次展示，不重定向到文件、不复制进工单、聊天、日志或 Git。
+- 执行者随后完成正式密码与 TOTP 初始化；应用授权始终依据 `is_super_admin`，不依据员工号。
 
 成功时退出码为 0，stdout 仅有一行临时密码。stderr 使用 credential-safe JSONL：在数据库提交与
 stdout 凭据交付前，先可靠写入并 flush 带稳定 `commandId` 的 `ATTEMPT`；提交后再写 `SUCCESS`。
