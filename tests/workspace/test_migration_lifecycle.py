@@ -59,12 +59,12 @@ def test_fresh_upgrade_heads_installs_workspace_and_independent_graph(
             "0010_identity_policy_reauth",
             "0001_organization_base",
             "0001_workspace_base",
-            "0004_authorization_pending_set",
+            "0005_authorization_v02_routes",
         }
         assert installed_heads == {
             "0007_audit_query_request_id",
             "0010_identity_policy_reauth",
-            "0004_authorization_pending_set",
+            "0005_authorization_v02_routes",
         }
         assert set(inspect(engine).get_table_names(schema="workspace")) == {
             "idempotency_record",

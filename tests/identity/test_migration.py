@@ -276,7 +276,7 @@ def test_current_alembic_heads_are_installed(identity_owner_engine: Engine) -> N
     assert installed == {
         "0007_audit_query_request_id",
         "0010_identity_policy_reauth",
-        "0004_authorization_pending_set",
+        "0005_authorization_v02_routes",
     }
 
 
