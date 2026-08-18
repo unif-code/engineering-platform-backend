@@ -36,7 +36,7 @@ Grant 或修改 authorization projection 替代本流程。
 在受控终端执行：
 
 ```powershell
-uv run python -m control_plane.tools.bootstrap_admin --employee-no 00000000 --display-name 平台超级管理员
+python -m control_plane.tools.bootstrap_admin --employee-no 00000000 --display-name 平台超级管理员
 ```
 
 - 仅在目标环境尚无任何 Super Admin 时运行；已有首个 Super Admin 时不得重建或覆盖账号。

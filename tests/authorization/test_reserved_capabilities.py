@@ -6,6 +6,7 @@ from sqlalchemy import Engine, text
 from control_plane.app.modules.authorization import (
     V02_SUPER_ADMIN_PLATFORM_CAPABILITIES,
     AuthorizationPrincipal,
+    AuthorizationUnavailable,
     DecisionCode,
     DecisionDependencies,
     Scope,
@@ -15,6 +16,7 @@ from control_plane.app.modules.authorization import (
     resolve_principal,
 )
 from control_plane.app.modules.authorization.adapters import (
+    SqlAlchemyAuthorizationRepository,
     SqlAlchemyIdentitySessionValidator,
 )
 from control_plane.app.modules.identity import SessionKind, SessionPrincipal
@@ -51,6 +53,39 @@ def _decision_dependencies(identity_engine: Engine) -> DecisionDependencies:
         ),
         workspace=_Membership(),
     )
+
+
+def _initialize_current_super_admin(
+    *,
+    identity_engine: Engine,
+    authorization_engine: Engine,
+    owner_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[str, str]:
+    _secret, token = _initialize_account(
+        identity_engine,
+        identity_dependencies(),
+        monkeypatch,
+    )
+    with owner_engine.begin() as db:
+        account_id = str(
+            db.execute(
+                text(
+                    "UPDATE identity.account SET is_super_admin=true, version=version+1 "
+                    "RETURNING id"
+                )
+            ).scalar_one()
+        )
+    with authorization_engine.begin() as db:
+        db.execute(
+            text(
+                'INSERT INTO "authorization".principal_version '
+                "(account_id, version, fence_generation, updated_at) "
+                "VALUES (:account_id, 1, 0, now())"
+            ),
+            {"account_id": account_id},
+        )
+    return account_id, token
 
 
 @pytest.mark.parametrize(
@@ -252,3 +287,205 @@ def test_current_super_admin_fact_confers_exact_v02_platform_capabilities_withou
             )
             is False
         )
+
+
+@pytest.mark.parametrize(
+    ("identity_mutation", "expected_code"),
+    [
+        (
+            "UPDATE identity.account SET is_super_admin=false, version=version+1 "
+            "WHERE id=:account_id",
+            DecisionCode.DENIED,
+        ),
+        (
+            "UPDATE identity.account SET status='DISABLED', version=version+1 WHERE id=:account_id",
+            DecisionCode.UNAUTHENTICATED,
+        ),
+        (
+            "UPDATE identity.session SET revoked_at=now(), revoke_reason='TEST' "
+            "WHERE account_id=:account_id AND kind='FULL'",
+            DecisionCode.UNAUTHENTICATED,
+        ),
+    ],
+    ids=["super-admin-revoked", "account-disabled", "session-revoked"],
+)
+def test_super_admin_auto_capability_requires_current_identity_state(
+    identity_mutation: str,
+    expected_code: DecisionCode,
+    clean_authorization_db: None,
+    authorization_rw_engine: Engine,
+    authorization_identity_engine: Engine,
+    authorization_owner_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    account_id, token = _initialize_current_super_admin(
+        identity_engine=authorization_identity_engine,
+        authorization_engine=authorization_rw_engine,
+        owner_engine=authorization_owner_engine,
+        monkeypatch=monkeypatch,
+    )
+    dependencies = authorization_dependencies()
+    decision_dependencies = _decision_dependencies(authorization_identity_engine)
+    with authorization_rw_engine.begin() as db:
+        initial = authorize(
+            db,
+            raw_token=token,
+            capability="platform.home.read",
+            scope=Scope.platform(),
+            dependencies=dependencies,
+            decision_dependencies=decision_dependencies,
+        )
+    assert initial.code is DecisionCode.ALLOW
+
+    with authorization_owner_engine.begin() as db:
+        db.execute(text(identity_mutation), {"account_id": account_id})
+    with authorization_rw_engine.begin() as db:
+        after_identity_change = authorize(
+            db,
+            raw_token=token,
+            capability="platform.home.read",
+            scope=Scope.platform(),
+            dependencies=dependencies,
+            decision_dependencies=decision_dependencies,
+        )
+    assert after_identity_change.allowed is False
+    assert after_identity_change.code is expected_code
+
+
+def test_super_admin_resource_guard_rejects_a_stale_authorization_version(
+    clean_authorization_db: None,
+    authorization_rw_engine: Engine,
+    authorization_identity_engine: Engine,
+    authorization_owner_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    account_id, token = _initialize_current_super_admin(
+        identity_engine=authorization_identity_engine,
+        authorization_engine=authorization_rw_engine,
+        owner_engine=authorization_owner_engine,
+        monkeypatch=monkeypatch,
+    )
+    dependencies = authorization_dependencies()
+    decision_dependencies = _decision_dependencies(authorization_identity_engine)
+    with authorization_rw_engine.begin() as db:
+        initial = authorize(
+            db,
+            raw_token=token,
+            capability="platform.home.read",
+            scope=Scope.platform(),
+            dependencies=dependencies,
+            decision_dependencies=decision_dependencies,
+        )
+    assert initial.principal is not None
+
+    with authorization_rw_engine.begin() as db:
+        db.execute(
+            text(
+                'UPDATE "authorization".principal_version '
+                "SET version=version+1, updated_at=now() WHERE account_id=:account_id"
+            ),
+            {"account_id": account_id},
+        )
+    with authorization_rw_engine.begin() as db:
+        with pytest.raises(AuthorizationUnavailable, match="principal changed"):
+            principal_has_capability(
+                db,
+                principal=initial.principal,
+                capability="platform.home.read",
+                scope=Scope.platform(),
+                dependencies=dependencies,
+                decision_dependencies=decision_dependencies,
+            )
+
+
+def test_super_admin_projection_failure_returns_unavailable(
+    clean_authorization_db: None,
+    authorization_rw_engine: Engine,
+    authorization_identity_engine: Engine,
+    authorization_owner_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _account_id, token = _initialize_current_super_admin(
+        identity_engine=authorization_identity_engine,
+        authorization_engine=authorization_rw_engine,
+        owner_engine=authorization_owner_engine,
+        monkeypatch=monkeypatch,
+    )
+
+    def fail_effective_grants(*_args: object, **_kwargs: object) -> list[object]:
+        raise RuntimeError("injected projection outage")
+
+    monkeypatch.setattr(
+        SqlAlchemyAuthorizationRepository,
+        "effective_grants",
+        fail_effective_grants,
+    )
+    with authorization_rw_engine.begin() as db:
+        unavailable = authorize(
+            db,
+            raw_token=token,
+            capability="platform.home.read",
+            scope=Scope.platform(),
+            dependencies=authorization_dependencies(),
+            decision_dependencies=_decision_dependencies(authorization_identity_engine),
+        )
+    assert unavailable.allowed is False
+    assert unavailable.code is DecisionCode.UNAVAILABLE
+
+
+def test_super_admin_version_repository_failure_is_unavailable_for_both_guards(
+    clean_authorization_db: None,
+    authorization_rw_engine: Engine,
+    authorization_identity_engine: Engine,
+    authorization_owner_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _account_id, token = _initialize_current_super_admin(
+        identity_engine=authorization_identity_engine,
+        authorization_engine=authorization_rw_engine,
+        owner_engine=authorization_owner_engine,
+        monkeypatch=monkeypatch,
+    )
+    dependencies = authorization_dependencies()
+    decision_dependencies = _decision_dependencies(authorization_identity_engine)
+    with authorization_rw_engine.begin() as db:
+        initial = authorize(
+            db,
+            raw_token=token,
+            capability="platform.home.read",
+            scope=Scope.platform(),
+            dependencies=dependencies,
+            decision_dependencies=decision_dependencies,
+        )
+    assert initial.principal is not None
+
+    def fail_principal_version(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("injected repository outage")
+
+    monkeypatch.setattr(
+        SqlAlchemyAuthorizationRepository,
+        "principal_version",
+        fail_principal_version,
+    )
+    with authorization_rw_engine.begin() as db:
+        unavailable = authorize(
+            db,
+            raw_token=token,
+            capability="platform.home.read",
+            scope=Scope.platform(),
+            dependencies=dependencies,
+            decision_dependencies=decision_dependencies,
+        )
+    assert unavailable.allowed is False
+    assert unavailable.code is DecisionCode.UNAVAILABLE
+
+    with authorization_rw_engine.begin() as db:
+        with pytest.raises(AuthorizationUnavailable, match="version unavailable"):
+            principal_has_capability(
+                db,
+                principal=initial.principal,
+                capability="platform.home.read",
+                scope=Scope.platform(),
+                dependencies=dependencies,
+                decision_dependencies=decision_dependencies,
+            )
