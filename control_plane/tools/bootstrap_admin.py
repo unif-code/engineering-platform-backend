@@ -15,6 +15,9 @@ from control_plane.app.modules.authorization import (
 )
 from control_plane.app.modules.identity import IdentityDependencies
 
+_INTERACTIVE_PASSWORD_PREFIX = "\x1b[1;30;103m"
+_INTERACTIVE_PASSWORD_SUFFIX = "\x1b[0m"
+
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -22,6 +25,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--employee-no", required=True)
     parser.add_argument("--display-name", required=True)
+    parser.add_argument(
+        "--interactive",
+        action="store_true",
+        help="highlight the one-time password in an attached terminal",
+    )
     return parser
 
 
@@ -77,6 +85,13 @@ def _write_committed_evidence(evidence: TextIO, payload: dict[str, str]) -> None
         )
 
 
+def _is_terminal(output: TextIO) -> bool:
+    try:
+        return output.isatty()
+    except (AttributeError, OSError):
+        return False
+
+
 def _resolve_committed(
     engine: Engine,
     *,
@@ -119,6 +134,16 @@ def main(
     args = _parser().parse_args(argv)
     output = stdout or sys.stdout
     evidence = stderr or sys.stderr
+    if args.interactive and not _is_terminal(output):
+        _write_evidence_safely(
+            evidence,
+            {
+                "event": "super_admin_bootstrap",
+                "result": "FAILED",
+                "reasonCode": "INTERACTIVE_TTY_REQUIRED",
+            },
+        )
+        return 4
     if engine is None or dependencies is None:
         (
             runtime_engine,
@@ -159,16 +184,23 @@ def main(
                     source_transaction_id=source_transaction_id,
                     dependencies=dependencies,
                 )
-                _write_evidence(
-                    evidence,
-                    {
-                        "event": "super_admin_bootstrap",
-                        "result": "ATTEMPT",
-                        "employeeNo": args.employee_no,
-                        "commandId": execution.correlation_id,
-                    },
-                )
-                output.write(f"{execution.temporary_password}\n")
+                attempt_evidence = {
+                    "event": "super_admin_bootstrap",
+                    "result": "ATTEMPT",
+                    "employeeNo": args.employee_no,
+                    "commandId": execution.correlation_id,
+                }
+                if args.interactive:
+                    attempt_evidence["credentialDisplay"] = "NEXT_STDOUT_LINE_HIGHLIGHTED"
+                _write_evidence(evidence, attempt_evidence)
+                if args.interactive:
+                    output.write(
+                        f"{_INTERACTIVE_PASSWORD_PREFIX}"
+                        f"{execution.temporary_password}"
+                        f"{_INTERACTIVE_PASSWORD_SUFFIX}\n"
+                    )
+                else:
+                    output.write(f"{execution.temporary_password}\n")
                 output.flush()
                 commit_attempted = True
                 try:

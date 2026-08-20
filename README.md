@@ -32,6 +32,18 @@ uv run uvicorn control_plane.app.bootstrap.app:create_app --factory --reload
 uv run pytest                  # 无 DB 时集成测试自动 skip（勿据此判定通过）
 ```
 
+### 本地首次 Super Admin
+
+完成数据库迁移，并按 [AGENTS.md](AGENTS.md) 生成本地密钥材料后，在真实交互终端执行：
+
+```bash
+uv run python -m control_plane.tools.bootstrap_admin --employee-no 00000000 --display-name 平台超级管理员 --interactive
+```
+
+`ATTEMPT` JSON 之后黑字亮黄底的下一行才是一次性临时密码；`commandId` 只是审计编号。
+交互模式拒绝 stdout 重定向，避免凭据误入文件或日志。正式带外交付仍使用不带
+`--interactive` 的命令，其 stdout 契约保持为唯一一行原始临时密码。
+
 质量门与 CI 同链：`ruff format --check` / `ruff check` / `mypy` / `lint-imports` / `pytest` / `python scripts/export_openapi.py --check`，全部以 `uv run` 执行。
 
 ## 两条发布链

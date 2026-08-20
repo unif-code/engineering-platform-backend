@@ -22,6 +22,11 @@ class FailingWriter:
         raise OSError("simulated stdout failure")
 
 
+class TtyStringIO(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
 class FlushFailingBufferedWriter:
     def __init__(self) -> None:
         self.buffer = io.StringIO()
@@ -1304,6 +1309,69 @@ def test_bootstrap_cli_succeeds_once_and_never_persists_plaintext_password(
     assert temporary_password not in str(persisted["password_hash"])
     assert temporary_password != persisted["secret_hash"]
     assert temporary_password not in persisted["reason"]
+
+
+def test_bootstrap_cli_interactive_mode_requires_a_real_terminal() -> None:
+    bootstrap_cli = importlib.import_module("control_plane.tools.bootstrap_admin")
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+
+    exit_code = bootstrap_cli.main(
+        [
+            "--employee-no",
+            "00000001",
+            "--display-name",
+            "张三",
+            "--interactive",
+        ],
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 4
+    assert stdout.getvalue() == ""
+    assert json.loads(stderr.getvalue()) == {
+        "event": "super_admin_bootstrap",
+        "result": "FAILED",
+        "reasonCode": "INTERACTIVE_TTY_REQUIRED",
+    }
+
+
+def test_bootstrap_cli_interactive_mode_highlights_the_single_password_line(
+    clean_identity_db: None,
+    identity_rw_engine: Engine,
+) -> None:
+    dependencies = identity_dependencies()
+    bootstrap_cli = importlib.import_module("control_plane.tools.bootstrap_admin")
+    stdout = TtyStringIO()
+    stderr = io.StringIO()
+
+    exit_code = bootstrap_cli.main(
+        [
+            "--employee-no",
+            "00000001",
+            "--display-name",
+            "张三",
+            "--interactive",
+        ],
+        engine=identity_rw_engine,
+        dependencies=dependencies,
+        security_changes=None,
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    assert exit_code == 0
+    rendered_password = stdout.getvalue()
+    assert rendered_password.startswith("\x1b[1;30;103m")
+    assert rendered_password.endswith("\x1b[0m\n")
+    temporary_password = rendered_password.removeprefix("\x1b[1;30;103m").removesuffix("\x1b[0m\n")
+    assert len(temporary_password) >= 24
+    assert rendered_password.count(temporary_password) == 1
+    evidence = _evidence_lines(stderr)
+    assert [item["result"] for item in evidence] == ["ATTEMPT", "SUCCESS"]
+    assert evidence[0]["credentialDisplay"] == "NEXT_STDOUT_LINE_HIGHLIGHTED"
+    assert temporary_password not in stderr.getvalue()
 
 
 def test_bootstrap_cli_commit_ack_loss_resolves_claim_and_replays_same_credential(
