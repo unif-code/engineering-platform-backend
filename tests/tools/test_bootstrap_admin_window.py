@@ -106,5 +106,27 @@ def test_close_delay_can_be_shortened_for_local_smoke_checks() -> None:
 
 def test_windows_launcher_is_ascii_for_windows_powershell_51() -> None:
     launcher = Path(__file__).parents[2] / "scripts" / "open-local-super-admin.ps1"
+    child = Path(__file__).parents[2] / "scripts" / "run-local-super-admin.ps1"
 
     launcher.read_bytes().decode("ascii")
+    child.read_bytes().decode("ascii")
+
+
+def test_windows_launcher_allocates_a_fresh_console_for_the_password() -> None:
+    launcher = Path(__file__).parents[2] / "scripts" / "open-local-super-admin.ps1"
+    source = launcher.read_text(encoding="ascii")
+
+    assert "$env:ComSpec" in source
+    assert 'start "Local Super Admin Bootstrap" powershell.exe' in source
+    assert "Start-Process" not in source
+    assert "-EncodedCommand" not in source
+
+
+def test_windows_child_script_owns_the_interactive_bootstrap_lifecycle() -> None:
+    child = Path(__file__).parents[2] / "scripts" / "run-local-super-admin.ps1"
+    source = child.read_text(encoding="ascii")
+
+    assert "$env:LOCAL_BOOTSTRAP_EMPLOYEE_NO" in source
+    assert "$env:LOCAL_BOOTSTRAP_DISPLAY_NAME_BASE64" in source
+    assert "$env:LOCAL_BOOTSTRAP_CLOSE_AFTER_SECONDS" in source
+    assert "control_plane.tools.bootstrap_admin_window" in source
