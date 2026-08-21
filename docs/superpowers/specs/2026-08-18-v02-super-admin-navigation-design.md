@@ -22,14 +22,16 @@ platform.home.read
 platform.admin.access
 audit.read
 identity.account.manage
+platform.organization.read
 platform.organization.manage
+platform.workspace.read
 platform.workspace.manage
 platform.authorization.manage
 platform.configuration.manage
 platform.super_admin.manage
 ```
 
-`platform.configuration.manage` 与 `platform.super_admin.manage` 仍属于不可普通授予的 reserved set；不得把其余七项加入 reserved set，否则会破坏普通 Grant。自动集合只在 Principal 的当前 `is_super_admin` 为真且 Scope 为 `PLATFORM` 时生效。
+`platform.configuration.manage` 与 `platform.super_admin.manage` 仍属于不可普通授予的 reserved set；不得把其余九项加入 reserved set，否则会破坏普通 Grant。自动集合只在 Principal 的当前 `is_super_admin` 为真且 Scope 为 `PLATFORM` 时生效。
 
 Principal 投影、请求级 `authorize` 与已有 Principal 的 `principal_has_capability` 共用同一集合和判断函数，避免 `/me` 显示能力但端点拒绝，或端点放行而导航缺失。自动能力不写入 `authorization.grant`；撤销 Super Admin 后立即停止派生，另行存在的普通 Grant 保持既有生命周期。
 
@@ -60,11 +62,11 @@ Principal 投影、请求级 `authorize` 与已有 Principal 的 `principal_has_
 
 采用 TDD，先增加失败断言，再做最小实现：
 
-1. domain/application 单测锁定精确九项集合，断言任意未来 Capability 不自动放行。
+1. domain/application 单测锁定精确十一项集合，断言任意未来 Capability 不自动放行。
 2. `resolve_principal`、`authorize`、`principal_has_capability` 对 Super Admin 一致；普通 Principal 的显式 Grant 行为保持不变。
 3. Super Admin 撤销、账号停用、Session 无效、授权版本陈旧、projection/repository 异常继续 Fail Closed。
 4. migration 测试验证升级新增六条、字段精确、未知扩展保留、冲突失败与降级边界。
-5. API 测试验证 `/me` 返回九项能力，`/navigation` 返回精确八个 routeKey 且不含 `tasks`、`workspaces`、`admin.menus` 等原型项。
+5. API 测试验证 `/me` 返回十一项能力，`/navigation` 返回精确八个 routeKey 且不含 `tasks`、`workspaces`、`admin.menus` 等原型项。
 6. 版本与 OpenAPI drift 测试更新到 `0.2.1`。
 
 本机运行受影响 pytest、Ruff、Mypy、import-linter 与 OpenAPI check；完整 pytest 与镜像构建由 CI 执行。合并、tag 与环境迁移前均不得用测试跳过或硬编码响应替代验证。

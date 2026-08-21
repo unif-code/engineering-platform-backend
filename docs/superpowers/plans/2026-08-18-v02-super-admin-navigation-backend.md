@@ -13,9 +13,9 @@
 ## Global Constraints
 
 - 基线为 `api-v0.2.0`，目标 tag 必须为 `api-v0.2.1`，`control_plane.app.__version__` 与 OpenAPI `info.version` 必须一致。
-- 自动能力只对当前 `is_super_admin=true`、`ScopeType.PLATFORM` 和精确九项集合生效。
+- 自动能力只对当前 `is_super_admin=true`、`ScopeType.PLATFORM` 和精确十一项集合生效。
 - 不使用 wildcard、前缀匹配、员工号判断或全局 bypass；`00000000` 只由部署后的 Bootstrap 运维步骤使用。
-- `platform.configuration.manage` 与 `platform.super_admin.manage` 保持 reserved；其余七项不能加入 `RESERVED_PLATFORM_CAPABILITIES`。
+- `platform.configuration.manage` 与 `platform.super_admin.manage` 保持 reserved；其余九项不能加入 `RESERVED_PLATFORM_CAPABILITIES`。
 - 自动能力不写入普通 Grant；历史 Bootstrap Grant 不在本补丁删除。
 - Session、账号状态、authorization version、convergence、Workspace Membership、资源门禁和 Audit 继续 Fail Closed。
 - 不手改 `openapi.json`；只由 `uv run python scripts/export_openapi.py` 生成。
@@ -26,7 +26,7 @@
 
 ## File Map
 
-- Modify: `control_plane/app/modules/authorization/domain/models.py` — 九项集合和精确 Super Admin Platform 判定。
+- Modify: `control_plane/app/modules/authorization/domain/models.py` — 十一项集合和精确 Super Admin Platform 判定。
 - Modify: `control_plane/app/modules/authorization/domain/__init__.py` — 导出 domain 契约。
 - Modify: `control_plane/app/modules/authorization/__init__.py` — 公开只读常量供测试和其他 Facade 消费。
 - Modify: `control_plane/app/modules/authorization/application/decisions.py` — Principal 投影、请求授权和资源 guard 共用有限判定。
@@ -56,7 +56,7 @@
 - Produces: `is_v02_super_admin_platform_capability(capability: str, scope: Scope, *, is_super_admin: bool) -> bool`。
 - Consumes: 现有 `Scope`、`ScopeType`、`AuthorizationPrincipal`、`RESERVED_PLATFORM_CAPABILITIES`。
 
-- [ ] **Step 1: 把现有 reserved 测试升级为九项精确集合断言**
+- [ ] **Step 1: 把现有 reserved 测试升级为十一项精确集合断言**
 
 在 `tests/authorization/test_reserved_capabilities.py` 导入 `V02_SUPER_ADMIN_PLATFORM_CAPABILITIES`，把 `test_current_super_admin_fact_confers_both_reserved_capabilities_without_grants` 改名为 `test_current_super_admin_fact_confers_exact_v02_platform_capabilities_without_grants`。期望集合写成：
 
@@ -66,7 +66,9 @@ EXPECTED_V02_SUPER_ADMIN_CAPABILITIES = {
     "platform.admin.access",
     "audit.read",
     "identity.account.manage",
+    "platform.organization.read",
     "platform.organization.manage",
+    "platform.workspace.read",
     "platform.workspace.manage",
     "platform.authorization.manage",
     "platform.configuration.manage",
@@ -125,7 +127,9 @@ V02_SUPER_ADMIN_PLATFORM_CAPABILITIES = frozenset(
         "platform.admin.access",
         "audit.read",
         "identity.account.manage",
+        "platform.organization.read",
         "platform.organization.manage",
+        "platform.workspace.read",
         "platform.workspace.manage",
         "platform.authorization.manage",
         PLATFORM_CONFIGURATION_MANAGE,
@@ -152,7 +156,7 @@ def is_v02_super_admin_platform_capability(
 
 从 domain `__init__.py` 和模块根 `__init__.py` 导出常量与函数。不得扩大 `RESERVED_PLATFORM_CAPABILITIES`。
 
-- [ ] **Step 4: 让 Principal 投影去重并派生九项集合**
+- [ ] **Step 4: 让 Principal 投影去重并派生十一项集合**
 
 在 `_principal_capabilities` 中用稳定 key 去重普通 Grant 与自动能力：
 
