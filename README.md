@@ -36,13 +36,14 @@ uv run pytest                  # 无 DB 时集成测试自动 skip（勿据此�
 
 完成数据库迁移，并按 [AGENTS.md](AGENTS.md) 生成本地密钥材料后，在真实交互终端执行：
 
-```bash
-uv run python -m control_plane.tools.bootstrap_admin --employee-no 00000000 --display-name 平台超级管理员 --interactive
+```powershell
+.\scripts\open-local-super-admin.ps1
 ```
 
-`ATTEMPT` JSON 之后黑字亮黄底的下一行才是一次性临时密码；`commandId` 只是审计编号。
+脚本会打开独立 PowerShell 窗口。`ATTEMPT` JSON 之后黑字亮黄底的下一行才是一次性临时密码；
+`commandId` 只是审计编号。成功后窗口最多保留 3 分钟，按 Enter 可提前关闭。
 交互模式拒绝 stdout 重定向，避免凭据误入文件或日志。正式带外交付仍使用不带
-`--interactive` 的命令，其 stdout 契约保持为唯一一行原始临时密码。
+`--interactive` 的底层命令，其 stdout 契约保持为唯一一行原始临时密码。
 
 质量门与 CI 同链：`ruff format --check` / `ruff check` / `mypy` / `lint-imports` / `pytest` / `python scripts/export_openapi.py --check`，全部以 `uv run` 执行。
 
