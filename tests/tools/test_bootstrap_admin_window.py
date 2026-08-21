@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 from collections.abc import Callable
+from pathlib import Path
 from typing import TextIO
 
 
@@ -101,3 +102,9 @@ def test_close_delay_can_be_shortened_for_local_smoke_checks() -> None:
 
     assert exit_code == 0
     assert delays == [2]
+
+
+def test_windows_launcher_is_ascii_for_windows_powershell_51() -> None:
+    launcher = Path(__file__).parents[2] / "scripts" / "open-local-super-admin.ps1"
+
+    launcher.read_bytes().decode("ascii")
