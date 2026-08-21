@@ -32,6 +32,19 @@ uv run uvicorn control_plane.app.bootstrap.app:create_app --factory --reload
 uv run pytest                  # 无 DB 时集成测试自动 skip（勿据此判定通过）
 ```
 
+本地 Compose 资源使用固定名称，避免因仓库目录或 worktree 名不同而在 Docker Desktop
+中生成难以辨认的资源：
+
+| 资源 | 固定名称 |
+| --- | --- |
+| Compose 项目 | `engineering-platform-local` |
+| PostgreSQL 容器 | `engineering-platform-local-postgres` |
+| PostgreSQL 数据卷 | `engineering-platform-local-postgres-data` |
+| 默认网络 | `engineering-platform-local-network` |
+
+`docker compose down` 只停止并移除容器与网络，保留数据库卷；仅在明确要清空本地数据时
+才使用 `docker compose down --volumes`。
+
 ### 本地首次 Super Admin
 
 完成数据库迁移，并按 [AGENTS.md](AGENTS.md) 生成本地密钥材料后，在真实交互终端执行：
