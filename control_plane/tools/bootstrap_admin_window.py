@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import sys
 import threading
 import time
@@ -36,7 +35,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _wait_for_enter_or_timeout(seconds: float) -> None:
-    if os.name == "nt" and sys.stdin.isatty():
+    if sys.platform == "win32" and sys.stdin.isatty():
         import msvcrt
 
         deadline = time.monotonic() + seconds

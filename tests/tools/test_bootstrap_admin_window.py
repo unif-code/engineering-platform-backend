@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import io
 import json
+import sys
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TextIO
+from unittest.mock import Mock
+
+import pytest
 
 
 def _bootstrap_success(
@@ -102,6 +107,31 @@ def test_close_delay_can_be_shortened_for_local_smoke_checks() -> None:
 
     assert exit_code == 0
     assert delays == [2]
+
+
+def test_windows_tty_uses_non_blocking_console_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import control_plane.tools.bootstrap_admin_window as window
+
+    key_available = Mock(return_value=True)
+    read_key = Mock(return_value="\r")
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(
+        sys,
+        "stdin",
+        SimpleNamespace(isatty=lambda: True, readline=lambda: ""),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "msvcrt",
+        SimpleNamespace(kbhit=key_available, getwch=read_key),
+    )
+
+    window._wait_for_enter_or_timeout(1)
+
+    key_available.assert_called_once_with()
+    read_key.assert_called_once_with()
 
 
 def test_windows_launcher_is_ascii_for_windows_powershell_51() -> None:
