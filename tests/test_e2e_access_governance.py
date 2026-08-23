@@ -354,6 +354,51 @@ def test_access_governance_closes_the_real_cli_http_grant_and_audit_loop(
         )
     assert admin_principal is not None and admin_principal.is_super_admin
 
+    me = admin.get("/api/v1/me")
+    navigation = admin.get("/api/v1/navigation")
+    assert me.status_code == 200
+    assert navigation.status_code == 200
+    me_payload = me.json()
+    assert me_payload["isSuperAdmin"] is True
+    assert sorted(
+        (
+            item["capability"],
+            item["scopeType"],
+            item["scopeId"],
+        )
+        for item in me_payload["capabilities"]
+    ) == [
+        ("audit.read", "PLATFORM", None),
+        ("identity.account.manage", "PLATFORM", None),
+        ("platform.admin.access", "PLATFORM", None),
+        ("platform.authorization.manage", "PLATFORM", None),
+        ("platform.configuration.manage", "PLATFORM", None),
+        ("platform.home.read", "PLATFORM", None),
+        ("platform.organization.manage", "PLATFORM", None),
+        ("platform.organization.read", "PLATFORM", None),
+        ("platform.super_admin.manage", "PLATFORM", None),
+        ("platform.workspace.manage", "PLATFORM", None),
+        ("platform.workspace.read", "PLATFORM", None),
+    ]
+    assert [
+        (
+            item["routeKey"],
+            item["capability"],
+            item["scopeType"],
+            item["order"],
+        )
+        for item in navigation.json()
+    ] == [
+        ("home", "platform.home.read", "PLATFORM", 1),
+        ("admin", "platform.admin.access", "PLATFORM", 2),
+        ("audit", "audit.read", "PLATFORM", 7),
+        ("admin.workspaces", "platform.workspace.manage", "PLATFORM", 8),
+        ("admin.organization", "platform.organization.manage", "PLATFORM", 9),
+        ("admin.users", "identity.account.manage", "PLATFORM", 13),
+        ("admin.grants", "platform.authorization.manage", "PLATFORM", 14),
+        ("admin.policies", "platform.configuration.manage", "PLATFORM", 15),
+    ]
+
     with engines["authorization"].connect() as db:
         initial_grants = (
             db.execute(
@@ -670,6 +715,6 @@ def test_bootstrap_cli_recovers_same_command_after_authorization_outage(
     assert facts == (1, 3, 1, 3)
 
 
-def test_release_version_is_0_2_1() -> None:
-    assert __version__ == "0.2.1"
-    assert bootstrap.create_app().openapi()["info"]["version"] == "0.2.1"
+def test_release_version_is_0_2_2() -> None:
+    assert __version__ == "0.2.2"
+    assert bootstrap.create_app().openapi()["info"]["version"] == "0.2.2"
