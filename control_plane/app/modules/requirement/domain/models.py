@@ -39,6 +39,10 @@ class WorkItemState(StrEnum):
     CANCELED = "CANCELED"
 
 
+class ExecutorType(StrEnum):
+    HUMAN = "HUMAN"
+
+
 class RequirementDto(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -60,3 +64,31 @@ class RequirementDto(BaseModel):
     revision: int
     created_at: datetime
     updated_at: datetime
+
+
+class WorkItemDto(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    requirement_id: str
+    created_by: str
+    human_owner_id: str | None
+    executor_type: ExecutorType
+    executor_id: str | None
+    required_capabilities: tuple[str, ...]
+    assignment_state: AssignmentState
+    repository_state: RepositoryState
+    state: WorkItemState
+    repository_id: str
+    base_commit_sha: str | None
+    task_branch: str | None
+    revision: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class CreateRequirementResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    requirement: RequirementDto
+    work_item: WorkItemDto

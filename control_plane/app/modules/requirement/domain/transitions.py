@@ -14,6 +14,22 @@ class InvalidRequirementTransition(RequirementError):
     pass
 
 
+class InvalidRequirementInput(RequirementError):
+    pass
+
+
+class RequirementNotFound(RequirementError):
+    pass
+
+
+class StaleRequirementRevision(RequirementError):
+    pass
+
+
+class RepositoryBindingRequestMissing(RequirementError):
+    pass
+
+
 _FIRST_BATCH_TRANSITIONS = {
     RequirementState.CREATED: {RequirementState.PREPARING, RequirementState.CANCELED},
     RequirementState.PREPARING: {
