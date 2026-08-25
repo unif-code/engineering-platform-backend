@@ -108,6 +108,27 @@ def test_requirement_constraints_reject_invalid_aggregate_and_work_item_facts(
             transaction.rollback()
 
 
+def test_repository_binding_blocked_state_requires_a_structured_reason_and_timestamp(
+    requirement_owner_engine: Engine,
+) -> None:
+    inspector = inspect(requirement_owner_engine)
+    columns = {
+        item["name"] for item in inspector.get_columns("work_item", schema="requirement")
+    }
+    with requirement_owner_engine.connect() as db:
+        constraint = db.execute(
+            text(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                "WHERE conname='ck_requirement_work_item_repository'"
+            )
+        ).scalar_one()
+
+    assert {"repository_blocked_reason_code", "repository_blocked_at"} <= columns
+    assert "BLOCKED" in constraint
+    assert "repository_blocked_reason_code" in constraint
+    assert "repository_blocked_at" in constraint
+
+
 def test_gate_cannot_claim_artifact_different_from_its_sdd_baseline(
     isolated_requirement_rw_engine: Engine,
 ) -> None:
@@ -227,7 +248,7 @@ def test_requirement_rw_has_only_expected_module_and_audit_privileges(
                 for privilege in privileges
                 if db.execute(
                     text(
-                        "SELECT has_table_privilege(" 
+                        "SELECT has_table_privilege("
                         "'requirement_rw', 'requirement.' || :table_name, :privilege)"
                     ),
                     {"table_name": table_name, "privilege": privilege},
@@ -240,7 +261,7 @@ def test_requirement_rw_has_only_expected_module_and_audit_privileges(
             for privilege in ("USAGE", "CREATE")
             if db.execute(
                 text(
-                    "SELECT has_schema_privilege(" 
+                    "SELECT has_schema_privilege("
                     "'requirement_rw', 'requirement', :privilege)"
                 ),
                 {"privilege": privilege},
@@ -277,9 +298,9 @@ def test_requirement_rw_has_only_expected_module_and_audit_privileges(
         }
         audit_execute = db.execute(
             text(
-                "SELECT has_function_privilege(" 
+                "SELECT has_function_privilege("
                 "'requirement_rw', "
-                "'audit.append_event(text,timestamptz,text,text,text,text,text,text," 
+                "'audit.append_event(text,timestamptz,text,text,text,text,text,text,"
                 "text,text,integer)', 'EXECUTE')"
             )
         ).scalar_one()

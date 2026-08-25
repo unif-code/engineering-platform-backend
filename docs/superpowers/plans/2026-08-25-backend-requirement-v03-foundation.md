@@ -361,13 +361,13 @@ git commit -m "feat(requirement): create governed requirements"
 
 **Interfaces:**
 
-- Produces: `get_requirement(...)`、`list_requirements(...)`、`record_repository_binding(...)`。
+- Produces: `get_requirement(...)`、`list_requirements(...)`、`record_repository_binding(...)`、`record_repository_binding_blocked(...)`。
 - Cursor: base64url 编码的不可解释 `{createdAt,id}` 游标；查询固定 `ORDER BY created_at, id`。
 - Internal binding command: 只接受受控 Adapter identity，不暴露 HTTP route。
 
 - [x] **Step 1: 写 Workspace 隔离、稳定 cursor 和绑定状态失败测试**
 
-覆盖其他 Workspace 不可见、无效 cursor Fail Closed、相同时间按 ID 稳定翻页、重复 Binding 回传幂等、冲突 base commit/branch 拒绝。
+覆盖其他 Workspace 不可见、无效 cursor Fail Closed、相同时间按 ID 稳定翻页、重复 Binding 回传幂等、结构化 BindingBlocked 持久化与恢复、冲突 base commit/branch 拒绝。
 
 - [x] **Step 2: 运行测试确认 RED**
 
@@ -390,6 +390,8 @@ repository.bind_work_item(
     state=work_item_state.value,
 )
 ```
+
+Binding Blocked 只保存受控 reason code 与时间戳，WorkItem 保持 `DRAFT`；后续同 Repository 的 Binding Ready 使用新的 revision 从 `BLOCKED` 恢复到 `BOUND`，并清除 blocked 字段。
 
 - [x] **Step 4: 运行测试确认 GREEN 并提交**
 
@@ -554,7 +556,8 @@ POST Requirement
 → submit baseline gate
 → current human reviewer APPROVED
 → GET Requirement state=READY
-→ WorkItem 仍 DRAFT（直到 ASSIGNED + BOUND）
+→ internal Binding Blocked 回传，WorkItem 保持 DRAFT 并返回安全 reason code
+→ internal Binding Ready 恢复，测试资格 Guard 已分配时 WorkItem 进入 READY
 ```
 
 拒绝路径覆盖 `CHANGES_REQUESTED → PREPARING`、`REJECTED → CANCELED`、资格失效和 subject hash/revision 冲突。
@@ -598,4 +601,4 @@ git commit -m "test(requirement): verify baseline confirmation flow"
 
 - [ ] **Step 7: 请求代码评审并按证据决定是否推送/开 PR**
 
-在固定 HEAD 上执行 `superpowers:requesting-code-review`；只有评审结论和全部门禁均通过后，才推送 `codex/backend-requirement-v0.3` 并创建 PR。不得自动打 tag，不得宣称 V0.3 Release Gate 已通过。
+在固定 HEAD 上执行 `superpowers:requesting-code-review`；补齐评审发现的结构化 BindingBlocked 恢复链、真实显式 Workspace Grant + Membership + 生产 Requirement Router E2E，并明确 `work_item.assign` 的第一批边界。只有复审结论和全部门禁均通过后，才推送 `codex/backend-requirement-v0.3` 并创建 PR。不得自动打 tag，不得宣称 V0.3 Release Gate 已通过。

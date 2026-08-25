@@ -30,7 +30,16 @@ class AssignmentState(StrEnum):
 
 class RepositoryState(StrEnum):
     WAITING_REPOSITORY = "WAITING_REPOSITORY"
+    BLOCKED = "BLOCKED"
     BOUND = "BOUND"
+
+
+class RepositoryBindingBlockedReason(StrEnum):
+    CONNECTOR_UNAVAILABLE = "CONNECTOR_UNAVAILABLE"
+    REPOSITORY_NOT_FOUND = "REPOSITORY_NOT_FOUND"
+    ACCESS_DENIED = "ACCESS_DENIED"
+    POLICY_DENIED = "POLICY_DENIED"
+    BINDING_CONFLICT = "BINDING_CONFLICT"
 
 
 class WorkItemState(StrEnum):
@@ -98,6 +107,8 @@ class WorkItemDto(BaseModel):
     repository_id: str
     base_commit_sha: str | None
     task_branch: str | None
+    repository_blocked_reason_code: RepositoryBindingBlockedReason | None
+    repository_blocked_at: datetime | None
     revision: int
     created_at: datetime
     updated_at: datetime

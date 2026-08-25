@@ -1,7 +1,11 @@
+from sqlalchemy import text
+
 from control_plane.app.modules.requirement import (
+    RepositoryBindingBlockedReason,
     RepositoryState,
     WorkItemState,
     record_repository_binding,
+    record_repository_binding_blocked,
 )
 from tests.requirement.conftest import IsolatedRequirementDatabase
 from tests.requirement.test_commands import Actor, _create, _dependencies
@@ -67,3 +71,62 @@ def test_binding_keeps_unassigned_work_item_draft(
 
     assert bound.repository_state is RepositoryState.BOUND
     assert bound.state is WorkItemState.DRAFT
+
+
+def test_binding_records_a_structured_block_and_recovers_the_same_work_item(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    created = _create(
+        isolated_requirement_database,
+        idempotency_key="binding-blocked-create",
+    )
+
+    with isolated_requirement_database.runtime.begin() as db:
+        blocked = record_repository_binding_blocked(
+            db,
+            work_item_id=created.work_item.id,
+            repository_id="repository-1",
+            reason_code=RepositoryBindingBlockedReason.CONNECTOR_UNAVAILABLE,
+            expected_revision=1,
+            actor=Actor("SYSTEM"),
+            idempotency_key="binding-blocked-0001",
+            dependencies=_dependencies(),
+        )
+    with isolated_requirement_database.runtime.begin() as db:
+        recovered = record_repository_binding(
+            db,
+            work_item_id=created.work_item.id,
+            repository_id="repository-1",
+            base_commit_sha="c" * 40,
+            task_branch="work-items/recovered",
+            expected_revision=blocked.revision,
+            actor=Actor("SYSTEM"),
+            idempotency_key="binding-recovered-0001",
+            dependencies=_dependencies(),
+        )
+
+    assert blocked.repository_state is RepositoryState.BLOCKED
+    assert blocked.repository_blocked_reason_code is (
+        RepositoryBindingBlockedReason.CONNECTOR_UNAVAILABLE
+    )
+    assert blocked.repository_blocked_at is not None
+    assert blocked.state is WorkItemState.DRAFT
+    assert recovered.repository_state is RepositoryState.BOUND
+    assert recovered.repository_blocked_reason_code is None
+    assert recovered.repository_blocked_at is None
+    assert recovered.state is WorkItemState.READY
+    assert recovered.revision == 3
+    with isolated_requirement_database.owner.connect() as db:
+        actions = list(
+            db.execute(
+                text(
+                    "SELECT action FROM audit.audit_event WHERE target_id=:work_item_id "
+                    "AND action LIKE 'requirement.repository_binding.%' ORDER BY occurred_at"
+                ),
+                {"work_item_id": created.work_item.id},
+            ).scalars()
+        )
+    assert actions == [
+        "requirement.repository_binding.blocked",
+        "requirement.repository_binding.recorded",
+    ]

@@ -1921,9 +1921,21 @@
         "title": "RemoveSuperAdminRequestDto",
         "type": "object"
       },
+      "RepositoryBindingBlockedReason": {
+        "enum": [
+          "CONNECTOR_UNAVAILABLE",
+          "REPOSITORY_NOT_FOUND",
+          "ACCESS_DENIED",
+          "POLICY_DENIED",
+          "BINDING_CONFLICT"
+        ],
+        "title": "RepositoryBindingBlockedReason",
+        "type": "string"
+      },
       "RepositoryState": {
         "enum": [
           "WAITING_REPOSITORY",
+          "BLOCKED",
           "BOUND"
         ],
         "title": "RepositoryState",
@@ -2542,6 +2554,28 @@
             "title": "Id",
             "type": "string"
           },
+          "repositoryBlockedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Repositoryblockedat"
+          },
+          "repositoryBlockedReasonCode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RepositoryBindingBlockedReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "repositoryId": {
             "title": "Repositoryid",
             "type": "string"
@@ -2599,6 +2633,8 @@
           "repositoryId",
           "baseCommitSha",
           "taskBranch",
+          "repositoryBlockedReasonCode",
+          "repositoryBlockedAt",
           "revision",
           "createdAt",
           "updatedAt"

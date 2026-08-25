@@ -32,6 +32,7 @@ from control_plane.app.modules.requirement.domain import (
     GateType,
     RecordState,
     RegisterSddBaselineResult,
+    RepositoryBindingBlockedReason,
     RepositoryBindingConflict,
     RepositoryState,
     RequirementDependencyUnavailable,
@@ -458,6 +459,106 @@ def record_repository_binding(
         repository,
         actor=stable_actor,
         operation="requirement_record_repository_binding",
+        key=idempotency_key,
+        fingerprint=fingerprint,
+        command=command,
+        now=dependencies.clock.now,
+        new_id=dependencies.random.uuid4,
+        idempotency_sealing_key=material.idempotency_sealing_key,
+    )
+    return WorkItemDto.model_validate(execution.response.body)
+
+
+def _record_repository_binding_blocked_once(
+    repository: RequirementRepository,
+    *,
+    work_item_id: str,
+    repository_id: str,
+    reason_code: RepositoryBindingBlockedReason,
+    expected_revision: int,
+    actor: Any,
+    dependencies: RequirementDependencies,
+) -> WorkItemDto:
+    row = repository.work_item_by_id(work_item_id, for_update=True)
+    if row is None:
+        raise WorkItemNotFound(work_item_id)
+    if row["repository_id"] != repository_id:
+        raise RepositoryBindingConflict("Repository block targets a different repository")
+    if row["repository_state"] == RepositoryState.BOUND.value:
+        raise RepositoryBindingConflict("A bound WorkItem cannot become repository-blocked")
+    if (
+        row["repository_state"] == RepositoryState.BLOCKED.value
+        and row["repository_blocked_reason_code"] == reason_code.value
+    ):
+        return work_item_dto(row)
+    if row["revision"] != expected_revision:
+        raise StaleWorkItemRevision(work_item_id)
+    updated = repository.block_work_item(
+        work_item_id,
+        expected_revision=expected_revision,
+        reason_code=reason_code.value,
+        now=dependencies.clock.now(),
+    )
+    if updated is None:
+        raise StaleWorkItemRevision(work_item_id)
+    audit(
+        repository,
+        dependencies=dependencies,
+        actor=actor_id(actor),
+        action="requirement.repository_binding.blocked",
+        target_type="WORK_ITEM",
+        target_id=work_item_id,
+        reason=(
+            f"repository={repository_id}; reasonCode={reason_code.value}; "
+            f"revision={updated['revision']}"
+        ),
+    )
+    return work_item_dto(updated)
+
+
+def record_repository_binding_blocked(
+    repository: RequirementRepository,
+    *,
+    work_item_id: str,
+    repository_id: str,
+    reason_code: RepositoryBindingBlockedReason,
+    expected_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    dependencies: RequirementDependencies,
+) -> WorkItemDto:
+    stable_actor = actor_id(actor)
+    material = dependencies.secret_manager.load()
+    body: dict[str, object] = {
+        "workItemId": work_item_id,
+        "repositoryId": repository_id,
+        "reasonCode": reason_code.value,
+        "expectedRevision": expected_revision,
+    }
+    fingerprint = canonical_request_fingerprint(
+        operation="requirement_record_repository_binding_blocked",
+        method="COMMAND",
+        path="requirement.record-repository-binding-blocked",
+        body=body,
+        idempotency_sealing_key=material.idempotency_sealing_key,
+    )
+
+    def command() -> IdempotentResponse:
+        blocked = _record_repository_binding_blocked_once(
+            repository,
+            work_item_id=work_item_id,
+            repository_id=repository_id,
+            reason_code=reason_code,
+            expected_revision=expected_revision,
+            actor=actor,
+            dependencies=dependencies,
+        )
+        return IdempotentResponse(status_code=200, body=blocked.model_dump(mode="json"))
+
+    execution = execute_idempotent(
+        repository,
+        actor=stable_actor,
+        operation="requirement_record_repository_binding_blocked",
         key=idempotency_key,
         fingerprint=fingerprint,
         command=command,

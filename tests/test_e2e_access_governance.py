@@ -113,6 +113,7 @@ def e2e_runtime(
         "workspace": (settings.workspace_database_url, "workspace_rw"),
         "authorization": (settings.authorization_database_url, "authorization_rw"),
         "configuration": (settings.configuration_database_url, "configuration_rw"),
+        "requirement": (settings.requirement_database_url, "requirement_rw"),
     }
     with ExitStack() as stack:
         engines = {
@@ -139,24 +140,35 @@ def e2e_runtime(
             "configuration_runtime_engine",
             lambda: engines["configuration"],
         )
+        monkeypatch.setattr(
+            bootstrap,
+            "requirement_runtime_engine",
+            lambda: engines["requirement"],
+        )
         for cached in (
             bootstrap.identity_dependencies,
             bootstrap.organization_dependencies,
             bootstrap.workspace_dependencies,
             bootstrap.authorization_dependencies,
             bootstrap.configuration_dependencies,
+            bootstrap.requirement_dependencies,
             bootstrap.identity_http_runtime,
             bootstrap.authorization_http_runtime,
             bootstrap.organization_http_runtime,
             bootstrap.workspace_http_runtime,
             bootstrap.configuration_http_runtime,
+            bootstrap.requirement_http_runtime,
             bootstrap.security_change_orchestrator,
         ):
             cached.cache_clear()
         with owner.begin() as db:
             db.execute(
                 text(
-                    'TRUNCATE "authorization".convergence_principal_pending, '
+                    "TRUNCATE requirement.decision, requirement.gate_assignment, "
+                    "requirement.gate_instance, requirement.sdd_baseline, "
+                    "requirement.work_item, requirement.outbox_message, "
+                    "requirement.idempotency_record, requirement.requirement, "
+                    '"authorization".convergence_principal_pending, '
                     '"authorization".convergence_work, "authorization".idempotency_record, '
                     '"authorization"."grant", "authorization".principal_version, '
                     "organization.idempotency_record, organization.org_edge, "
@@ -173,7 +185,11 @@ def e2e_runtime(
             with owner.begin() as db:
                 db.execute(
                     text(
-                        'TRUNCATE "authorization".convergence_principal_pending, '
+                        "TRUNCATE requirement.decision, requirement.gate_assignment, "
+                        "requirement.gate_instance, requirement.sdd_baseline, "
+                        "requirement.work_item, requirement.outbox_message, "
+                        "requirement.idempotency_record, requirement.requirement, "
+                        '"authorization".convergence_principal_pending, '
                         '"authorization".convergence_work, "authorization".idempotency_record, '
                         '"authorization"."grant", "authorization".principal_version, '
                         "organization.idempotency_record, organization.org_edge, "
@@ -190,11 +206,13 @@ def e2e_runtime(
                 bootstrap.workspace_dependencies,
                 bootstrap.authorization_dependencies,
                 bootstrap.configuration_dependencies,
+                bootstrap.requirement_dependencies,
                 bootstrap.identity_http_runtime,
                 bootstrap.authorization_http_runtime,
                 bootstrap.organization_http_runtime,
                 bootstrap.workspace_http_runtime,
                 bootstrap.configuration_http_runtime,
+                bootstrap.requirement_http_runtime,
                 bootstrap.security_change_orchestrator,
             ):
                 cached.cache_clear()
@@ -228,7 +246,7 @@ def _initialize(
             "X-Request-ID": request_ids["password"],
         },
     )
-    assert password_set.status_code == 200
+    assert password_set.status_code == 200, password_set.text
     enrollment = client.post(
         "/api/v1/auth/bootstrap/totp/enroll",
         headers={
@@ -389,6 +407,7 @@ def test_access_governance_closes_the_real_cli_http_grant_and_audit_loop(
     )
     assert requirement_denied.status_code == 403
     assert requirement_denied.json()["title"] == "Forbidden"
+
     with owner.connect() as db:
         bootstrap_audits = (
             db.execute(
@@ -526,6 +545,63 @@ def test_access_governance_closes_the_real_cli_http_grant_and_audit_loop(
     assert denied_after.status_code == 403
     assert denied_after.json()["requestId"] == "req-e2edeniedafter"
 
+    workspace_id = "20000000-0000-0000-0000-000000000301"
+    with owner.begin() as db:
+        db.execute(
+            text(
+                "INSERT INTO workspace.workspace (id, name, owner_id, version) "
+                "VALUES (:id, 'V0.3 Requirement E2E', :owner_id, 1)"
+            ),
+            {"id": workspace_id, "owner_id": admin_principal.account_id},
+        )
+        db.execute(
+            text(
+                "INSERT INTO workspace.members_projection "
+                "(workspace_id, account_id, source, computed_at) "
+                "VALUES (:workspace_id, :account_id, 'OWNER', now())"
+            ),
+            {"workspace_id": workspace_id, "account_id": admin_principal.account_id},
+        )
+    requirement_grant = admin.post(
+        "/api/v1/admin/grants",
+        json={
+            "principalId": admin_principal.account_id,
+            "capability": "requirement.create",
+            "scopeType": "WORKSPACE",
+            "scopeId": workspace_id,
+            "source": "MANUAL",
+            "reason": "V0.3 explicit workspace grant acceptance",
+        },
+        headers={
+            **SAME_ORIGIN,
+            "Idempotency-Key": "e2e-grant-requirement-create",
+            "X-Request-ID": "req-e2erequirementgrant",
+        },
+    )
+    assert requirement_grant.status_code == 201
+    requirement_created = admin.post(
+        "/api/v1/requirements",
+        json={
+            "workspaceId": workspace_id,
+            "type": "feat",
+            "title": "V0.3 uses an explicit workspace grant",
+            "description": "The production router checks grant and membership.",
+            "acceptanceCriteria": ["The governed Requirement is persisted."],
+            "initialRepositoryId": "repository-1",
+        },
+        headers={
+            **SAME_ORIGIN,
+            "Idempotency-Key": "e2e-create-governed-requirement",
+            "X-Request-ID": "req-e2erequirementcreate",
+        },
+    )
+    assert requirement_created.status_code == 201, requirement_created.text
+    requirement_payload = requirement_created.json()
+    assert requirement_payload["requirement"]["workspaceId"] == workspace_id
+    assert requirement_payload["workItem"]["assignmentState"] == "UNASSIGNED"
+    assert requirement_payload["workItem"]["repositoryState"] == "WAITING_REPOSITORY"
+    assert requirement_payload["workItem"]["state"] == "DRAFT"
+
     expected = {
         "req-e2eadmintemp": ("identity.temp_credential.consumed",),
         "req-e2eadminpassword": (
@@ -564,6 +640,11 @@ def test_access_governance_closes_the_real_cli_http_grant_and_audit_loop(
         "req-e2erevoke": ("authorization.grant.revoked",),
         "req-e2edeniedafter": ("authorization.decision",),
         "req-e2erequirementdenied": ("authorization.decision",),
+        "req-e2erequirementgrant": ("authorization.grant.created",),
+        "req-e2erequirementcreate": (
+            "requirement.created",
+            "requirement.work_item.initialized",
+        ),
     }
     assert _audit_actions(owner) == expected
     for audit_query_index, (request_id, actions) in enumerate(expected.items(), start=1):

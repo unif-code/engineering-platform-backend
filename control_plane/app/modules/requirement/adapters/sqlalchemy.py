@@ -219,9 +219,10 @@ class SqlAlchemyRequirementRepository:
                 text(
                     "UPDATE requirement.work_item SET repository_state='BOUND', "
                     "base_commit_sha=:base_commit_sha, task_branch=:task_branch, state=:state, "
+                    "repository_blocked_reason_code=NULL, repository_blocked_at=NULL, "
                     "revision=revision + 1, updated_at=:now "
                     "WHERE id=:id AND revision=:expected_revision "
-                    "AND repository_state='WAITING_REPOSITORY' RETURNING *"
+                    "AND repository_state IN ('WAITING_REPOSITORY', 'BLOCKED') RETURNING *"
                 ),
                 {
                     "id": work_item_id,
@@ -229,6 +230,35 @@ class SqlAlchemyRequirementRepository:
                     "base_commit_sha": base_commit_sha,
                     "task_branch": task_branch,
                     "state": state,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def block_work_item(
+        self,
+        work_item_id: str,
+        *,
+        expected_revision: int,
+        reason_code: str,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.work_item SET repository_state='BLOCKED', "
+                    "base_commit_sha=NULL, task_branch=NULL, state='DRAFT', "
+                    "repository_blocked_reason_code=:reason_code, "
+                    "repository_blocked_at=:now, revision=revision + 1, updated_at=:now "
+                    "WHERE id=:id AND revision=:expected_revision "
+                    "AND repository_state IN ('WAITING_REPOSITORY', 'BLOCKED') RETURNING *"
+                ),
+                {
+                    "id": work_item_id,
+                    "expected_revision": expected_revision,
+                    "reason_code": reason_code,
                     "now": now,
                 },
             )
