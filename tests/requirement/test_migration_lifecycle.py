@@ -56,12 +56,13 @@ def test_fresh_upgrade_installs_requirement_and_all_visible_heads(
             "0001_organization_base",
             "0001_workspace_base",
             "0006_auth_v03_routes",
-            "0001_requirement_base",
+            "0002_req_binding_blocked",
         }
         assert installed_heads == {
             "0008_audit_requirement_grant",
             "0010_identity_policy_reauth",
             "0006_auth_v03_routes",
+            "0002_req_binding_blocked",
         }
         assert set(inspect(engine).get_table_names(schema="requirement")) == {
             "decision",
@@ -73,6 +74,58 @@ def test_fresh_upgrade_installs_requirement_and_all_visible_heads(
             "sdd_baseline",
             "work_item",
         }
+    finally:
+        engine.dispose()
+
+
+def test_requirement_0002_upgrades_the_original_0001_schema_in_place(
+    fresh_requirement_database_url: str,
+) -> None:
+    config = _config(fresh_requirement_database_url)
+    command.upgrade(config, "0001_requirement_base")
+    engine = create_engine(fresh_requirement_database_url)
+    try:
+        before = {
+            column["name"]
+            for column in inspect(engine).get_columns("requirement", schema="requirement")
+        }
+        assert "current_sdd_baseline_id" not in before
+
+        command.upgrade(config, "heads")
+
+        after = {
+            column["name"]
+            for column in inspect(engine).get_columns("requirement", schema="requirement")
+        }
+        with engine.connect() as db:
+            constraints = set(
+                db.execute(
+                    text(
+                        "SELECT conname FROM pg_constraint "
+                        "WHERE connamespace='requirement'::regnamespace"
+                    )
+                ).scalars()
+            )
+            gate_table_update = db.execute(
+                text(
+                    "SELECT has_table_privilege("
+                    "'requirement_rw', 'requirement.gate_instance', 'UPDATE')"
+                )
+            ).scalar_one()
+            gate_state_update = db.execute(
+                text(
+                    "SELECT has_column_privilege("
+                    "'requirement_rw', 'requirement.gate_instance', 'state', 'UPDATE')"
+                )
+            ).scalar_one()
+        assert "current_sdd_baseline_id" in after
+        assert {
+            "fk_requirement_current_sdd_baseline",
+            "uq_requirement_sdd_owner",
+            "ck_requirement_work_item_repository",
+        } <= constraints
+        assert gate_table_update is False
+        assert gate_state_update is True
     finally:
         engine.dispose()
 

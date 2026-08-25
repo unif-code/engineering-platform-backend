@@ -153,9 +153,15 @@ def test_recovery_restricts_last_unavailable_admin_and_atomically_reissues_boots
     assert state["revoked_at"] is not None
     assert state["secret_hash"] != temporary_password
     assert state["expires_at"] == expires_at
-    assert audit_rows[-1]["actor"] == "SYSTEM_RECOVERY"
-    assert audit_rows[-1]["actor_type"] == "SYSTEM"
-    assert audit_rows[-1]["action"] == "identity.super_admin.recovered"
+    recovery_audits = [
+        row for row in audit_rows if row["action"] == "identity.super_admin.recovered"
+    ]
+    assert len(recovery_audits) == 1
+    recovery_audit = recovery_audits[0]
+    assert recovery_audit["actor"] == "SYSTEM_RECOVERY"
+    assert recovery_audit["actor_type"] == "SYSTEM"
+    assert recovery_audit["target_id"] == account_id
+    assert recovery_audit["result"] == "SUCCESS"
     assert temporary_password not in repr(audit_rows)
 
     with identity_rw_engine.begin() as db:

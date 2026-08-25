@@ -17,6 +17,7 @@ from control_plane.app.modules.requirement.domain import (
     GateType,
     RecordState,
     RegisterSddBaselineResult,
+    RepositoryBindingBlockedReason,
     RepositoryState,
     RequirementDetailsDto,
     RequirementDto,
@@ -98,6 +99,8 @@ class WorkItemResponseDto(CamelModel):
     repository_id: str
     base_commit_sha: str | None
     task_branch: str | None
+    repository_blocked_reason_code: RepositoryBindingBlockedReason | None
+    repository_blocked_at: datetime | None
     revision: int
     created_at: datetime
     updated_at: datetime

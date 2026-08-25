@@ -14,6 +14,7 @@ from control_plane.app.modules.requirement.domain import (
     GateState,
     GateType,
     RecordState,
+    RepositoryBindingBlockedReason,
     RepositoryState,
     RequirementDto,
     RequirementState,
@@ -76,6 +77,12 @@ def work_item_dto(row: Any) -> WorkItemDto:
         repository_id=row["repository_id"],
         base_commit_sha=row["base_commit_sha"],
         task_branch=row["task_branch"],
+        repository_blocked_reason_code=(
+            None
+            if row["repository_blocked_reason_code"] is None
+            else RepositoryBindingBlockedReason(row["repository_blocked_reason_code"])
+        ),
+        repository_blocked_at=row["repository_blocked_at"],
         revision=row["revision"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],

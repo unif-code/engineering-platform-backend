@@ -11,8 +11,11 @@ from control_plane.app.modules.audit.adapters.sqlalchemy_repository import (
 )
 from control_plane.app.modules.requirement import (
     DecisionOutcome,
+    RepositoryBindingBlockedReason,
     RequirementDependencies,
     RequirementState,
+    record_repository_binding,
+    record_repository_binding_blocked,
     start_requirement_preparation,
 )
 from tests.requirement.conftest import IsolatedRequirementDatabase
@@ -123,6 +126,36 @@ def test_http_and_internal_worker_complete_the_real_postgresql_approval_path(
         dependencies,
         key="e2e-approved",
     )
+    with isolated_requirement_database.runtime.begin() as db:
+        blocked = record_repository_binding_blocked(
+            db,
+            work_item_id=work_item_id,
+            repository_id="repository-1",
+            reason_code=RepositoryBindingBlockedReason.CONNECTOR_UNAVAILABLE,
+            expected_revision=1,
+            actor=Actor("SYSTEM"),
+            idempotency_key="e2e-approved-binding-blocked",
+            dependencies=dependencies,
+        )
+    blocked_details = client.get(f"/api/v1/requirements/{requirement_id}")
+    assert blocked_details.status_code == 200
+    assert blocked_details.json()["workItems"][0]["repositoryState"] == "BLOCKED"
+    assert blocked_details.json()["workItems"][0]["repositoryBlockedReasonCode"] == (
+        RepositoryBindingBlockedReason.CONNECTOR_UNAVAILABLE.value
+    )
+    with isolated_requirement_database.runtime.begin() as db:
+        bound = record_repository_binding(
+            db,
+            work_item_id=work_item_id,
+            repository_id="repository-1",
+            base_commit_sha="d" * 40,
+            task_branch="work-items/e2e-approved",
+            expected_revision=blocked.revision,
+            actor=Actor("SYSTEM"),
+            idempotency_key="e2e-approved-binding-ready",
+            dependencies=dependencies,
+        )
+    assert bound.state.value == "READY"
     gate_id, gate_etag = _submit_gate(
         client,
         requirement_id,
@@ -152,7 +185,8 @@ def test_http_and_internal_worker_complete_the_real_postgresql_approval_path(
         work_item["state"],
         work_item["assignmentState"],
         work_item["repositoryState"],
-    ) == ("DRAFT", "ASSIGNED", "WAITING_REPOSITORY")
+        work_item["repositoryBlockedReasonCode"],
+    ) == ("READY", "ASSIGNED", "BOUND", None)
     with isolated_requirement_database.owner.connect() as db:
         facts = db.execute(
             text(

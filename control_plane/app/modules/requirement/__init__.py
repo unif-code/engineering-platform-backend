@@ -21,6 +21,9 @@ from control_plane.app.modules.requirement.application import (
     record_repository_binding as _record_repository_binding,
 )
 from control_plane.app.modules.requirement.application import (
+    record_repository_binding_blocked as _record_repository_binding_blocked,
+)
+from control_plane.app.modules.requirement.application import (
     register_sdd_baseline as _register_sdd_baseline,
 )
 from control_plane.app.modules.requirement.application import (
@@ -51,6 +54,7 @@ from control_plane.app.modules.requirement.domain import (
     InvalidRequirementTransition,
     RecordState,
     RegisterSddBaselineResult,
+    RepositoryBindingBlockedReason,
     RepositoryBindingConflict,
     RepositoryBindingRequestMissing,
     RepositoryState,
@@ -180,6 +184,29 @@ def record_repository_binding(
     )
 
 
+def record_repository_binding_blocked(
+    db: Connection,
+    *,
+    work_item_id: str,
+    repository_id: str,
+    reason_code: RepositoryBindingBlockedReason,
+    expected_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    dependencies: RequirementDependencies,
+) -> WorkItemDto:
+    return _record_repository_binding_blocked(
+        dependencies.repository_factory(db),
+        work_item_id=work_item_id,
+        repository_id=repository_id,
+        reason_code=reason_code,
+        expected_revision=expected_revision,
+        actor=actor,
+        idempotency_key=idempotency_key,
+        dependencies=dependencies,
+    )
+
+
 def register_sdd_baseline(
     db: Connection,
     *,
@@ -276,6 +303,7 @@ __all__ = [
     "RecordState",
     "RegisterSddBaselineResult",
     "RepositoryBindingConflict",
+    "RepositoryBindingBlockedReason",
     "RepositoryBindingRequestMissing",
     "RepositoryState",
     "RequirementDependencies",
@@ -301,6 +329,7 @@ __all__ = [
     "get_requirement",
     "list_requirements",
     "record_repository_binding",
+    "record_repository_binding_blocked",
     "register_sdd_baseline",
     "start_requirement_preparation",
     "submit_baseline_confirmation",

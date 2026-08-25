@@ -68,6 +68,15 @@ class RequirementRepository(Protocol):
         now: datetime,
     ) -> Any: ...
 
+    def block_work_item(
+        self,
+        work_item_id: str,
+        *,
+        expected_revision: int,
+        reason_code: str,
+        now: datetime,
+    ) -> Any: ...
+
     def insert_outbox(self, **values: Any) -> Any: ...
 
     def outbox_by_aggregate(

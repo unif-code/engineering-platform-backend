@@ -32,7 +32,6 @@ def upgrade() -> None:
             requirement_version INTEGER NOT NULL,
             required_work_item_set_version INTEGER NOT NULL,
             required_work_item_set_hash TEXT NOT NULL,
-            current_sdd_baseline_id UUID,
             revision INTEGER NOT NULL,
             created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -158,7 +157,6 @@ def upgrade() -> None:
                 FOREIGN KEY (requirement_id) REFERENCES requirement.requirement(id),
             CONSTRAINT uq_requirement_sdd_artifact
                 UNIQUE (requirement_id, artifact_id, artifact_version, artifact_hash),
-            CONSTRAINT uq_requirement_sdd_owner UNIQUE (id, requirement_id),
             CONSTRAINT uq_requirement_sdd_gate_subject UNIQUE (
                 id,
                 requirement_id,
@@ -180,12 +178,6 @@ def upgrade() -> None:
             )
         )
         """
-    )
-    op.execute(
-        "ALTER TABLE requirement.requirement "
-        "ADD CONSTRAINT fk_requirement_current_sdd_baseline "
-        "FOREIGN KEY (current_sdd_baseline_id, id) "
-        "REFERENCES requirement.sdd_baseline(id, requirement_id)"
     )
     op.execute(
         """
@@ -400,19 +392,8 @@ def upgrade() -> None:
     op.execute("GRANT USAGE ON SCHEMA requirement TO requirement_rw")
     op.execute(
         "GRANT SELECT, INSERT, UPDATE ON requirement.requirement, requirement.work_item, "
+        "requirement.gate_instance, requirement.gate_assignment, "
         "requirement.idempotency_record, requirement.outbox_message TO requirement_rw"
-    )
-    op.execute(
-        "GRANT SELECT, INSERT ON requirement.gate_instance, "
-        "requirement.gate_assignment TO requirement_rw"
-    )
-    op.execute(
-        "GRANT UPDATE (state, revision, decided_at) "
-        "ON requirement.gate_instance TO requirement_rw"
-    )
-    op.execute(
-        "GRANT UPDATE (superseded_at) "
-        "ON requirement.gate_assignment TO requirement_rw"
     )
     op.execute(
         "GRANT SELECT, INSERT ON requirement.sdd_baseline, requirement.decision "
@@ -428,10 +409,6 @@ def downgrade() -> None:
     op.execute("DROP TABLE requirement.decision")
     op.execute("DROP TABLE requirement.gate_assignment")
     op.execute("DROP TABLE requirement.gate_instance")
-    op.execute(
-        "ALTER TABLE requirement.requirement "
-        "DROP CONSTRAINT fk_requirement_current_sdd_baseline"
-    )
     op.execute("DROP TABLE requirement.sdd_baseline")
     op.execute("DROP TABLE requirement.work_item")
     op.execute("DROP TABLE requirement.requirement")

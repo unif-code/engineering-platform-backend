@@ -94,7 +94,8 @@ AWAITING_CONFIRMATION --REJECTED--> CANCELED
 - `humanOwnerId`、`executorType=HUMAN`、`executorId`
 - `requiredCapabilities`
 - `assignmentState=UNASSIGNED | ASSIGNED`
-- `repositoryState=WAITING_REPOSITORY | BOUND`
+- `repositoryState=WAITING_REPOSITORY | BLOCKED | BOUND`
+- `repositoryBlockedReasonCode`、`repositoryBlockedAt`（仅 `BLOCKED` 时存在）
 - `state=DRAFT | READY | CANCELED`
 - `revision`
 
@@ -124,7 +125,8 @@ Gate 创建后 Requirement 进入 `AWAITING_CONFIRMATION`。Decision 不可修�
 - `register_sdd_baseline(command)`：绑定已经由 Artifact Port 验证为 `AVAILABLE` 的准确 SDD Artifact 版本。
 - `submit_baseline_confirmation(command)`：CAS 创建 Gate 并进入等待确认。
 - `decide_baseline(command)`：校验当前 assignee、实时资格、subject 版本与 revision 后追加 Decision。
-- `record_repository_binding(command)`：供后续 Source Control Adapter 回传 Binding Ready/Blocked 事实；不暴露为浏览器可调用 API。
+- `record_repository_binding(command)`：供后续 Source Control Adapter 回传 Binding Ready 事实；不暴露为浏览器可调用 API。
+- `record_repository_binding_blocked(command)`：保存受控 Adapter 回传的结构化 blocked reason；同一 WorkItem 后续可由 Binding Ready 回传恢复。
 
 所有写命令使用稳定 Idempotency Key；并发写使用 expected revision/`If-Match`。重复相同命令返回同一结果；相同 key 不同 payload 返回 Conflict。
 
@@ -132,7 +134,7 @@ Gate 创建后 Requirement 进入 `AWAITING_CONFIRMATION`。Decision 不可修�
 
 ### Source Control
 
-创建请求必须提供一个初始 GitLab Repository 标识，但本批次不实现 GitLab 协议调用、Branch 或 MR。Requirement 保存选择事实，首个 WorkItem 处于 `WAITING_REPOSITORY`；后续 `SourceControlPort` Adapter 只能回传 `BindingReady` 或结构化 `BindingBlocked`，不能直接推进 Requirement 状态。
+创建请求必须提供一个初始 GitLab Repository 标识，但本批次不实现 GitLab 协议调用、Branch 或 MR。Requirement 保存选择事实，首个 WorkItem 处于 `WAITING_REPOSITORY`；后续 `SourceControlPort` Adapter 只能回传 `BindingReady` 或结构化 `BindingBlocked`，不能直接推进 Requirement 状态。`BindingBlocked` 必须持久化安全 reason code 与发生时间，不保存外部错误正文；同一 Repository 的后续 `BindingReady` 清除 blocked 字段并按 `ASSIGNED + BOUND` 重新推导 WorkItem 状态。
 
 本批次不使用临时运行时 Mock 冒充 GitLab。测试使用进程内 Fake Port 验证领域和 Application Contract；生产装配在真实 Adapter 尚未激活时保持 Fail Closed。
 
@@ -183,6 +185,8 @@ Gate Policy 通过 Port 读取有效快照；Requirement 不拥有 Configuration
 - `requirement.baseline.submit`
 - `requirement.baseline.decide`
 - `work_item.assign`
+
+`work_item.assign` 在第一批仅作为授权词汇和后续批次的路由种子保留。本批次不提供浏览器或内部手工分配命令；生产自动分配 Guard 固定 Fail Closed，因此真实生产装配创建的 WorkItem 保持 `UNASSIGNED`。手工分配与 Repository Guard 接入属于后续 V0.3 WorkItem 批次。
 
 所有判定同时验证 Capability、Workspace Scope、Membership 和当前对象关系。Requirement 创建人不是隐式管理员；Gate assignee 只有在决策时资格仍有效才能签署。
 

@@ -65,6 +65,15 @@ def test_bootstrap_exposes_six_requirement_endpoints_with_fail_closed_dependenci
         "$ref": "#/components/schemas/RequirementState"
     }
     assert requirement_schema["properties"]["createdAt"]["format"] == "date-time"
+    work_item_schema = schema["components"]["schemas"]["WorkItemResponseDto"]
+    assert work_item_schema["properties"]["repositoryBlockedReasonCode"]["anyOf"] == [
+        {"$ref": "#/components/schemas/RepositoryBindingBlockedReason"},
+        {"type": "null"},
+    ]
+    assert work_item_schema["properties"]["repositoryBlockedAt"]["anyOf"] == [
+        {"format": "date-time", "type": "string"},
+        {"type": "null"},
+    ]
 
     dependencies = requirement_dependencies()
     route = dependencies.route_snapshots.current(RequirementType.FEAT)
