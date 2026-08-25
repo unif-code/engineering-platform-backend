@@ -63,7 +63,7 @@
 - Produces: frozen `RequirementDto`、`WorkItemDto`、`SddBaselineDto`、`GateInstanceDto`、`GateAssignmentDto`、`DecisionDto`。
 - Produces: `transition_requirement(...)`、`derive_work_item_state(...)` 和确定性领域错误。
 
-- [ ] **Step 1: 写状态枚举、冻结 DTO 和拒绝非法转换的失败测试**
+- [x] **Step 1: 写状态枚举、冻结 DTO 和拒绝非法转换的失败测试**
 
 在 `tests/requirement/test_domain.py` 覆盖完整首批矩阵：
 
@@ -96,13 +96,13 @@ def test_work_item_is_ready_only_when_assigned_and_bound():
     ) is WorkItemState.DRAFT
 ```
 
-- [ ] **Step 2: 运行测试确认 RED**
+- [x] **Step 2: 运行测试确认 RED**
 
 Run: `python -m pytest tests/requirement/test_domain.py -q`
 
 Expected: collection 因 `control_plane.app.modules.requirement` 不存在而失败。
 
-- [ ] **Step 3: 写最小领域模型和显式转换表**
+- [x] **Step 3: 写最小领域模型和显式转换表**
 
 核心实现固定为显式表，不使用字符串前缀或任意状态回退：
 
@@ -128,17 +128,17 @@ def transition_requirement(current: RequirementState, target: RequirementState) 
     return target
 ```
 
-- [ ] **Step 4: 加入 import-linter 容器和深层导入契约**
+- [x] **Step 4: 加入 import-linter 容器和深层导入契约**
 
 将 `control_plane.app.modules.requirement` 加入 layers `containers`、domain/shared API 契约，并让既有模块和 Requirement 互相只能经包根 Facade 使用。
 
-- [ ] **Step 5: 运行领域与架构测试确认 GREEN**
+- [x] **Step 5: 运行领域与架构测试确认 GREEN**
 
 Run: `python -m pytest tests/requirement/test_domain.py tests/test_contract_guard.py -q`
 
 Expected: PASS。
 
-- [ ] **Step 6: 提交领域骨架**
+- [x] **Step 6: 提交领域骨架**
 
 ```bash
 git add control_plane/app/modules/requirement pyproject.toml tests/requirement tests/test_contract_guard.py
