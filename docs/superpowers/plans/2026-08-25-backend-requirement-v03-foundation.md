@@ -487,15 +487,15 @@ git commit -m "feat(requirement): govern sdd baseline decisions"
 - HTTP: 六个设计内 `/api/v1/requirements` endpoints。
 - Production adapters: Artifact/Policy/Binding 尚未配置时返回依赖不可用 Problem，不以 Fake 或静态成功代替。
 
-- [ ] **Step 1: 写路由授权与 HTTP 合同失败测试**
+- [x] **Step 1: 写路由授权与 HTTP 合同失败测试**
 
 测试 camelCase、`{items,nextCursor}`、ETag、缺少/错误 `If-Match`、缺少 `Idempotency-Key`、RFC 9457、未知 Capability 和跨 Workspace 拒绝。
 
-- [ ] **Step 2: 运行测试确认 RED**
+- [x] **Step 2: 运行测试确认 RED**
 
 Run: `python -m pytest tests/requirement/test_api.py tests/authorization/test_migration.py -q`
 
-- [ ] **Step 3: 注册导航路由和显式 Capability**
+- [x] **Step 3: 注册导航路由和显式 Capability**
 
 只登记 V0.3 Requirement 页面入口；不把 V0.3 能力加入 V0.2 Super Admin 自动集合：
 
@@ -504,7 +504,7 @@ Run: `python -m pytest tests/requirement/test_api.py tests/authorization/test_mi
  jsonb_build_object('name', 'Requirements', 'order', 20))
 ```
 
-- [ ] **Step 4: 实现 DTO/route 和 Problem 映射**
+- [x] **Step 4: 实现 DTO/route 和 Problem 映射**
 
 浏览器创建体仅包含：
 
@@ -520,11 +520,11 @@ class CreateRequirementRequestDto(CamelModel):
 
 不得接收 `state`、`createdBy`、Route hash、Policy version、Artifact availability 或 assignee 资格。
 
-- [ ] **Step 5: 在 bootstrap 建立 runtime engine/dependencies/router**
+- [x] **Step 5: 在 bootstrap 建立 runtime engine/dependencies/router**
 
 新增 `requirement_database_url` 和 `requirement_runtime_engine()`；未配置真实 Artifact/Policy Adapter 的命令由明确 unavailable Port Fail Closed，但创建/读取和内部 preparation 可运行。
 
-- [ ] **Step 6: 运行 API、授权、OpenAPI 测试确认 GREEN 并提交**
+- [x] **Step 6: 运行 API、授权、OpenAPI 测试确认 GREEN 并提交**
 
 Run: `python -m pytest tests/requirement/test_api.py tests/authorization/test_migration.py tests/test_openapi_export.py -q`
 

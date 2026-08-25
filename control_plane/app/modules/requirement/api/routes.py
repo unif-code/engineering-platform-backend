@@ -1,0 +1,404 @@
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Annotated, Any, cast
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
+from fastapi.responses import JSONResponse
+from sqlalchemy import Engine
+from sqlalchemy.exc import SQLAlchemyError
+
+from control_plane.app.modules.requirement import (
+    create_requirement,
+    decide_baseline,
+    get_requirement,
+    list_requirements,
+    register_sdd_baseline,
+    submit_baseline_confirmation,
+)
+from control_plane.app.modules.requirement.api.dto import (
+    BaselineConfirmationResponseDto,
+    BaselineDecisionResponseDto,
+    CreateRequirementRequestDto,
+    CreateRequirementResponseDto,
+    DecideBaselineRequestDto,
+    RegisterSddBaselineRequestDto,
+    RegisterSddBaselineResponseDto,
+    RequirementDetailsResponseDto,
+    RequirementListResponseDto,
+    SubmitBaselineConfirmationRequestDto,
+)
+from control_plane.app.modules.requirement.application import RequirementDependencies
+from control_plane.app.modules.requirement.domain import (
+    ArtifactUnavailable,
+    GateNotFound,
+    GateReviewerIneligible,
+    GateReviewerMismatch,
+    InvalidRequirementCursor,
+    InvalidRequirementInput,
+    RequirementDependencyUnavailable,
+    RequirementError,
+    RequirementNotFound,
+    SddBaselineNotFound,
+)
+from control_plane.app.shared.api.concurrency import entity_tag, require_if_match
+from control_plane.app.shared.api.idempotency import require_idempotency_key
+from control_plane.app.shared.api.problem import (
+    PROBLEM_RESPONSES,
+    SERVICE_UNAVAILABLE_RESPONSE,
+    problem_response,
+)
+from control_plane.app.shared.idempotency import (
+    IdempotencyConflict,
+    IdempotencyReplayUnavailable,
+)
+from control_plane.app.shared.security import SecretMaterialUnavailable, assert_same_origin
+
+REQUIREMENT_CREATE_CAPABILITY = "requirement.create"
+REQUIREMENT_READ_CAPABILITY = "requirement.read"
+REQUIREMENT_BASELINE_SUBMIT_CAPABILITY = "requirement.baseline.submit"
+REQUIREMENT_BASELINE_DECIDE_CAPABILITY = "requirement.baseline.decide"
+WORK_ITEM_ASSIGN_CAPABILITY = "work_item.assign"
+
+_RESPONSES = cast(
+    dict[int | str, dict[str, Any]],
+    {
+        **{status: PROBLEM_RESPONSES[status] for status in (401, 403, 404, 409, 422, 500)},
+        503: SERVICE_UNAVAILABLE_RESPONSE,
+    },
+)
+_ETAG_HEADER = {
+    "ETag": {
+        "description": "Strong Requirement revision entity tag",
+        "schema": {"type": "string", "pattern": '^"v[1-9][0-9]*"$'},
+    }
+}
+
+
+@dataclass(frozen=True, slots=True)
+class RequirementHttpRuntime:
+    engine: Engine
+    dependencies: RequirementDependencies
+
+
+@dataclass(frozen=True, slots=True)
+class _CreatePreflight:
+    idempotency_key: str
+
+
+@dataclass(frozen=True, slots=True)
+class _VersionedPreflight:
+    idempotency_key: str
+    expected_revision: int
+
+
+def _required_raw_header(request: Request, name: str) -> str:
+    value = request.headers.get(name)
+    if value is None:
+        raise HTTPException(status_code=422, detail=f"Missing {name}")
+    return value
+
+
+def _assert_create_preflight(request: Request) -> None:
+    assert_same_origin(request)
+    require_idempotency_key(_required_raw_header(request, "Idempotency-Key"))
+
+
+def _assert_versioned_preflight(request: Request) -> None:
+    _assert_create_preflight(request)
+    require_if_match(_required_raw_header(request, "If-Match"))
+
+
+def _create_preflight(
+    request: Request,
+    idempotency_key: Annotated[str, Depends(require_idempotency_key)],
+) -> _CreatePreflight:
+    assert_same_origin(request)
+    return _CreatePreflight(idempotency_key)
+
+
+def _versioned_preflight(
+    request: Request,
+    idempotency_key: Annotated[str, Depends(require_idempotency_key)],
+    expected_revision: Annotated[int, Depends(require_if_match)],
+) -> _VersionedPreflight:
+    assert_same_origin(request)
+    return _VersionedPreflight(idempotency_key, expected_revision)
+
+
+def _problem(error: Exception) -> Response:
+    if isinstance(error, (RequirementNotFound, SddBaselineNotFound, GateNotFound)):
+        return problem_response(404, "Requirement subject not found")
+    if isinstance(error, (GateReviewerMismatch, GateReviewerIneligible)):
+        return problem_response(403, "Baseline reviewer denied")
+    if isinstance(error, InvalidRequirementInput):
+        return problem_response(422, "Invalid Requirement input")
+    if isinstance(error, InvalidRequirementCursor):
+        return problem_response(422, "Invalid Requirement cursor")
+    if isinstance(error, RequirementDependencyUnavailable):
+        return problem_response(503, "Requirement dependency unavailable")
+    if isinstance(error, ArtifactUnavailable):
+        return problem_response(409, "SDD Artifact unavailable")
+    if isinstance(error, (IdempotencyConflict, IdempotencyReplayUnavailable)):
+        return problem_response(409, "Idempotency conflict")
+    if isinstance(error, (SQLAlchemyError, SecretMaterialUnavailable)):
+        return problem_response(503, "Requirement service unavailable")
+    if isinstance(error, RequirementError):
+        return problem_response(409, "Requirement state conflict")
+    raise error
+
+
+def _json(dto: Any, *, status_code: int, revision: int | None = None) -> JSONResponse:
+    headers = {} if revision is None else {"ETag": entity_tag(revision)}
+    return JSONResponse(
+        status_code=status_code,
+        content=dto.model_dump(mode="json", by_alias=True),
+        headers=headers,
+    )
+
+
+def create_requirement_router(
+    runtime_provider: Callable[[], RequirementHttpRuntime],
+    principal_provider: Callable[[], Any],
+    capability_guard: Callable[[Any, str, str | None], None],
+) -> APIRouter:
+    router = APIRouter(prefix="/api/v1/requirements", tags=["requirement"])
+
+    @router.post(
+        "",
+        operation_id="requirements_create",
+        status_code=201,
+        response_model=CreateRequirementResponseDto,
+        responses={**_RESPONSES, 201: {"headers": _ETAG_HEADER}},
+        dependencies=[Depends(_assert_create_preflight), Depends(_create_preflight)],
+    )
+    def requirement_create(
+        body: CreateRequirementRequestDto,
+        principal: Annotated[Any, Depends(principal_provider)],
+        preflight: Annotated[_CreatePreflight, Depends(_create_preflight)],
+    ) -> Response:
+        workspace_id = str(body.workspace_id)
+        capability_guard(principal, REQUIREMENT_CREATE_CAPABILITY, workspace_id)
+        runtime = runtime_provider()
+        try:
+            with runtime.engine.begin() as db:
+                created = create_requirement(
+                    db,
+                    workspace_id=workspace_id,
+                    requirement_type=body.type,
+                    title=body.title,
+                    description=body.description,
+                    acceptance_criteria=tuple(body.acceptance_criteria),
+                    initial_repository_id=body.initial_repository_id,
+                    actor=principal,
+                    idempotency_key=preflight.idempotency_key,
+                    dependencies=runtime.dependencies,
+                )
+        except Exception as error:
+            return _problem(error)
+        return _json(
+            CreateRequirementResponseDto.from_domain(created),
+            status_code=201,
+            revision=created.requirement.revision,
+        )
+
+    @router.get(
+        "",
+        operation_id="requirements_list",
+        response_model=RequirementListResponseDto,
+        responses=_RESPONSES,
+    )
+    def requirement_list(
+        principal: Annotated[Any, Depends(principal_provider)],
+        workspace_id: Annotated[UUID, Query(alias="workspaceId")],
+        cursor: Annotated[str | None, Query()] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    ) -> RequirementListResponseDto | Response:
+        resolved_workspace_id = str(workspace_id)
+        capability_guard(principal, REQUIREMENT_READ_CAPABILITY, resolved_workspace_id)
+        runtime = runtime_provider()
+        try:
+            with runtime.engine.connect() as db:
+                page = list_requirements(
+                    db,
+                    workspace_id=resolved_workspace_id,
+                    cursor=cursor,
+                    limit=limit,
+                    dependencies=runtime.dependencies,
+                )
+        except Exception as error:
+            return _problem(error)
+        return RequirementListResponseDto.from_domain(page)
+
+    def authorized_details(
+        runtime: RequirementHttpRuntime,
+        principal: Any,
+        requirement_id: str,
+        capability: str,
+    ) -> Any:
+        try:
+            with runtime.engine.connect() as db:
+                details = get_requirement(
+                    db,
+                    requirement_id=requirement_id,
+                    dependencies=runtime.dependencies,
+                )
+        except Exception as error:
+            return _problem(error)
+        capability_guard(principal, capability, details.requirement.workspace_id)
+        return details
+
+    @router.get(
+        "/{requirementId}",
+        operation_id="requirements_get",
+        response_model=RequirementDetailsResponseDto,
+        responses={**_RESPONSES, 200: {"headers": _ETAG_HEADER}},
+    )
+    def requirement_get(
+        requirement_id: Annotated[UUID, Path(alias="requirementId")],
+        principal: Annotated[Any, Depends(principal_provider)],
+    ) -> Response:
+        runtime = runtime_provider()
+        details = authorized_details(
+            runtime,
+            principal,
+            str(requirement_id),
+            REQUIREMENT_READ_CAPABILITY,
+        )
+        if isinstance(details, Response):
+            return details
+        return _json(
+            RequirementDetailsResponseDto.from_domain(details),
+            status_code=200,
+            revision=details.requirement.revision,
+        )
+
+    @router.post(
+        "/{requirementId}/sdd-baselines",
+        operation_id="requirements_register_sdd_baseline",
+        status_code=201,
+        response_model=RegisterSddBaselineResponseDto,
+        responses={**_RESPONSES, 201: {"headers": _ETAG_HEADER}},
+        dependencies=[Depends(_assert_versioned_preflight), Depends(_versioned_preflight)],
+    )
+    def requirement_register_sdd_baseline(
+        requirement_id: Annotated[UUID, Path(alias="requirementId")],
+        body: RegisterSddBaselineRequestDto,
+        principal: Annotated[Any, Depends(principal_provider)],
+        preflight: Annotated[_VersionedPreflight, Depends(_versioned_preflight)],
+    ) -> Response:
+        runtime = runtime_provider()
+        details = authorized_details(
+            runtime,
+            principal,
+            str(requirement_id),
+            REQUIREMENT_BASELINE_SUBMIT_CAPABILITY,
+        )
+        if isinstance(details, Response):
+            return details
+        try:
+            with runtime.engine.begin() as db:
+                registered = register_sdd_baseline(
+                    db,
+                    requirement_id=str(requirement_id),
+                    artifact_id=body.artifact_id,
+                    artifact_version=body.artifact_version,
+                    expected_revision=preflight.expected_revision,
+                    actor=principal,
+                    idempotency_key=preflight.idempotency_key,
+                    dependencies=runtime.dependencies,
+                )
+        except Exception as error:
+            return _problem(error)
+        return _json(
+            RegisterSddBaselineResponseDto.from_domain(registered),
+            status_code=201,
+            revision=registered.requirement.revision,
+        )
+
+    @router.post(
+        "/{requirementId}/baseline-confirmations",
+        operation_id="requirements_submit_baseline_confirmation",
+        status_code=201,
+        response_model=BaselineConfirmationResponseDto,
+        responses={**_RESPONSES, 201: {"headers": _ETAG_HEADER}},
+        dependencies=[Depends(_assert_versioned_preflight), Depends(_versioned_preflight)],
+    )
+    def requirement_submit_baseline_confirmation(
+        requirement_id: Annotated[UUID, Path(alias="requirementId")],
+        body: SubmitBaselineConfirmationRequestDto,
+        principal: Annotated[Any, Depends(principal_provider)],
+        preflight: Annotated[_VersionedPreflight, Depends(_versioned_preflight)],
+    ) -> Response:
+        runtime = runtime_provider()
+        details = authorized_details(
+            runtime,
+            principal,
+            str(requirement_id),
+            REQUIREMENT_BASELINE_SUBMIT_CAPABILITY,
+        )
+        if isinstance(details, Response):
+            return details
+        try:
+            with runtime.engine.begin() as db:
+                confirmation = submit_baseline_confirmation(
+                    db,
+                    requirement_id=str(requirement_id),
+                    sdd_baseline_id=str(body.sdd_baseline_id),
+                    expected_revision=preflight.expected_revision,
+                    actor=principal,
+                    idempotency_key=preflight.idempotency_key,
+                    dependencies=runtime.dependencies,
+                )
+        except Exception as error:
+            return _problem(error)
+        return _json(
+            BaselineConfirmationResponseDto.from_domain(confirmation),
+            status_code=201,
+            revision=confirmation.requirement.revision,
+        )
+
+    @router.post(
+        "/{requirementId}/baseline-decisions",
+        operation_id="requirements_decide_baseline",
+        response_model=BaselineDecisionResponseDto,
+        responses={**_RESPONSES, 200: {"headers": _ETAG_HEADER}},
+        dependencies=[Depends(_assert_versioned_preflight), Depends(_versioned_preflight)],
+    )
+    def requirement_decide_baseline(
+        requirement_id: Annotated[UUID, Path(alias="requirementId")],
+        body: DecideBaselineRequestDto,
+        principal: Annotated[Any, Depends(principal_provider)],
+        preflight: Annotated[_VersionedPreflight, Depends(_versioned_preflight)],
+    ) -> Response:
+        runtime = runtime_provider()
+        details = authorized_details(
+            runtime,
+            principal,
+            str(requirement_id),
+            REQUIREMENT_BASELINE_DECIDE_CAPABILITY,
+        )
+        if isinstance(details, Response):
+            return details
+        try:
+            with runtime.engine.begin() as db:
+                decision = decide_baseline(
+                    db,
+                    requirement_id=str(requirement_id),
+                    gate_id=str(body.gate_id),
+                    outcome=body.outcome,
+                    reason=body.reason,
+                    expected_revision=preflight.expected_revision,
+                    actor=principal,
+                    idempotency_key=preflight.idempotency_key,
+                    dependencies=runtime.dependencies,
+                )
+        except Exception as error:
+            return _problem(error)
+        return _json(
+            BaselineDecisionResponseDto.from_domain(decision),
+            status_code=200,
+            revision=decision.requirement.revision,
+        )
+
+    return router

@@ -229,8 +229,8 @@ def create_authorization_router(
         principal: Annotated[AuthorizationPrincipal, Depends(principal_dependency)],
     ) -> list[NavigationItemDto] | Response:
         runtime = runtime_provider()
-        effective = {
-            (item.capability, item.scope.scope_type.value, item.scope.scope_id)
+        effective_routes = {
+            (item.capability, item.scope.scope_type.value)
             for item in principal.capabilities
         }
         try:
@@ -240,8 +240,8 @@ def create_authorization_router(
             return problem_response(503, "Authorization unavailable")
         result: list[NavigationItemDto] = []
         for row in rows:
-            key = (str(row["capability"]), str(row["scope_type"]), None)
-            if key not in effective:
+            key = (str(row["capability"]), str(row["scope_type"]))
+            if key not in effective_routes:
                 continue
             meta = dict(row["meta"])
             result.append(

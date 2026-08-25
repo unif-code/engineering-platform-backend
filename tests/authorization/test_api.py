@@ -233,6 +233,15 @@ def test_real_me_navigation_and_grant_lifecycle_are_protected_and_compatible(
             reason="manage grants",
             dependencies=deps,
         )
+        grant(
+            db,
+            principal_id=account_id,
+            capability="requirement.read",
+            scope=Scope.workspace("workspace-1"),
+            actor=actor,
+            reason="workspace requirement navigation",
+            dependencies=deps,
+        )
     runtime = _runtime(authorization_rw_engine, authorization_identity_engine, AlwaysMember())
     client = _client(lambda: runtime)
     client.cookies.set("ep_session", token)
@@ -270,6 +279,14 @@ def test_real_me_navigation_and_grant_lifecycle_are_protected_and_compatible(
             "capability": AUTHORIZATION_MANAGE_CAPABILITY,
             "scopeType": "PLATFORM",
             "meta": {"name": "Grant 管理", "order": 14},
+        },
+        {
+            "routeKey": "requirements",
+            "name": "Requirements",
+            "order": 20,
+            "capability": "requirement.read",
+            "scopeType": "WORKSPACE",
+            "meta": {"name": "Requirements", "order": 20},
         },
     ]
 

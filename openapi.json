@@ -166,6 +166,14 @@
         "title": "AddSuperAdminRequestDto",
         "type": "object"
       },
+      "AssignmentState": {
+        "enum": [
+          "UNASSIGNED",
+          "ASSIGNED"
+        ],
+        "title": "AssignmentState",
+        "type": "string"
+      },
       "AuditEventListResponseDto": {
         "properties": {
           "items": {
@@ -289,6 +297,46 @@
         "title": "AuthenticatedDto",
         "type": "object"
       },
+      "BaselineConfirmationResponseDto": {
+        "properties": {
+          "assignment": {
+            "$ref": "#/components/schemas/GateAssignmentResponseDto"
+          },
+          "gate": {
+            "$ref": "#/components/schemas/GateInstanceResponseDto"
+          },
+          "requirement": {
+            "$ref": "#/components/schemas/RequirementResponseDto"
+          }
+        },
+        "required": [
+          "requirement",
+          "gate",
+          "assignment"
+        ],
+        "title": "BaselineConfirmationResponseDto",
+        "type": "object"
+      },
+      "BaselineDecisionResponseDto": {
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/DecisionResponseDto"
+          },
+          "gate": {
+            "$ref": "#/components/schemas/GateInstanceResponseDto"
+          },
+          "requirement": {
+            "$ref": "#/components/schemas/RequirementResponseDto"
+          }
+        },
+        "required": [
+          "requirement",
+          "gate",
+          "decision"
+        ],
+        "title": "BaselineDecisionResponseDto",
+        "type": "object"
+      },
       "BootstrapPasswordRequestDto": {
         "properties": {
           "password": {
@@ -367,6 +415,70 @@
         "title": "CreateAccountRequestDto",
         "type": "object"
       },
+      "CreateRequirementRequestDto": {
+        "additionalProperties": false,
+        "properties": {
+          "acceptanceCriteria": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Acceptancecriteria",
+            "type": "array"
+          },
+          "description": {
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "initialRepositoryId": {
+            "minLength": 1,
+            "title": "Initialrepositoryid",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/RequirementType"
+          },
+          "workspaceId": {
+            "format": "uuid",
+            "title": "Workspaceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "workspaceId",
+          "type",
+          "title",
+          "description",
+          "acceptanceCriteria",
+          "initialRepositoryId"
+        ],
+        "title": "CreateRequirementRequestDto",
+        "type": "object"
+      },
+      "CreateRequirementResponseDto": {
+        "properties": {
+          "requirement": {
+            "$ref": "#/components/schemas/RequirementResponseDto"
+          },
+          "workItem": {
+            "$ref": "#/components/schemas/WorkItemResponseDto"
+          }
+        },
+        "required": [
+          "requirement",
+          "workItem"
+        ],
+        "title": "CreateRequirementResponseDto",
+        "type": "object"
+      },
       "CreateWorkspaceRequestDto": {
         "properties": {
           "name": {
@@ -393,6 +505,92 @@
           "reason"
         ],
         "title": "CreateWorkspaceRequestDto",
+        "type": "object"
+      },
+      "DecideBaselineRequestDto": {
+        "additionalProperties": false,
+        "properties": {
+          "gateId": {
+            "format": "uuid",
+            "title": "Gateid",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/DecisionOutcome"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "gateId",
+          "outcome",
+          "reason"
+        ],
+        "title": "DecideBaselineRequestDto",
+        "type": "object"
+      },
+      "DecisionOutcome": {
+        "enum": [
+          "APPROVED",
+          "CHANGES_REQUESTED",
+          "REJECTED"
+        ],
+        "title": "DecisionOutcome",
+        "type": "string"
+      },
+      "DecisionResponseDto": {
+        "properties": {
+          "decidedAt": {
+            "format": "date-time",
+            "title": "Decidedat",
+            "type": "string"
+          },
+          "gateAssignmentId": {
+            "format": "uuid",
+            "title": "Gateassignmentid",
+            "type": "string"
+          },
+          "gateInstanceId": {
+            "format": "uuid",
+            "title": "Gateinstanceid",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/DecisionOutcome"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "reviewerId": {
+            "title": "Reviewerid",
+            "type": "string"
+          },
+          "subjectRevision": {
+            "title": "Subjectrevision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "gateInstanceId",
+          "gateAssignmentId",
+          "reviewerId",
+          "outcome",
+          "reason",
+          "subjectRevision",
+          "decidedAt"
+        ],
+        "title": "DecisionResponseDto",
         "type": "object"
       },
       "DraftResponseDto": {
@@ -561,6 +759,13 @@
         "title": "DraftValuesRequestDto",
         "type": "object"
       },
+      "ExecutorType": {
+        "enum": [
+          "HUMAN"
+        ],
+        "title": "ExecutorType",
+        "type": "string"
+      },
       "FormalMemberListResponseDto": {
         "properties": {
           "items": {
@@ -611,6 +816,168 @@
         ],
         "title": "FormalMemberResponseDto",
         "type": "object"
+      },
+      "GateAssignmentResponseDto": {
+        "properties": {
+          "assignedAt": {
+            "format": "date-time",
+            "title": "Assignedat",
+            "type": "string"
+          },
+          "currentReviewerId": {
+            "title": "Currentreviewerid",
+            "type": "string"
+          },
+          "defaultReviewerId": {
+            "title": "Defaultreviewerid",
+            "type": "string"
+          },
+          "gateInstanceId": {
+            "format": "uuid",
+            "title": "Gateinstanceid",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "supersededAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Supersededat"
+          }
+        },
+        "required": [
+          "id",
+          "gateInstanceId",
+          "defaultReviewerId",
+          "currentReviewerId",
+          "revision",
+          "assignedAt",
+          "supersededAt"
+        ],
+        "title": "GateAssignmentResponseDto",
+        "type": "object"
+      },
+      "GateInstanceResponseDto": {
+        "properties": {
+          "artifactHash": {
+            "title": "Artifacthash",
+            "type": "string"
+          },
+          "artifactId": {
+            "title": "Artifactid",
+            "type": "string"
+          },
+          "artifactVersion": {
+            "title": "Artifactversion",
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "decidedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decidedat"
+          },
+          "gateType": {
+            "$ref": "#/components/schemas/GateType"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "policyVersion": {
+            "title": "Policyversion",
+            "type": "integer"
+          },
+          "requirementId": {
+            "format": "uuid",
+            "title": "Requirementid",
+            "type": "string"
+          },
+          "requirementVersion": {
+            "title": "Requirementversion",
+            "type": "integer"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "routeSnapshotHash": {
+            "title": "Routesnapshothash",
+            "type": "string"
+          },
+          "routeSnapshotVersion": {
+            "title": "Routesnapshotversion",
+            "type": "integer"
+          },
+          "sddBaselineId": {
+            "format": "uuid",
+            "title": "Sddbaselineid",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/GateState"
+          }
+        },
+        "required": [
+          "id",
+          "gateType",
+          "requirementId",
+          "requirementVersion",
+          "sddBaselineId",
+          "artifactId",
+          "artifactVersion",
+          "artifactHash",
+          "routeSnapshotVersion",
+          "routeSnapshotHash",
+          "policyVersion",
+          "state",
+          "revision",
+          "createdAt",
+          "decidedAt"
+        ],
+        "title": "GateInstanceResponseDto",
+        "type": "object"
+      },
+      "GateState": {
+        "enum": [
+          "OPEN",
+          "DECIDED"
+        ],
+        "title": "GateState",
+        "type": "string"
+      },
+      "GateType": {
+        "enum": [
+          "REQUIREMENT_BASELINE_CONFIRMATION"
+        ],
+        "title": "GateType",
+        "type": "string"
       },
       "GrantCreateRequestDto": {
         "properties": {
@@ -1472,6 +1839,50 @@
         "title": "ReadyDto",
         "type": "object"
       },
+      "RecordState": {
+        "enum": [
+          "ACTIVE"
+        ],
+        "title": "RecordState",
+        "type": "string"
+      },
+      "RegisterSddBaselineRequestDto": {
+        "additionalProperties": false,
+        "properties": {
+          "artifactId": {
+            "minLength": 1,
+            "title": "Artifactid",
+            "type": "string"
+          },
+          "artifactVersion": {
+            "minLength": 1,
+            "title": "Artifactversion",
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifactId",
+          "artifactVersion"
+        ],
+        "title": "RegisterSddBaselineRequestDto",
+        "type": "object"
+      },
+      "RegisterSddBaselineResponseDto": {
+        "properties": {
+          "baseline": {
+            "$ref": "#/components/schemas/SddBaselineResponseDto"
+          },
+          "requirement": {
+            "$ref": "#/components/schemas/RequirementResponseDto"
+          }
+        },
+        "required": [
+          "requirement",
+          "baseline"
+        ],
+        "title": "RegisterSddBaselineResponseDto",
+        "type": "object"
+      },
       "RemoveLeaderRequestDto": {
         "properties": {
           "reason": {
@@ -1509,6 +1920,198 @@
         ],
         "title": "RemoveSuperAdminRequestDto",
         "type": "object"
+      },
+      "RepositoryState": {
+        "enum": [
+          "WAITING_REPOSITORY",
+          "BOUND"
+        ],
+        "title": "RepositoryState",
+        "type": "string"
+      },
+      "RequirementDetailsResponseDto": {
+        "properties": {
+          "requirement": {
+            "$ref": "#/components/schemas/RequirementResponseDto"
+          },
+          "workItems": {
+            "items": {
+              "$ref": "#/components/schemas/WorkItemResponseDto"
+            },
+            "title": "Workitems",
+            "type": "array"
+          }
+        },
+        "required": [
+          "requirement",
+          "workItems"
+        ],
+        "title": "RequirementDetailsResponseDto",
+        "type": "object"
+      },
+      "RequirementListResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RequirementResponseDto"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextcursor"
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "title": "RequirementListResponseDto",
+        "type": "object"
+      },
+      "RequirementResponseDto": {
+        "properties": {
+          "acceptanceCriteria": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Acceptancecriteria",
+            "type": "array"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "createdBy": {
+            "title": "Createdby",
+            "type": "string"
+          },
+          "currentSddBaselineId": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currentsddbaselineid"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "initialRepositoryId": {
+            "title": "Initialrepositoryid",
+            "type": "string"
+          },
+          "recordState": {
+            "$ref": "#/components/schemas/RecordState"
+          },
+          "requiredWorkItemSetHash": {
+            "title": "Requiredworkitemsethash",
+            "type": "string"
+          },
+          "requiredWorkItemSetVersion": {
+            "title": "Requiredworkitemsetversion",
+            "type": "integer"
+          },
+          "requirementVersion": {
+            "title": "Requirementversion",
+            "type": "integer"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "routeSnapshotHash": {
+            "title": "Routesnapshothash",
+            "type": "string"
+          },
+          "routeSnapshotVersion": {
+            "title": "Routesnapshotversion",
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/RequirementState"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/RequirementType"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          },
+          "workspaceId": {
+            "format": "uuid",
+            "title": "Workspaceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "workspaceId",
+          "type",
+          "title",
+          "description",
+          "acceptanceCriteria",
+          "createdBy",
+          "initialRepositoryId",
+          "routeSnapshotVersion",
+          "routeSnapshotHash",
+          "state",
+          "recordState",
+          "requirementVersion",
+          "requiredWorkItemSetVersion",
+          "requiredWorkItemSetHash",
+          "currentSddBaselineId",
+          "revision",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "RequirementResponseDto",
+        "type": "object"
+      },
+      "RequirementState": {
+        "enum": [
+          "CREATED",
+          "PREPARING",
+          "AWAITING_CONFIRMATION",
+          "READY",
+          "CANCELED"
+        ],
+        "title": "RequirementState",
+        "type": "string"
+      },
+      "RequirementType": {
+        "enum": [
+          "feat",
+          "fix",
+          "refactor",
+          "chore"
+        ],
+        "title": "RequirementType",
+        "type": "string"
       },
       "RollbackPolicyRequestDto": {
         "properties": {
@@ -1581,6 +2184,67 @@
         "title": "ScopedCapabilityDto",
         "type": "object"
       },
+      "SddBaselineResponseDto": {
+        "properties": {
+          "artifactHash": {
+            "title": "Artifacthash",
+            "type": "string"
+          },
+          "artifactId": {
+            "title": "Artifactid",
+            "type": "string"
+          },
+          "artifactVersion": {
+            "title": "Artifactversion",
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "createdBy": {
+            "title": "Createdby",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "requirementId": {
+            "format": "uuid",
+            "title": "Requirementid",
+            "type": "string"
+          },
+          "requirementVersion": {
+            "title": "Requirementversion",
+            "type": "integer"
+          },
+          "routeSnapshotHash": {
+            "title": "Routesnapshothash",
+            "type": "string"
+          },
+          "routeSnapshotVersion": {
+            "title": "Routesnapshotversion",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "requirementId",
+          "requirementVersion",
+          "artifactId",
+          "artifactVersion",
+          "artifactHash",
+          "routeSnapshotVersion",
+          "routeSnapshotHash",
+          "createdBy",
+          "createdAt"
+        ],
+        "title": "SddBaselineResponseDto",
+        "type": "object"
+      },
       "SetSuperiorRequestDto": {
         "properties": {
           "reason": {
@@ -1605,6 +2269,21 @@
           "reason"
         ],
         "title": "SetSuperiorRequestDto",
+        "type": "object"
+      },
+      "SubmitBaselineConfirmationRequestDto": {
+        "additionalProperties": false,
+        "properties": {
+          "sddBaselineId": {
+            "format": "uuid",
+            "title": "Sddbaselineid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sddBaselineId"
+        ],
+        "title": "SubmitBaselineConfirmationRequestDto",
         "type": "object"
       },
       "SuperAdminListResponseDto": {
@@ -1807,6 +2486,134 @@
         ],
         "title": "ValidationIssueDto",
         "type": "object"
+      },
+      "WorkItemResponseDto": {
+        "properties": {
+          "assignmentState": {
+            "$ref": "#/components/schemas/AssignmentState"
+          },
+          "baseCommitSha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Basecommitsha"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "createdBy": {
+            "title": "Createdby",
+            "type": "string"
+          },
+          "executorId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executorid"
+          },
+          "executorType": {
+            "$ref": "#/components/schemas/ExecutorType"
+          },
+          "humanOwnerId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Humanownerid"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "repositoryId": {
+            "title": "Repositoryid",
+            "type": "string"
+          },
+          "repositoryState": {
+            "$ref": "#/components/schemas/RepositoryState"
+          },
+          "requiredCapabilities": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Requiredcapabilities",
+            "type": "array"
+          },
+          "requirementId": {
+            "format": "uuid",
+            "title": "Requirementid",
+            "type": "string"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/WorkItemState"
+          },
+          "taskBranch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Taskbranch"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "title": "Updatedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "requirementId",
+          "createdBy",
+          "humanOwnerId",
+          "executorType",
+          "executorId",
+          "requiredCapabilities",
+          "assignmentState",
+          "repositoryState",
+          "state",
+          "repositoryId",
+          "baseCommitSha",
+          "taskBranch",
+          "revision",
+          "createdAt",
+          "updatedAt"
+        ],
+        "title": "WorkItemResponseDto",
+        "type": "object"
+      },
+      "WorkItemState": {
+        "enum": [
+          "DRAFT",
+          "READY",
+          "CANCELED"
+        ],
+        "title": "WorkItemState",
+        "type": "string"
       },
       "WorkspaceListResponseDto": {
         "properties": {
@@ -6763,6 +7570,853 @@
         "summary": "Navigation",
         "tags": [
           "authorization"
+        ]
+      }
+    },
+    "/api/v1/requirements": {
+      "get": {
+        "operationId": "requirements_list",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "workspaceId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Workspaceid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequirementListResponseDto"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
+          }
+        },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
+        "summary": "Requirement List",
+        "tags": [
+          "requirement"
+        ]
+      },
+      "post": {
+        "operationId": "requirements_create",
+        "parameters": [
+          {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRequirementRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateRequirementResponseDto"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Strong Requirement revision entity tag",
+                "schema": {
+                  "pattern": "^\"v[1-9][0-9]*\"$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
+          }
+        },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
+        "summary": "Requirement Create",
+        "tags": [
+          "requirement"
+        ]
+      }
+    },
+    "/api/v1/requirements/{requirementId}": {
+      "get": {
+        "operationId": "requirements_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "requirementId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Requirementid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RequirementDetailsResponseDto"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Strong Requirement revision entity tag",
+                "schema": {
+                  "pattern": "^\"v[1-9][0-9]*\"$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
+          }
+        },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
+        "summary": "Requirement Get",
+        "tags": [
+          "requirement"
+        ]
+      }
+    },
+    "/api/v1/requirements/{requirementId}/baseline-confirmations": {
+      "post": {
+        "operationId": "requirements_submit_baseline_confirmation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "requirementId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Requirementid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Strong entity tag in the form \"v<positive-version>\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "description": "Strong entity tag in the form \"v<positive-version>\"",
+              "examples": [
+                "\"v1\""
+              ],
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubmitBaselineConfirmationRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaselineConfirmationResponseDto"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Strong Requirement revision entity tag",
+                "schema": {
+                  "pattern": "^\"v[1-9][0-9]*\"$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
+          }
+        },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
+        "summary": "Requirement Submit Baseline Confirmation",
+        "tags": [
+          "requirement"
+        ]
+      }
+    },
+    "/api/v1/requirements/{requirementId}/baseline-decisions": {
+      "post": {
+        "operationId": "requirements_decide_baseline",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "requirementId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Requirementid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Strong entity tag in the form \"v<positive-version>\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "description": "Strong entity tag in the form \"v<positive-version>\"",
+              "examples": [
+                "\"v1\""
+              ],
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecideBaselineRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BaselineDecisionResponseDto"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Strong Requirement revision entity tag",
+                "schema": {
+                  "pattern": "^\"v[1-9][0-9]*\"$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
+          }
+        },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
+        "summary": "Requirement Decide Baseline",
+        "tags": [
+          "requirement"
+        ]
+      }
+    },
+    "/api/v1/requirements/{requirementId}/sdd-baselines": {
+      "post": {
+        "operationId": "requirements_register_sdd_baseline",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "requirementId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Requirementid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Strong entity tag in the form \"v<positive-version>\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "description": "Strong entity tag in the form \"v<positive-version>\"",
+              "examples": [
+                "\"v1\""
+              ],
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegisterSddBaselineRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegisterSddBaselineResponseDto"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Strong Requirement revision entity tag",
+                "schema": {
+                  "pattern": "^\"v[1-9][0-9]*\"$",
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
+          }
+        },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
+        "summary": "Requirement Register Sdd Baseline",
+        "tags": [
+          "requirement"
         ]
       }
     },
