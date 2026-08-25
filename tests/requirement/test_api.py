@@ -38,11 +38,7 @@ def test_bootstrap_exposes_six_requirement_endpoints_with_fail_closed_dependenci
     }
     assert set(paths["/api/v1/requirements"]) >= {"get", "post"}
     create = paths["/api/v1/requirements"]["post"]
-    create_headers = {
-        item["name"]: item
-        for item in create["parameters"]
-        if item["in"] == "header"
-    }
+    create_headers = {item["name"]: item for item in create["parameters"] if item["in"] == "header"}
     assert create_headers["Idempotency-Key"]["required"] is True
     assert "If-Match" not in create_headers
     for suffix in (
@@ -51,11 +47,7 @@ def test_bootstrap_exposes_six_requirement_endpoints_with_fail_closed_dependenci
         "baseline-decisions",
     ):
         operation = paths[f"/api/v1/requirements/{{requirementId}}/{suffix}"]["post"]
-        headers = {
-            item["name"]: item
-            for item in operation["parameters"]
-            if item["in"] == "header"
-        }
+        headers = {item["name"]: item for item in operation["parameters"] if item["in"] == "header"}
         assert headers["Idempotency-Key"]["required"] is True
         assert headers["If-Match"]["required"] is True
         assert operation["security"] == [{"EpSessionCookie": []}]
@@ -272,9 +264,7 @@ def test_write_preflight_and_strict_browser_dto_return_problem_details(
     assert missing_key.headers["content-type"].startswith("application/problem+json")
     assert missing_key.json()["title"] == "Missing Idempotency-Key"
     assert forbidden_field.status_code == 422
-    assert forbidden_field.headers["content-type"].startswith(
-        "application/problem+json"
-    )
+    assert forbidden_field.headers["content-type"].startswith("application/problem+json")
     assert forbidden_field.json()["title"] == "Validation failed"
     for response in (
         invalid_workspace,

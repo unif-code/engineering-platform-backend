@@ -74,8 +74,9 @@ def test_list_requirements_is_workspace_scoped_and_uses_stable_cursor(
 def test_list_requirements_rejects_malformed_cursor(
     isolated_requirement_database: IsolatedRequirementDatabase,
 ) -> None:
-    with isolated_requirement_database.runtime.connect() as db, pytest.raises(
-        InvalidRequirementCursor
+    with (
+        isolated_requirement_database.runtime.connect() as db,
+        pytest.raises(InvalidRequirementCursor),
     ):
         list_requirements(
             db,

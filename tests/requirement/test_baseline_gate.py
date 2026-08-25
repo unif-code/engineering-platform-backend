@@ -54,11 +54,7 @@ class StaticArtifacts:
             sha256=self.sha256,
             state=(ArtifactState.AVAILABLE if self.available else ArtifactState.UNAVAILABLE),
             media_type="text/markdown",
-            trust=(
-                ArtifactTrust.TRUSTED_PLAIN_TEXT
-                if self.trusted
-                else ArtifactTrust.UNTRUSTED
-            ),
+            trust=(ArtifactTrust.TRUSTED_PLAIN_TEXT if self.trusted else ArtifactTrust.UNTRUSTED),
         )
 
 
@@ -478,18 +474,19 @@ def test_reassignment_that_locks_gate_then_assignment_prevents_stale_reviewer_de
                 text("SELECT id FROM requirement.gate_instance WHERE id=:id FOR UPDATE"),
                 {"id": confirmation.gate.id},
             ).one()
-            current = db.execute(
-                text(
-                    "SELECT * FROM requirement.gate_assignment "
-                    "WHERE gate_instance_id=:id AND superseded_at IS NULL FOR UPDATE"
-                ),
-                {"id": confirmation.gate.id},
-            ).mappings().one()
+            current = (
+                db.execute(
+                    text(
+                        "SELECT * FROM requirement.gate_assignment "
+                        "WHERE gate_instance_id=:id AND superseded_at IS NULL FOR UPDATE"
+                    ),
+                    {"id": confirmation.gate.id},
+                )
+                .mappings()
+                .one()
+            )
             db.execute(
-                text(
-                    "UPDATE requirement.gate_assignment SET superseded_at=now() "
-                    "WHERE id=:id"
-                ),
+                text("UPDATE requirement.gate_assignment SET superseded_at=now() WHERE id=:id"),
                 {"id": current["id"]},
             )
             db.execute(

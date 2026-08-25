@@ -112,9 +112,7 @@ def test_repository_binding_blocked_state_requires_a_structured_reason_and_times
     requirement_owner_engine: Engine,
 ) -> None:
     inspector = inspect(requirement_owner_engine)
-    columns = {
-        item["name"] for item in inspector.get_columns("work_item", schema="requirement")
-    }
+    columns = {item["name"] for item in inspector.get_columns("work_item", schema="requirement")}
     with requirement_owner_engine.connect() as db:
         constraint = db.execute(
             text(
@@ -260,10 +258,7 @@ def test_requirement_rw_has_only_expected_module_and_audit_privileges(
             privilege
             for privilege in ("USAGE", "CREATE")
             if db.execute(
-                text(
-                    "SELECT has_schema_privilege("
-                    "'requirement_rw', 'requirement', :privilege)"
-                ),
+                text("SELECT has_schema_privilege('requirement_rw', 'requirement', :privilege)"),
                 {"privilege": privilege},
             ).scalar_one()
         }
@@ -322,12 +317,14 @@ def test_requirement_rw_has_only_expected_module_and_audit_privileges(
 def test_requirement_rw_cannot_delete_aggregate_or_create_tables(
     requirement_rw_engine: Engine,
 ) -> None:
-    with requirement_rw_engine.connect() as db, pytest.raises(
-        ProgrammingError, match="permission denied"
+    with (
+        requirement_rw_engine.connect() as db,
+        pytest.raises(ProgrammingError, match="permission denied"),
     ):
         db.execute(text("DELETE FROM requirement.requirement WHERE false"))
-    with requirement_rw_engine.connect() as db, pytest.raises(
-        ProgrammingError, match="permission denied"
+    with (
+        requirement_rw_engine.connect() as db,
+        pytest.raises(ProgrammingError, match="permission denied"),
     ):
         db.execute(text("CREATE TABLE requirement.runtime_ddl_forbidden (id int)"))
 

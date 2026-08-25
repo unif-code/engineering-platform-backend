@@ -83,19 +83,28 @@
 def test_requirement_allows_first_batch_transitions(current, target):
     assert transition_requirement(current, target) is target
 
+
 def test_requirement_rejects_ready_to_preparing():
     with pytest.raises(InvalidRequirementTransition):
         transition_requirement(RequirementState.READY, RequirementState.PREPARING)
 
+
 def test_work_item_is_ready_only_when_assigned_and_bound():
-    assert derive_work_item_state(AssignmentState.ASSIGNED, RepositoryState.BOUND) \
+    assert (
+        derive_work_item_state(AssignmentState.ASSIGNED, RepositoryState.BOUND)
         is WorkItemState.READY
-    assert derive_work_item_state(AssignmentState.UNASSIGNED, RepositoryState.BOUND) \
+    )
+    assert (
+        derive_work_item_state(AssignmentState.UNASSIGNED, RepositoryState.BOUND)
         is WorkItemState.DRAFT
-    assert derive_work_item_state(
-        AssignmentState.ASSIGNED,
-        RepositoryState.WAITING_REPOSITORY,
-    ) is WorkItemState.DRAFT
+    )
+    assert (
+        derive_work_item_state(
+            AssignmentState.ASSIGNED,
+            RepositoryState.WAITING_REPOSITORY,
+        )
+        is WorkItemState.DRAFT
+    )
 ```
 
 - [x] **Step 2: 运行测试确认 RED**
@@ -123,6 +132,7 @@ _FIRST_BATCH_TRANSITIONS = {
     RequirementState.READY: {RequirementState.CANCELED},
     RequirementState.CANCELED: set(),
 }
+
 
 def transition_requirement(current: RequirementState, target: RequirementState) -> RequirementState:
     if target not in _FIRST_BATCH_TRANSITIONS[current]:
@@ -225,12 +235,17 @@ Protocol 使用领域词汇，不暴露 SQL：
 ```python
 class RequirementRepository(Protocol):
     db: Connection
+
     def insert_requirement(self, **values: object) -> Any: ...
     def requirement_by_id(self, requirement_id: str, *, for_update: bool = False) -> Any: ...
-    def list_requirements(self, *, workspace_id: str, after_id: str | None, limit: int) -> list[Any]: ...
+    def list_requirements(
+        self, *, workspace_id: str, after_id: str | None, limit: int
+    ) -> list[Any]: ...
     def insert_work_item(self, **values: object) -> Any: ...
     def insert_outbox(self, **values: object) -> Any: ...
-    def update_requirement_state(self, requirement_id: str, *, expected_revision: int, state: str) -> Any: ...
+    def update_requirement_state(
+        self, requirement_id: str, *, expected_revision: int, state: str
+    ) -> Any: ...
     def insert_sdd_baseline(self, **values: object) -> Any: ...
     def insert_gate(self, **values: object) -> Any: ...
     def insert_assignment(self, **values: object) -> Any: ...

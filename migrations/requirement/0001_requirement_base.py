@@ -396,8 +396,7 @@ def upgrade() -> None:
         "requirement.idempotency_record, requirement.outbox_message TO requirement_rw"
     )
     op.execute(
-        "GRANT SELECT, INSERT ON requirement.sdd_baseline, requirement.decision "
-        "TO requirement_rw"
+        "GRANT SELECT, INSERT ON requirement.sdd_baseline, requirement.decision TO requirement_rw"
     )
 
 
