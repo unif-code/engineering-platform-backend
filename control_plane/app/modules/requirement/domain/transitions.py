@@ -30,6 +30,22 @@ class RepositoryBindingRequestMissing(RequirementError):
     pass
 
 
+class InvalidRequirementCursor(RequirementError):
+    pass
+
+
+class WorkItemNotFound(RequirementError):
+    pass
+
+
+class StaleWorkItemRevision(RequirementError):
+    pass
+
+
+class RepositoryBindingConflict(RequirementError):
+    pass
+
+
 _FIRST_BATCH_TRANSITIONS = {
     RequirementState.CREATED: {RequirementState.PREPARING, RequirementState.CANCELED},
     RequirementState.PREPARING: {
