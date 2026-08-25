@@ -33,7 +33,9 @@
 - Create: `control_plane/app/modules/requirement/adapters/sqlalchemy.py`
 - Create: `control_plane/app/modules/requirement/api/{dto,routes}.py`
 - Create: `migrations/requirement/0001_requirement_base.py`
+- Create: `migrations/audit/0008_requirement_append_grant.py`
 - Create: `migrations/authorization/0006_authorization_v03_requirement_routes.py`
+- Modify: `alembic.ini`
 - Modify: `control_plane/app/bootstrap/app.py`
 - Modify: `control_plane/app/shared/db/settings.py`
 - Modify: `pyproject.toml`
@@ -164,7 +166,7 @@ git commit -m "feat(requirement): establish domain state model"
 - Produces: `RequirementRepository` / `RequirementRepositoryFactory` Protocol。
 - Produces: `SqlAlchemyRequirementRepository`，只访问 `requirement` schema 与受控 Audit append。
 
-- [ ] **Step 1: 写 migration 生命周期和权限失败测试**
+- [x] **Step 1: 写 migration 生命周期和权限失败测试**
 
 测试必须验证八张表、所有 CHECK/FK/unique 约束、`requirement_rw` 的最小权限，以及 downgrade 后其他 schema 事实仍存在：
 
@@ -193,13 +195,13 @@ assert privileges(owner_engine, "requirement_rw", "requirement") == {
 }
 ```
 
-- [ ] **Step 2: 运行测试确认 RED**
+- [x] **Step 2: 运行测试确认 RED**
 
 Run: `python -m pytest tests/requirement/test_migration.py -q`
 
 Expected: 缺少 `requirement` migration/head。
 
-- [ ] **Step 3: 实现 schema 与数据库约束**
+- [x] **Step 3: 实现 schema 与数据库约束**
 
 迁移关键约束：
 
@@ -216,7 +218,7 @@ CONSTRAINT uq_requirement_decision_gate UNIQUE (gate_instance_id)
 
 `outbox_message` 保存 `topic`、`aggregate_type/id/version`、`payload JSONB`、`state=PENDING|PUBLISHED|FAILED`、重试时间与错误码；不得保存凭据或完整 SDD 正文。
 
-- [ ] **Step 4: 写 Repository Protocol 与 SQLAlchemy Adapter**
+- [x] **Step 4: 写 Repository Protocol 与 SQLAlchemy Adapter**
 
 Protocol 使用领域词汇，不暴露 SQL：
 
@@ -235,7 +237,7 @@ class RequirementRepository(Protocol):
     def insert_decision(self, **values: object) -> Any: ...
 ```
 
-- [ ] **Step 5: 运行 migration 测试与 Alembic head 检查**
+- [x] **Step 5: 运行 migration 测试与 Alembic head 检查**
 
 Run: `python -m pytest tests/requirement/test_migration.py tests/integration/test_migration.py -q`
 
@@ -243,7 +245,7 @@ Run: `python -m alembic heads`
 
 Expected: 新增且仅新增 `0001_requirement_base (requirement) (head)`，所有测试 PASS。
 
-- [ ] **Step 6: 提交持久化基础**
+- [x] **Step 6: 提交持久化基础**
 
 ```bash
 git add migrations/requirement control_plane/app/modules/requirement/ports control_plane/app/modules/requirement/adapters control_plane/app/shared/db/settings.py tests/requirement

@@ -20,6 +20,9 @@ class DbSettings(BaseSettings):
     configuration_database_url: str = (
         "postgresql+psycopg://configuration_rw:localdev@localhost:5432/platform"
     )
+    requirement_database_url: str = (
+        "postgresql+psycopg://requirement_rw:localdev@localhost:5432/platform"
+    )
     migration_database_url: str = (
         "postgresql+psycopg://platform_owner:localdev@localhost:5432/platform"
     )
