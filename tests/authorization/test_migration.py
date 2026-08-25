@@ -6,7 +6,54 @@ from alembic.config import Config
 from sqlalchemy import Engine, inspect, text
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 
+from control_plane.app.modules.authorization import V02_SUPER_ADMIN_PLATFORM_CAPABILITIES
+
 pytestmark = pytest.mark.integration
+
+
+def test_authorization_0006_installs_workspace_requirement_route_without_super_admin_bypass(
+    authorization_owner_engine: Engine,
+) -> None:
+    config = Config("alembic.ini")
+    capabilities = {
+        "requirement.create",
+        "requirement.read",
+        "requirement.baseline.submit",
+        "requirement.baseline.decide",
+        "work_item.assign",
+    }
+    command.downgrade(config, "0005_authorization_v02_routes")
+    try:
+        command.upgrade(config, "heads")
+        with authorization_owner_engine.connect() as db:
+            route = tuple(
+                db.execute(
+                    text(
+                        "SELECT route_key, capability, scope_type, sort, meta "
+                        'FROM "authorization".route_registry '
+                        "WHERE route_key='requirements'"
+                    )
+                ).one()
+            )
+        assert route == (
+            "requirements",
+            "requirement.read",
+            "WORKSPACE",
+            20,
+            {"name": "Requirements", "order": 20},
+        )
+        assert capabilities.isdisjoint(V02_SUPER_ADMIN_PLATFORM_CAPABILITIES)
+
+        command.downgrade(config, "0005_authorization_v02_routes")
+        with authorization_owner_engine.connect() as db:
+            assert db.execute(
+                text(
+                    "SELECT count(*) FROM \"authorization\".route_registry "
+                    "WHERE route_key='requirements'"
+                )
+            ).scalar_one() == 0
+    finally:
+        command.upgrade(config, "heads")
 
 
 def test_authorization_0005_installs_exact_v02_routes_and_preserves_extensions(

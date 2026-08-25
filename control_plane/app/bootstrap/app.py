@@ -8,6 +8,9 @@ from sqlalchemy import Engine, create_engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from control_plane.app import __version__
+from control_plane.app.modules.audit.adapters.sqlalchemy_repository import (
+    SqlAlchemyAuditEventRepository,
+)
 from control_plane.app.modules.audit.adapters.transactional import (
     SqlAlchemyTransactionalAuditAppender,
 )
@@ -72,6 +75,16 @@ from control_plane.app.modules.organization.adapters import (
 from control_plane.app.modules.organization.api import (
     OrganizationHttpRuntime,
     create_organization_router,
+)
+from control_plane.app.modules.requirement import RequirementDependencies
+from control_plane.app.modules.requirement.adapters import (
+    FailClosedAutomaticAssignmentGuard,
+    SqlAlchemyRequirementRepository,
+    V03RouteSnapshotCatalog,
+)
+from control_plane.app.modules.requirement.api import (
+    RequirementHttpRuntime,
+    create_requirement_router,
 )
 from control_plane.app.modules.workspace import (
     WorkspaceDependencies,
@@ -152,6 +165,15 @@ def authorization_runtime_engine() -> Engine:
 def configuration_runtime_engine() -> Engine:
     return create_engine(
         DbSettings().configuration_database_url,
+        pool_pre_ping=True,
+        connect_args={"connect_timeout": 2},
+    )
+
+
+@lru_cache(maxsize=1)
+def requirement_runtime_engine() -> Engine:
+    return create_engine(
+        DbSettings().requirement_database_url,
         pool_pre_ping=True,
         connect_args={"connect_timeout": 2},
     )
@@ -268,6 +290,31 @@ def configuration_http_runtime() -> ConfigurationHttpRuntime:
 
 
 @lru_cache(maxsize=1)
+def requirement_dependencies() -> RequirementDependencies:
+    return RequirementDependencies(
+        repository_factory=SqlAlchemyRequirementRepository,
+        audit=SqlAlchemyTransactionalAuditAppender(),
+        denial_audit=SqlAlchemyAuditEventRepository(runtime_engine()),
+        clock=SystemClock(),
+        random=SystemRandom(),
+        route_snapshots=V03RouteSnapshotCatalog(),
+        assignment_guard=FailClosedAutomaticAssignmentGuard(),
+        secret_manager=FileSecretManager(SecuritySettings()),
+        artifacts=None,
+        gate_policies=None,
+        reviewer_guard=None,
+    )
+
+
+@lru_cache(maxsize=1)
+def requirement_http_runtime() -> RequirementHttpRuntime:
+    return RequirementHttpRuntime(
+        engine=requirement_runtime_engine(),
+        dependencies=requirement_dependencies(),
+    )
+
+
+@lru_cache(maxsize=1)
 def security_change_orchestrator() -> SecurityChangeOrchestrator:
     return SecurityChangeOrchestrator(
         authorization_runtime_engine(),
@@ -356,6 +403,9 @@ def authorization_capability_guard(
 def create_app(
     *,
     identity_runtime_provider: Callable[[], IdentityHttpRuntime] = identity_http_runtime,
+    requirement_runtime_provider: Callable[
+        [], RequirementHttpRuntime
+    ] = requirement_http_runtime,
 ) -> FastAPI:
     app = FastAPI(
         title="engineering-platform-control-plane",
@@ -425,6 +475,13 @@ def create_app(
     app.include_router(
         create_configuration_router(
             configuration_http_runtime,
+            cast(Callable[[], Any], protected_principal),
+            authorization_capability_guard,
+        )
+    )
+    app.include_router(
+        create_requirement_router(
+            requirement_runtime_provider,
             cast(Callable[[], Any], protected_principal),
             authorization_capability_guard,
         )
