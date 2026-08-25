@@ -82,14 +82,15 @@ def test_fresh_upgrade_installs_independent_heads_and_deterministic_seed(
                 )
             ).one()
         assert expected_heads == {
-            "0007_audit_query_request_id",
+            "0008_audit_requirement_grant",
             "0010_identity_policy_reauth",
             "0001_organization_base",
             "0001_workspace_base",
             "0005_authorization_v02_routes",
+            "0001_requirement_base",
         }
         assert installed_heads == {
-            "0007_audit_query_request_id",
+            "0008_audit_requirement_grant",
             "0010_identity_policy_reauth",
             "0005_authorization_v02_routes",
         }

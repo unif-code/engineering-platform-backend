@@ -274,7 +274,7 @@ def test_current_alembic_heads_are_installed(identity_owner_engine: Engine) -> N
     with identity_owner_engine.connect() as conn:
         installed = set(conn.execute(text("SELECT version_num FROM alembic_version")).scalars())
     assert installed == {
-        "0007_audit_query_request_id",
+        "0008_audit_requirement_grant",
         "0010_identity_policy_reauth",
         "0005_authorization_v02_routes",
     }

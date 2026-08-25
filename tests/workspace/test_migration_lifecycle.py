@@ -55,14 +55,15 @@ def test_fresh_upgrade_heads_installs_workspace_and_independent_graph(
                 db.execute(text("SELECT version_num FROM alembic_version")).scalars()
             )
         assert expected_heads == {
-            "0007_audit_query_request_id",
+            "0008_audit_requirement_grant",
             "0010_identity_policy_reauth",
             "0001_organization_base",
             "0001_workspace_base",
             "0005_authorization_v02_routes",
+            "0001_requirement_base",
         }
         assert installed_heads == {
-            "0007_audit_query_request_id",
+            "0008_audit_requirement_grant",
             "0010_identity_policy_reauth",
             "0005_authorization_v02_routes",
         }
