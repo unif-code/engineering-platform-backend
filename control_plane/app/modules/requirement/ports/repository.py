@@ -86,6 +86,46 @@ class RequirementRepository(Protocol):
         now: datetime,
     ) -> Any: ...
 
+    def set_current_sdd_baseline(
+        self,
+        requirement_id: str,
+        *,
+        baseline_id: str,
+        expected_revision: int,
+        now: datetime,
+    ) -> Any: ...
+
+    def insert_sdd_baseline(self, **values: Any) -> Any: ...
+
+    def sdd_baseline_by_id(self, baseline_id: str) -> Any: ...
+
+    def sdd_baseline_by_artifact(
+        self,
+        requirement_id: str,
+        artifact_id: str,
+        artifact_version: str,
+    ) -> Any: ...
+
+    def insert_gate(self, **values: Any) -> Any: ...
+
+    def gate_by_id(self, gate_id: str, *, for_update: bool = False) -> Any: ...
+
+    def gate_by_baseline_id(self, baseline_id: str) -> Any: ...
+
+    def insert_gate_assignment(self, **values: Any) -> Any: ...
+
+    def current_gate_assignment(self, gate_id: str, *, for_update: bool = False) -> Any: ...
+
+    def insert_decision(self, **values: Any) -> Any: ...
+
+    def close_gate(
+        self,
+        gate_id: str,
+        *,
+        expected_revision: int,
+        now: datetime,
+    ) -> Any: ...
+
 
 class RequirementRepositoryFactory(Protocol):
     def __call__(self, db: Connection) -> RequirementRepository: ...

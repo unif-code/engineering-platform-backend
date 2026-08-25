@@ -90,6 +90,7 @@ def test_requirement_dto_is_an_immutable_domain_snapshot() -> None:
         requirement_version=1,
         required_work_item_set_version=1,
         required_work_item_set_hash="sha256:work-items-1",
+        current_sdd_baseline_id=None,
         revision=1,
         created_at=now,
         updated_at=now,

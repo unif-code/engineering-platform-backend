@@ -106,15 +106,25 @@ class FailingAudit:
         raise RuntimeError("audit unavailable")
 
 
+class DurableDenialAudit:
+    def __init__(self) -> None:
+        self.events: list[AuditEnvelope] = []
+
+    def append(self, envelope: AuditEnvelope) -> None:
+        self.events.append(envelope)
+
+
 def _dependencies(
     *,
     auto_assign: bool = True,
     assignment_guard: AssignmentGuardPort | None = None,
     audit: TransactionalAuditAppender | None = None,
+    denial_audit: DurableDenialAudit | None = None,
 ) -> RequirementDependencies:
     return RequirementDependencies(
         repository_factory=SqlAlchemyRequirementRepository,
         audit=audit or SqlAlchemyTransactionalAuditAppender(),
+        denial_audit=denial_audit or DurableDenialAudit(),
         clock=FixedClock(),
         random=RandomValues(),
         route_snapshots=StaticRouteSnapshots(),

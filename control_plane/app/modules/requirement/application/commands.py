@@ -2,25 +2,45 @@ import hashlib
 import json
 from typing import Any
 
+from control_plane.app.modules.audit import AuditEnvelope, record
 from control_plane.app.modules.requirement.application.common import (
     actor_id,
     audit,
+    decision_dto,
+    gate_assignment_dto,
+    gate_instance_dto,
     requirement_dto,
+    sdd_baseline_dto,
     work_item_dto,
 )
 from control_plane.app.modules.requirement.application.dependencies import (
     RequirementDependencies,
 )
 from control_plane.app.modules.requirement.domain import (
+    ArtifactUnavailable,
     AssignmentState,
+    BaselineConfirmationResult,
+    BaselineDecisionResult,
     CreateRequirementResult,
+    DecisionOutcome,
     ExecutorType,
+    GateAlreadyDecided,
+    GateNotFound,
+    GateReviewerIneligible,
+    GateReviewerMismatch,
+    GateState,
+    GateType,
     RecordState,
+    RegisterSddBaselineResult,
     RepositoryBindingConflict,
     RepositoryState,
+    RequirementDependencyUnavailable,
     RequirementDto,
+    RequirementError,
     RequirementState,
     RequirementType,
+    SddBaselineNotFound,
+    StaleBaselineSubject,
     StaleRequirementRevision,
     StaleWorkItemRevision,
     WorkItemDto,
@@ -34,8 +54,14 @@ from control_plane.app.modules.requirement.domain.transitions import (
     RepositoryBindingRequestMissing,
     RequirementNotFound,
 )
-from control_plane.app.modules.requirement.ports import RequirementRepository
+from control_plane.app.modules.requirement.ports import (
+    ArtifactState,
+    ArtifactTrust,
+    RequirementRepository,
+)
+from control_plane.app.shared.api.request_id import current_request_id
 from control_plane.app.shared.idempotency import (
+    IdempotencyConflict,
     IdempotentResponse,
     canonical_request_fingerprint,
     execute_idempotent,
@@ -52,6 +78,32 @@ def _normalized_text(value: str, *, field: str) -> str:
 def _work_item_set_hash(work_item_id: str) -> str:
     value = json.dumps([work_item_id], separators=(",", ":")).encode("utf-8")
     return f"sha256:{hashlib.sha256(value).hexdigest()}"
+
+
+def _audit_denial(
+    *,
+    dependencies: RequirementDependencies,
+    actor: str,
+    action: str,
+    target_type: str,
+    target_id: str,
+    error: Exception,
+) -> None:
+    record(
+        AuditEnvelope(
+            id=str(dependencies.random.uuid4()),
+            occurred_at=dependencies.clock.now(),
+            actor=actor,
+            actor_type="HUMAN",
+            action=f"{action}_denied",
+            target_type=target_type,
+            target_id=target_id,
+            result="DENIED",
+            reason=f"reasonCode={type(error).__name__.upper()}",
+            correlation_id=current_request_id() or str(dependencies.random.uuid4()),
+        ),
+        dependencies.denial_audit,
+    )
 
 
 def _create_requirement_once(
@@ -414,3 +466,538 @@ def record_repository_binding(
         idempotency_sealing_key=material.idempotency_sealing_key,
     )
     return WorkItemDto.model_validate(execution.response.body)
+
+
+def _register_sdd_baseline_once(
+    repository: RequirementRepository,
+    *,
+    requirement_id: str,
+    artifact_id: str,
+    artifact_version: str,
+    expected_revision: int,
+    actor: Any,
+    dependencies: RequirementDependencies,
+) -> RegisterSddBaselineResult:
+    requirement = repository.requirement_by_id(requirement_id, for_update=True)
+    if requirement is None:
+        raise RequirementNotFound(requirement_id)
+    if requirement["revision"] != expected_revision:
+        raise StaleRequirementRevision(requirement_id)
+    if RequirementState(requirement["state"]) is not RequirementState.PREPARING:
+        raise StaleBaselineSubject("Requirement is not preparing an SDD baseline")
+    artifacts = dependencies.artifacts
+    if artifacts is None:
+        raise RequirementDependencyUnavailable("Artifact service is unavailable")
+    normalized_artifact_id = _normalized_text(artifact_id, field="artifact id")
+    normalized_artifact_version = _normalized_text(
+        artifact_version,
+        field="artifact version",
+    )
+    try:
+        snapshot = artifacts.get_snapshot(normalized_artifact_id, normalized_artifact_version)
+    except RequirementError:
+        raise
+    except Exception as error:
+        raise RequirementDependencyUnavailable("Artifact service failed closed") from error
+    if (
+        snapshot.state is not ArtifactState.AVAILABLE
+        or snapshot.trust is not ArtifactTrust.TRUSTED_PLAIN_TEXT
+        or not snapshot.media_type.split(";", 1)[0].strip().startswith("text/")
+        or snapshot.id != normalized_artifact_id
+        or snapshot.version != normalized_artifact_version
+        or not snapshot.sha256
+    ):
+        raise ArtifactUnavailable(normalized_artifact_id)
+    existing = repository.sdd_baseline_by_artifact(
+        requirement_id,
+        snapshot.id,
+        snapshot.version,
+    )
+    if existing is not None:
+        if existing["artifact_hash"] != snapshot.sha256:
+            raise ArtifactUnavailable("Artifact identity is not immutable")
+        if (
+            requirement["current_sdd_baseline_id"] is None
+            or str(requirement["current_sdd_baseline_id"]) != str(existing["id"])
+            or repository.gate_by_baseline_id(str(existing["id"])) is not None
+        ):
+            raise StaleBaselineSubject("A used Artifact version cannot become current again")
+        return RegisterSddBaselineResult(
+            requirement=requirement_dto(requirement),
+            baseline=sdd_baseline_dto(existing),
+        )
+    stable_actor = actor_id(actor)
+    baseline = repository.insert_sdd_baseline(
+        id=str(dependencies.random.uuid4()),
+        requirement_id=requirement_id,
+        requirement_version=requirement["requirement_version"],
+        artifact_id=snapshot.id,
+        artifact_version=snapshot.version,
+        artifact_hash=snapshot.sha256,
+        route_snapshot_version=requirement["route_snapshot_version"],
+        route_snapshot_hash=requirement["route_snapshot_hash"],
+        created_by=stable_actor,
+        now=dependencies.clock.now(),
+    )
+    updated = repository.set_current_sdd_baseline(
+        requirement_id,
+        baseline_id=str(baseline["id"]),
+        expected_revision=expected_revision,
+        now=dependencies.clock.now(),
+    )
+    if updated is None:
+        raise StaleRequirementRevision(requirement_id)
+    audit(
+        repository,
+        dependencies=dependencies,
+        actor=stable_actor,
+        action="requirement.sdd_baseline.registered",
+        target_type="SDD_BASELINE",
+        target_id=str(baseline["id"]),
+        reason=(
+            f"requirementVersion={requirement['requirement_version']}; "
+            f"artifact={snapshot.id}@{snapshot.version}; revision={updated['revision']}"
+        ),
+    )
+    return RegisterSddBaselineResult(
+        requirement=requirement_dto(updated),
+        baseline=sdd_baseline_dto(baseline),
+    )
+
+
+def register_sdd_baseline(
+    repository: RequirementRepository,
+    *,
+    requirement_id: str,
+    artifact_id: str,
+    artifact_version: str,
+    expected_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    dependencies: RequirementDependencies,
+) -> RegisterSddBaselineResult:
+    stable_actor = actor_id(actor)
+    material = dependencies.secret_manager.load()
+    body: dict[str, object] = {
+        "requirementId": requirement_id,
+        "artifactId": artifact_id,
+        "artifactVersion": artifact_version,
+        "expectedRevision": expected_revision,
+    }
+    fingerprint = canonical_request_fingerprint(
+        operation="requirement_register_sdd_baseline",
+        method="COMMAND",
+        path="requirement.register-sdd-baseline",
+        body=body,
+        idempotency_sealing_key=material.idempotency_sealing_key,
+    )
+
+    def command() -> IdempotentResponse:
+        try:
+            registered = _register_sdd_baseline_once(
+                repository,
+                requirement_id=requirement_id,
+                artifact_id=artifact_id,
+                artifact_version=artifact_version,
+                expected_revision=expected_revision,
+                actor=actor,
+                dependencies=dependencies,
+            )
+        except RequirementError as error:
+            _audit_denial(
+                dependencies=dependencies,
+                actor=stable_actor,
+                action="requirement.sdd_baseline.register",
+                target_type="REQUIREMENT",
+                target_id=requirement_id,
+                error=error,
+            )
+            raise
+        return IdempotentResponse(status_code=201, body=registered.model_dump(mode="json"))
+
+    try:
+        execution = execute_idempotent(
+            repository,
+            actor=stable_actor,
+            operation="requirement_register_sdd_baseline",
+            key=idempotency_key,
+            fingerprint=fingerprint,
+            command=command,
+            now=dependencies.clock.now,
+            new_id=dependencies.random.uuid4,
+            idempotency_sealing_key=material.idempotency_sealing_key,
+        )
+    except IdempotencyConflict as error:
+        _audit_denial(
+            dependencies=dependencies,
+            actor=stable_actor,
+            action="requirement.sdd_baseline.register",
+            target_type="REQUIREMENT",
+            target_id=requirement_id,
+            error=error,
+        )
+        raise
+    return RegisterSddBaselineResult.model_validate(execution.response.body)
+
+
+def _submit_baseline_confirmation_once(
+    repository: RequirementRepository,
+    *,
+    requirement_id: str,
+    sdd_baseline_id: str,
+    expected_revision: int,
+    actor: Any,
+    dependencies: RequirementDependencies,
+) -> BaselineConfirmationResult:
+    requirement = repository.requirement_by_id(requirement_id, for_update=True)
+    if requirement is None:
+        raise RequirementNotFound(requirement_id)
+    if requirement["revision"] != expected_revision:
+        raise StaleRequirementRevision(requirement_id)
+    baseline = repository.sdd_baseline_by_id(sdd_baseline_id)
+    if baseline is None:
+        raise SddBaselineNotFound(sdd_baseline_id)
+    if (
+        requirement["current_sdd_baseline_id"] is None
+        or str(requirement["current_sdd_baseline_id"]) != sdd_baseline_id
+    ):
+        raise StaleBaselineSubject("Only the current SDD baseline can be submitted")
+    subject = (
+        str(baseline["requirement_id"]),
+        baseline["requirement_version"],
+        baseline["route_snapshot_version"],
+        baseline["route_snapshot_hash"],
+    )
+    current = (
+        requirement_id,
+        requirement["requirement_version"],
+        requirement["route_snapshot_version"],
+        requirement["route_snapshot_hash"],
+    )
+    if subject != current:
+        raise StaleBaselineSubject(sdd_baseline_id)
+    if repository.gate_by_baseline_id(sdd_baseline_id) is not None:
+        raise StaleBaselineSubject("An SDD baseline cannot be submitted twice")
+    target = transition_requirement(
+        RequirementState(requirement["state"]),
+        RequirementState.AWAITING_CONFIRMATION,
+    )
+    gate_policies = dependencies.gate_policies
+    if gate_policies is None:
+        raise RequirementDependencyUnavailable("Gate policy service is unavailable")
+    try:
+        policy = gate_policies.requirement_baseline(workspace_id=requirement["workspace_id"])
+    except RequirementError:
+        raise
+    except Exception as error:
+        raise RequirementDependencyUnavailable("Gate policy service failed closed") from error
+    if policy.version < 1 or not policy.default_reviewer_id.strip():
+        raise RequirementDependencyUnavailable("Gate policy snapshot is invalid")
+    now = dependencies.clock.now()
+    gate = repository.insert_gate(
+        id=str(dependencies.random.uuid4()),
+        gate_type=GateType.REQUIREMENT_BASELINE_CONFIRMATION.value,
+        requirement_id=requirement_id,
+        requirement_version=baseline["requirement_version"],
+        sdd_baseline_id=sdd_baseline_id,
+        artifact_id=baseline["artifact_id"],
+        artifact_version=baseline["artifact_version"],
+        artifact_hash=baseline["artifact_hash"],
+        route_snapshot_version=baseline["route_snapshot_version"],
+        route_snapshot_hash=baseline["route_snapshot_hash"],
+        policy_version=policy.version,
+        state=GateState.OPEN.value,
+        revision=1,
+        now=now,
+    )
+    assignment = repository.insert_gate_assignment(
+        id=str(dependencies.random.uuid4()),
+        gate_instance_id=str(gate["id"]),
+        default_reviewer_id=policy.default_reviewer_id,
+        current_reviewer_id=policy.default_reviewer_id,
+        revision=1,
+        now=now,
+    )
+    updated = repository.update_requirement_state(
+        requirement_id,
+        expected_revision=expected_revision,
+        state=target.value,
+        now=now,
+    )
+    if updated is None:
+        raise StaleRequirementRevision(requirement_id)
+    audit(
+        repository,
+        dependencies=dependencies,
+        actor=actor_id(actor),
+        action="requirement.baseline_confirmation.submitted",
+        target_type="GATE_INSTANCE",
+        target_id=str(gate["id"]),
+        reason=(
+            f"policyVersion={policy.version}; reviewer={policy.default_reviewer_id}; "
+            f"requirementRevision={updated['revision']}"
+        ),
+    )
+    return BaselineConfirmationResult(
+        requirement=requirement_dto(updated),
+        gate=gate_instance_dto(gate),
+        assignment=gate_assignment_dto(assignment),
+    )
+
+
+def submit_baseline_confirmation(
+    repository: RequirementRepository,
+    *,
+    requirement_id: str,
+    sdd_baseline_id: str,
+    expected_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    dependencies: RequirementDependencies,
+) -> BaselineConfirmationResult:
+    stable_actor = actor_id(actor)
+    material = dependencies.secret_manager.load()
+    body: dict[str, object] = {
+        "requirementId": requirement_id,
+        "sddBaselineId": sdd_baseline_id,
+        "expectedRevision": expected_revision,
+    }
+    fingerprint = canonical_request_fingerprint(
+        operation="requirement_submit_baseline_confirmation",
+        method="COMMAND",
+        path="requirement.submit-baseline-confirmation",
+        body=body,
+        idempotency_sealing_key=material.idempotency_sealing_key,
+    )
+
+    def command() -> IdempotentResponse:
+        try:
+            confirmation = _submit_baseline_confirmation_once(
+                repository,
+                requirement_id=requirement_id,
+                sdd_baseline_id=sdd_baseline_id,
+                expected_revision=expected_revision,
+                actor=actor,
+                dependencies=dependencies,
+            )
+        except RequirementError as error:
+            _audit_denial(
+                dependencies=dependencies,
+                actor=stable_actor,
+                action="requirement.baseline_confirmation.submit",
+                target_type="REQUIREMENT",
+                target_id=requirement_id,
+                error=error,
+            )
+            raise
+        return IdempotentResponse(
+            status_code=201,
+            body=confirmation.model_dump(mode="json"),
+        )
+
+    try:
+        execution = execute_idempotent(
+            repository,
+            actor=stable_actor,
+            operation="requirement_submit_baseline_confirmation",
+            key=idempotency_key,
+            fingerprint=fingerprint,
+            command=command,
+            now=dependencies.clock.now,
+            new_id=dependencies.random.uuid4,
+            idempotency_sealing_key=material.idempotency_sealing_key,
+        )
+    except IdempotencyConflict as error:
+        _audit_denial(
+            dependencies=dependencies,
+            actor=stable_actor,
+            action="requirement.baseline_confirmation.submit",
+            target_type="REQUIREMENT",
+            target_id=requirement_id,
+            error=error,
+        )
+        raise
+    return BaselineConfirmationResult.model_validate(execution.response.body)
+
+
+def _decision_target(outcome: DecisionOutcome) -> RequirementState:
+    if outcome is DecisionOutcome.APPROVED:
+        return RequirementState.READY
+    if outcome is DecisionOutcome.CHANGES_REQUESTED:
+        return RequirementState.PREPARING
+    return RequirementState.CANCELED
+
+
+def _decide_baseline_once(
+    repository: RequirementRepository,
+    *,
+    requirement_id: str,
+    gate_id: str,
+    outcome: DecisionOutcome,
+    reason: str,
+    expected_revision: int,
+    actor: Any,
+    dependencies: RequirementDependencies,
+) -> BaselineDecisionResult:
+    requirement = repository.requirement_by_id(requirement_id, for_update=True)
+    if requirement is None:
+        raise RequirementNotFound(requirement_id)
+    if requirement["revision"] != expected_revision:
+        raise StaleRequirementRevision(requirement_id)
+    gate = repository.gate_by_id(gate_id, for_update=True)
+    if gate is None or str(gate["requirement_id"]) != requirement_id:
+        raise GateNotFound(gate_id)
+    if GateState(gate["state"]) is not GateState.OPEN:
+        raise GateAlreadyDecided(gate_id)
+    if (
+        gate["requirement_version"] != requirement["requirement_version"]
+        or gate["route_snapshot_version"] != requirement["route_snapshot_version"]
+        or gate["route_snapshot_hash"] != requirement["route_snapshot_hash"]
+    ):
+        raise StaleBaselineSubject(gate_id)
+    assignment = repository.current_gate_assignment(gate_id, for_update=True)
+    if assignment is None:
+        raise RequirementDependencyUnavailable("Gate has no current reviewer assignment")
+    stable_actor = actor_id(actor)
+    if assignment["current_reviewer_id"] != stable_actor:
+        raise GateReviewerMismatch(stable_actor)
+    reviewer_guard = dependencies.reviewer_guard
+    if reviewer_guard is None:
+        raise RequirementDependencyUnavailable("Reviewer eligibility service is unavailable")
+    try:
+        reviewer_eligible = reviewer_guard.can_decide(
+            actor_id=stable_actor,
+            workspace_id=requirement["workspace_id"],
+        )
+    except RequirementError:
+        raise
+    except Exception as error:
+        raise RequirementDependencyUnavailable("Reviewer guard failed closed") from error
+    if not reviewer_eligible:
+        raise GateReviewerIneligible(stable_actor)
+    normalized_reason = _normalized_text(reason, field="decision reason")
+    target = transition_requirement(
+        RequirementState(requirement["state"]),
+        _decision_target(outcome),
+    )
+    now = dependencies.clock.now()
+    decision = repository.insert_decision(
+        id=str(dependencies.random.uuid4()),
+        gate_instance_id=gate_id,
+        gate_assignment_id=str(assignment["id"]),
+        reviewer_id=stable_actor,
+        outcome=outcome.value,
+        reason=normalized_reason,
+        subject_revision=gate["revision"],
+        now=now,
+    )
+    closed_gate = repository.close_gate(
+        gate_id,
+        expected_revision=gate["revision"],
+        now=now,
+    )
+    if closed_gate is None:
+        raise GateAlreadyDecided(gate_id)
+    updated = repository.update_requirement_state(
+        requirement_id,
+        expected_revision=expected_revision,
+        state=target.value,
+        now=now,
+    )
+    if updated is None:
+        raise StaleRequirementRevision(requirement_id)
+    audit(
+        repository,
+        dependencies=dependencies,
+        actor=stable_actor,
+        action="requirement.baseline_confirmation.decided",
+        target_type="GATE_INSTANCE",
+        target_id=gate_id,
+        reason=(
+            f"outcome={outcome.value}; assignmentRevision={assignment['revision']}; "
+            f"requirementRevision={updated['revision']}"
+        ),
+    )
+    return BaselineDecisionResult(
+        requirement=requirement_dto(updated),
+        gate=gate_instance_dto(closed_gate),
+        decision=decision_dto(decision),
+    )
+
+
+def decide_baseline(
+    repository: RequirementRepository,
+    *,
+    requirement_id: str,
+    gate_id: str,
+    outcome: DecisionOutcome,
+    reason: str,
+    expected_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    dependencies: RequirementDependencies,
+) -> BaselineDecisionResult:
+    stable_actor = actor_id(actor)
+    material = dependencies.secret_manager.load()
+    body: dict[str, object] = {
+        "requirementId": requirement_id,
+        "gateId": gate_id,
+        "outcome": outcome.value,
+        "reason": reason,
+        "expectedRevision": expected_revision,
+    }
+    fingerprint = canonical_request_fingerprint(
+        operation="requirement_decide_baseline",
+        method="COMMAND",
+        path="requirement.decide-baseline",
+        body=body,
+        idempotency_sealing_key=material.idempotency_sealing_key,
+    )
+
+    def command() -> IdempotentResponse:
+        try:
+            decided = _decide_baseline_once(
+                repository,
+                requirement_id=requirement_id,
+                gate_id=gate_id,
+                outcome=outcome,
+                reason=reason,
+                expected_revision=expected_revision,
+                actor=actor,
+                dependencies=dependencies,
+            )
+        except RequirementError as error:
+            _audit_denial(
+                dependencies=dependencies,
+                actor=stable_actor,
+                action="requirement.baseline_confirmation.decide",
+                target_type="GATE_INSTANCE",
+                target_id=gate_id,
+                error=error,
+            )
+            raise
+        return IdempotentResponse(status_code=200, body=decided.model_dump(mode="json"))
+
+    try:
+        execution = execute_idempotent(
+            repository,
+            actor=stable_actor,
+            operation="requirement_decide_baseline",
+            key=idempotency_key,
+            fingerprint=fingerprint,
+            command=command,
+            now=dependencies.clock.now,
+            new_id=dependencies.random.uuid4,
+            idempotency_sealing_key=material.idempotency_sealing_key,
+        )
+    except IdempotencyConflict as error:
+        _audit_denial(
+            dependencies=dependencies,
+            actor=stable_actor,
+            action="requirement.baseline_confirmation.decide",
+            target_type="GATE_INSTANCE",
+            target_id=gate_id,
+            error=error,
+        )
+        raise
+    return BaselineDecisionResult.model_validate(execution.response.body)

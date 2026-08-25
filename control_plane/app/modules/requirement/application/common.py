@@ -6,12 +6,19 @@ from control_plane.app.modules.requirement.application.dependencies import (
 )
 from control_plane.app.modules.requirement.domain import (
     AssignmentState,
+    DecisionDto,
+    DecisionOutcome,
     ExecutorType,
+    GateAssignmentDto,
+    GateInstanceDto,
+    GateState,
+    GateType,
     RecordState,
     RepositoryState,
     RequirementDto,
     RequirementState,
     RequirementType,
+    SddBaselineDto,
     WorkItemDto,
     WorkItemState,
 )
@@ -43,6 +50,11 @@ def requirement_dto(row: Any) -> RequirementDto:
         requirement_version=row["requirement_version"],
         required_work_item_set_version=row["required_work_item_set_version"],
         required_work_item_set_hash=row["required_work_item_set_hash"],
+        current_sdd_baseline_id=(
+            None
+            if row["current_sdd_baseline_id"] is None
+            else str(row["current_sdd_baseline_id"])
+        ),
         revision=row["revision"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
@@ -67,6 +79,66 @@ def work_item_dto(row: Any) -> WorkItemDto:
         revision=row["revision"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+    )
+
+
+def sdd_baseline_dto(row: Any) -> SddBaselineDto:
+    return SddBaselineDto(
+        id=str(row["id"]),
+        requirement_id=str(row["requirement_id"]),
+        requirement_version=row["requirement_version"],
+        artifact_id=row["artifact_id"],
+        artifact_version=row["artifact_version"],
+        artifact_hash=row["artifact_hash"],
+        route_snapshot_version=row["route_snapshot_version"],
+        route_snapshot_hash=row["route_snapshot_hash"],
+        created_by=row["created_by"],
+        created_at=row["created_at"],
+    )
+
+
+def gate_instance_dto(row: Any) -> GateInstanceDto:
+    return GateInstanceDto(
+        id=str(row["id"]),
+        gate_type=GateType(row["gate_type"]),
+        requirement_id=str(row["requirement_id"]),
+        requirement_version=row["requirement_version"],
+        sdd_baseline_id=str(row["sdd_baseline_id"]),
+        artifact_id=row["artifact_id"],
+        artifact_version=row["artifact_version"],
+        artifact_hash=row["artifact_hash"],
+        route_snapshot_version=row["route_snapshot_version"],
+        route_snapshot_hash=row["route_snapshot_hash"],
+        policy_version=row["policy_version"],
+        state=GateState(row["state"]),
+        revision=row["revision"],
+        created_at=row["created_at"],
+        decided_at=row["decided_at"],
+    )
+
+
+def gate_assignment_dto(row: Any) -> GateAssignmentDto:
+    return GateAssignmentDto(
+        id=str(row["id"]),
+        gate_instance_id=str(row["gate_instance_id"]),
+        default_reviewer_id=row["default_reviewer_id"],
+        current_reviewer_id=row["current_reviewer_id"],
+        revision=row["revision"],
+        assigned_at=row["assigned_at"],
+        superseded_at=row["superseded_at"],
+    )
+
+
+def decision_dto(row: Any) -> DecisionDto:
+    return DecisionDto(
+        id=str(row["id"]),
+        gate_instance_id=str(row["gate_instance_id"]),
+        gate_assignment_id=str(row["gate_assignment_id"]),
+        reviewer_id=row["reviewer_id"],
+        outcome=DecisionOutcome(row["outcome"]),
+        reason=row["reason"],
+        subject_revision=row["subject_revision"],
+        decided_at=row["decided_at"],
     )
 
 

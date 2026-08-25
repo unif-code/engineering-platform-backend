@@ -1,7 +1,10 @@
 from control_plane.app.modules.requirement.application.commands import (
     create_requirement,
+    decide_baseline,
     record_repository_binding,
+    register_sdd_baseline,
     start_requirement_preparation,
+    submit_baseline_confirmation,
 )
 from control_plane.app.modules.requirement.application.dependencies import (
     RequirementDependencies,
@@ -14,8 +17,11 @@ from control_plane.app.modules.requirement.application.queries import (
 __all__ = [
     "RequirementDependencies",
     "create_requirement",
+    "decide_baseline",
     "get_requirement",
     "list_requirements",
     "record_repository_binding",
+    "register_sdd_baseline",
     "start_requirement_preparation",
+    "submit_baseline_confirmation",
 ]

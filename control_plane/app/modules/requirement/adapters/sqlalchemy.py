@@ -300,3 +300,191 @@ class SqlAlchemyRequirementRepository:
             .mappings()
             .one_or_none()
         )
+
+    def insert_sdd_baseline(self, **values: Any) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "INSERT INTO requirement.sdd_baseline "
+                    "(id, requirement_id, requirement_version, artifact_id, "
+                    "artifact_version, artifact_hash, route_snapshot_version, "
+                    "route_snapshot_hash, created_by, created_at) VALUES "
+                    "(:id, :requirement_id, :requirement_version, :artifact_id, "
+                    ":artifact_version, :artifact_hash, :route_snapshot_version, "
+                    ":route_snapshot_hash, :created_by, :now) RETURNING *"
+                ),
+                values,
+            )
+            .mappings()
+            .one()
+        )
+
+    def set_current_sdd_baseline(
+        self,
+        requirement_id: str,
+        *,
+        baseline_id: str,
+        expected_revision: int,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.requirement SET current_sdd_baseline_id=:baseline_id, "
+                    "revision=revision + 1, updated_at=:now "
+                    "WHERE id=:id AND revision=:expected_revision RETURNING *"
+                ),
+                {
+                    "id": requirement_id,
+                    "baseline_id": baseline_id,
+                    "expected_revision": expected_revision,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def sdd_baseline_by_id(self, baseline_id: str) -> Any:
+        return (
+            self.db.execute(
+                text("SELECT * FROM requirement.sdd_baseline WHERE id=:id"),
+                {"id": baseline_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def sdd_baseline_by_artifact(
+        self,
+        requirement_id: str,
+        artifact_id: str,
+        artifact_version: str,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "SELECT * FROM requirement.sdd_baseline "
+                    "WHERE requirement_id=:requirement_id AND artifact_id=:artifact_id "
+                    "AND artifact_version=:artifact_version ORDER BY created_at, id LIMIT 1"
+                ),
+                {
+                    "requirement_id": requirement_id,
+                    "artifact_id": artifact_id,
+                    "artifact_version": artifact_version,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def insert_gate(self, **values: Any) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "INSERT INTO requirement.gate_instance "
+                    "(id, gate_type, requirement_id, requirement_version, sdd_baseline_id, "
+                    "artifact_id, artifact_version, artifact_hash, route_snapshot_version, "
+                    "route_snapshot_hash, policy_version, state, revision, created_at) VALUES "
+                    "(:id, :gate_type, :requirement_id, :requirement_version, "
+                    ":sdd_baseline_id, :artifact_id, :artifact_version, :artifact_hash, "
+                    ":route_snapshot_version, :route_snapshot_hash, :policy_version, "
+                    ":state, :revision, :now) RETURNING *"
+                ),
+                values,
+            )
+            .mappings()
+            .one()
+        )
+
+    def gate_by_id(self, gate_id: str, *, for_update: bool = False) -> Any:
+        suffix = " FOR UPDATE" if for_update else ""
+        return (
+            self.db.execute(
+                text(f"SELECT * FROM requirement.gate_instance WHERE id=:id{suffix}"),
+                {"id": gate_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def gate_by_baseline_id(self, baseline_id: str) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "SELECT * FROM requirement.gate_instance "
+                    "WHERE sdd_baseline_id=:baseline_id ORDER BY created_at, id LIMIT 1"
+                ),
+                {"baseline_id": baseline_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def insert_gate_assignment(self, **values: Any) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "INSERT INTO requirement.gate_assignment "
+                    "(id, gate_instance_id, default_reviewer_id, current_reviewer_id, "
+                    "revision, assigned_at) VALUES "
+                    "(:id, :gate_instance_id, :default_reviewer_id, "
+                    ":current_reviewer_id, :revision, :now) RETURNING *"
+                ),
+                values,
+            )
+            .mappings()
+            .one()
+        )
+
+    def current_gate_assignment(self, gate_id: str, *, for_update: bool = False) -> Any:
+        suffix = " FOR UPDATE" if for_update else ""
+        return (
+            self.db.execute(
+                text(
+                    "SELECT * FROM requirement.gate_assignment "
+                    "WHERE gate_instance_id=:gate_id AND superseded_at IS NULL"
+                    f"{suffix}"
+                ),
+                {"gate_id": gate_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def insert_decision(self, **values: Any) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "INSERT INTO requirement.decision "
+                    "(id, gate_instance_id, gate_assignment_id, reviewer_id, outcome, "
+                    "reason, subject_revision, decided_at) VALUES "
+                    "(:id, :gate_instance_id, :gate_assignment_id, :reviewer_id, :outcome, "
+                    ":reason, :subject_revision, :now) RETURNING *"
+                ),
+                values,
+            )
+            .mappings()
+            .one()
+        )
+
+    def close_gate(
+        self,
+        gate_id: str,
+        *,
+        expected_revision: int,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.gate_instance SET state='DECIDED', "
+                    "revision=revision + 1, decided_at=:now "
+                    "WHERE id=:id AND revision=:expected_revision AND state='OPEN' "
+                    "RETURNING *"
+                ),
+                {"id": gate_id, "expected_revision": expected_revision, "now": now},
+            )
+            .mappings()
+            .one_or_none()
+        )

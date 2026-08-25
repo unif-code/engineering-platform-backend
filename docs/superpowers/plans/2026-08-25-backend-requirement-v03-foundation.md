@@ -418,15 +418,15 @@ git commit -m "feat(requirement): query and bind work items"
 - Consumes: `GatePolicySnapshot(version, default_reviewer_id)`。
 - Produces: `register_sdd_baseline`、`submit_baseline_confirmation`、`decide_baseline`。
 
-- [ ] **Step 1: 写 Artifact/subject/assignee/CAS 的失败测试**
+- [x] **Step 1: 写 Artifact/subject/assignee/CAS 的失败测试**
 
 必须覆盖 unavailable/untrusted Artifact、Artifact hash 变化、过期 Requirement revision、非当前 reviewer、决策时资格失效、Decision 重复和新 Artifact 新 Gate。
 
-- [ ] **Step 2: 运行测试确认 RED**
+- [x] **Step 2: 运行测试确认 RED**
 
 Run: `python -m pytest tests/requirement/test_baseline_gate.py -q`
 
-- [ ] **Step 3: 实现 baseline 与 Gate 精确快照**
+- [x] **Step 3: 实现 baseline 与 Gate 精确快照**
 
 Gate 插入字段必须完整：
 
@@ -445,7 +445,7 @@ gate = repository.insert_gate(
 )
 ```
 
-- [ ] **Step 4: 实现追加式 Decision 与状态推进**
+- [x] **Step 4: 实现追加式 Decision 与状态推进**
 
 结论语义：
 
@@ -459,7 +459,7 @@ target = {
 
 插入 Decision 与 Requirement CAS 更新在同一事务中；旧 Decision 永不更新或删除。
 
-- [ ] **Step 5: 运行测试确认 GREEN 并提交**
+- [x] **Step 5: 运行测试确认 GREEN 并提交**
 
 Run: `python -m pytest tests/requirement/test_baseline_gate.py tests/requirement/test_commands.py -q`
 
