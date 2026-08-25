@@ -371,6 +371,24 @@ def test_access_governance_closes_the_real_cli_http_grant_and_audit_loop(
         ("identity.account.manage", "PLATFORM", None, "SYSTEM_BOOTSTRAP"),
         ("platform.authorization.manage", "PLATFORM", None, "SYSTEM_BOOTSTRAP"),
     ]
+    requirement_denied = admin.post(
+        "/api/v1/requirements",
+        json={
+            "workspaceId": "20000000-0000-0000-0000-000000000301",
+            "type": "feat",
+            "title": "V0.3 must use an explicit grant",
+            "description": "Super Admin does not implicitly activate V0.3 capabilities.",
+            "acceptanceCriteria": ["The request is denied before a V0.3 grant exists."],
+            "initialRepositoryId": "repository-1",
+        },
+        headers={
+            **SAME_ORIGIN,
+            "Idempotency-Key": "e2e-requirement-super-admin-denied",
+            "X-Request-ID": "req-e2erequirementdenied",
+        },
+    )
+    assert requirement_denied.status_code == 403
+    assert requirement_denied.json()["title"] == "Forbidden"
     with owner.connect() as db:
         bootstrap_audits = (
             db.execute(
@@ -545,6 +563,7 @@ def test_access_governance_closes_the_real_cli_http_grant_and_audit_loop(
         "req-e2egrant": ("authorization.grant.created",),
         "req-e2erevoke": ("authorization.grant.revoked",),
         "req-e2edeniedafter": ("authorization.decision",),
+        "req-e2erequirementdenied": ("authorization.decision",),
     }
     assert _audit_actions(owner) == expected
     for audit_query_index, (request_id, actions) in enumerate(expected.items(), start=1):

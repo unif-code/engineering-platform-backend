@@ -16,6 +16,24 @@ def test_render_is_deterministic_and_versioned() -> None:
     assert f'"version": "{__version__}"' in first
 
 
+def test_render_contains_the_typed_requirement_contract() -> None:
+    schema = json.loads(render())
+    requirement = schema["components"]["schemas"]["RequirementResponseDto"]
+
+    assert requirement["properties"]["workspaceId"]["format"] == "uuid"
+    assert requirement["properties"]["state"] == {
+        "$ref": "#/components/schemas/RequirementState"
+    }
+    assert requirement["properties"]["createdAt"]["format"] == "date-time"
+    assert set(schema["paths"]) >= {
+        "/api/v1/requirements",
+        "/api/v1/requirements/{requirementId}",
+        "/api/v1/requirements/{requirementId}/sdd-baselines",
+        "/api/v1/requirements/{requirementId}/baseline-confirmations",
+        "/api/v1/requirements/{requirementId}/baseline-decisions",
+    }
+
+
 # 真正的守门用例：不先导出，直接校验入库件。
 # 任何改了路由/DTO 却没重新导出 openapi.json 的提交都会在这里失败。
 # 本文件没有任何用例写入库件（写模式一律落到 tmp_path），因此不存在执行顺序依赖；

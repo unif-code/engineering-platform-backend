@@ -61,7 +61,7 @@ def test_fresh_database_upgrade_heads_installs_all_visible_module_heads(
             "0010_identity_policy_reauth",
             "0001_organization_base",
             "0001_workspace_base",
-            "0005_authorization_v02_routes",
+            "0006_auth_v03_routes",
             "0001_requirement_base",
         }
         # Alembic replaces dependency heads in the version table with the revision
@@ -70,7 +70,7 @@ def test_fresh_database_upgrade_heads_installs_all_visible_module_heads(
         assert installed_heads == {
             "0008_audit_requirement_grant",
             "0010_identity_policy_reauth",
-            "0005_authorization_v02_routes",
+            "0006_auth_v03_routes",
         }
         assert set(inspect(engine).get_table_names(schema="organization")) == {
             "idempotency_record",

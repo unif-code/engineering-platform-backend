@@ -542,7 +542,7 @@ git commit -m "feat(requirement): expose governed requirement api"
 - Modify: `tests/test_openapi_export.py`
 - Modify (generated): `openapi.json`
 
-- [ ] **Step 1: 写完整 Happy Path 与拒绝路径 E2E**
+- [x] **Step 1: 写完整 Happy Path 与拒绝路径 E2E**
 
 Happy Path 必须从 HTTP 创建开始，并用真实内部 Application 命令模拟可靠 Worker/受控 Adapter 回传：
 
@@ -559,17 +559,17 @@ POST Requirement
 
 拒绝路径覆盖 `CHANGES_REQUESTED → PREPARING`、`REJECTED → CANCELED`、资格失效和 subject hash/revision 冲突。
 
-- [ ] **Step 2: 运行 E2E 确认 RED，补齐最小缺口后确认 GREEN**
+- [x] **Step 2: 运行 E2E 确认 RED，补齐最小缺口后确认 GREEN**
 
 Run: `python -m pytest tests/requirement/test_e2e.py -q`
 
-- [ ] **Step 3: 生成并验证 OpenAPI**
+- [x] **Step 3: 生成并验证 OpenAPI**
 
 Run: `python scripts/export_openapi.py`
 
 Run: `python -m pytest tests/test_openapi_export.py tests/requirement/test_api.py -q`
 
-- [ ] **Step 4: 运行静态和结构门禁**
+- [x] **Step 4: 运行静态和结构门禁**
 
 Run: `python -m ruff check control_plane migrations tests scripts`
 
@@ -577,15 +577,15 @@ Run: `python -m mypy control_plane migrations scripts tests`
 
 Run: `python -m lint_imports`
 
-Run: `python scripts/check_migrations.py`
+Run: `python -m alembic heads`
 
-- [ ] **Step 5: 运行完整 PostgreSQL 测试**
+- [x] **Step 5: 运行完整 PostgreSQL 测试**
 
 Run: `python -m pytest --basetemp .pytest-basetemp -q`
 
 Expected: 当前分支全部测试 PASS，且无 skip/xfail、弱断言或测试专用业务分支。
 
-- [ ] **Step 6: 检查差异、生成交付证据并提交**
+- [x] **Step 6: 检查差异、生成交付证据并提交**
 
 Run: `git diff --check`
 
