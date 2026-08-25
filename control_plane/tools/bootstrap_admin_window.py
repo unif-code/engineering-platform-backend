@@ -1,17 +1,28 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import sys
 import threading
 import time
 from collections.abc import Callable
-from typing import TextIO
+from typing import Protocol, TextIO, cast
 
 from control_plane.tools import bootstrap_admin
 
 _DEFAULT_CLOSE_AFTER_SECONDS = 180
+
+
+class _WindowsConsole(Protocol):
+    def kbhit(self) -> bool: ...
+
+    def getwch(self) -> str: ...
+
+
+def _windows_console() -> _WindowsConsole:
+    return cast(_WindowsConsole, importlib.import_module("msvcrt"))
 
 
 def _positive_seconds(value: str) -> int:
@@ -37,11 +48,11 @@ def _parser() -> argparse.ArgumentParser:
 
 def _wait_for_enter_or_timeout(seconds: float) -> None:
     if os.name == "nt" and sys.stdin.isatty():
-        import msvcrt
+        console = _windows_console()
 
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
-            if msvcrt.kbhit() and msvcrt.getwch() in {"\r", "\n"}:
+            if console.kbhit() and console.getwch() in {"\r", "\n"}:
                 return
             time.sleep(min(0.1, max(0.0, deadline - time.monotonic())))
         return
