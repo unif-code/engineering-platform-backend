@@ -52,9 +52,7 @@ def requirement_dto(row: Any) -> RequirementDto:
         required_work_item_set_version=row["required_work_item_set_version"],
         required_work_item_set_hash=row["required_work_item_set_hash"],
         current_sdd_baseline_id=(
-            None
-            if row["current_sdd_baseline_id"] is None
-            else str(row["current_sdd_baseline_id"])
+            None if row["current_sdd_baseline_id"] is None else str(row["current_sdd_baseline_id"])
         ),
         revision=row["revision"],
         created_at=row["created_at"],

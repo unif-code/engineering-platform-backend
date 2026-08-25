@@ -46,12 +46,15 @@ def test_authorization_0006_installs_workspace_requirement_route_without_super_a
 
         command.downgrade(config, "0005_authorization_v02_routes")
         with authorization_owner_engine.connect() as db:
-            assert db.execute(
-                text(
-                    "SELECT count(*) FROM \"authorization\".route_registry "
-                    "WHERE route_key='requirements'"
-                )
-            ).scalar_one() == 0
+            assert (
+                db.execute(
+                    text(
+                        'SELECT count(*) FROM "authorization".route_registry '
+                        "WHERE route_key='requirements'"
+                    )
+                ).scalar_one()
+                == 0
+            )
     finally:
         command.upgrade(config, "heads")
 

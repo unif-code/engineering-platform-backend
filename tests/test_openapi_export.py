@@ -21,9 +21,7 @@ def test_render_contains_the_typed_requirement_contract() -> None:
     requirement = schema["components"]["schemas"]["RequirementResponseDto"]
 
     assert requirement["properties"]["workspaceId"]["format"] == "uuid"
-    assert requirement["properties"]["state"] == {
-        "$ref": "#/components/schemas/RequirementState"
-    }
+    assert requirement["properties"]["state"] == {"$ref": "#/components/schemas/RequirementState"}
     assert requirement["properties"]["createdAt"]["format"] == "date-time"
     assert set(schema["paths"]) >= {
         "/api/v1/requirements",

@@ -230,8 +230,7 @@ def create_authorization_router(
     ) -> list[NavigationItemDto] | Response:
         runtime = runtime_provider()
         effective_routes = {
-            (item.capability, item.scope.scope_type.value)
-            for item in principal.capabilities
+            (item.capability, item.scope.scope_type.value) for item in principal.capabilities
         }
         try:
             with runtime.engine.connect() as db:

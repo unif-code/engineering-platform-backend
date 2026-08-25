@@ -15,8 +15,7 @@ _VALUES = """
 
 def upgrade() -> None:
     op.execute(
-        'ALTER TABLE "authorization".route_registry '
-        "DROP CONSTRAINT ck_authorization_route_scope"
+        'ALTER TABLE "authorization".route_registry DROP CONSTRAINT ck_authorization_route_scope'
     )
     op.execute(
         'ALTER TABLE "authorization".route_registry '
@@ -81,8 +80,7 @@ def downgrade() -> None:
         """
     )
     op.execute(
-        'ALTER TABLE "authorization".route_registry '
-        "DROP CONSTRAINT ck_authorization_route_scope"
+        'ALTER TABLE "authorization".route_registry DROP CONSTRAINT ck_authorization_route_scope'
     )
     op.execute(
         'ALTER TABLE "authorization".route_registry '

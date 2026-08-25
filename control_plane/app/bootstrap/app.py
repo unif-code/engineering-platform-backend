@@ -403,9 +403,7 @@ def authorization_capability_guard(
 def create_app(
     *,
     identity_runtime_provider: Callable[[], IdentityHttpRuntime] = identity_http_runtime,
-    requirement_runtime_provider: Callable[
-        [], RequirementHttpRuntime
-    ] = requirement_http_runtime,
+    requirement_runtime_provider: Callable[[], RequirementHttpRuntime] = requirement_http_runtime,
 ) -> FastAPI:
     app = FastAPI(
         title="engineering-platform-control-plane",
