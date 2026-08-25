@@ -43,6 +43,21 @@ class ExecutorType(StrEnum):
     HUMAN = "HUMAN"
 
 
+class GateType(StrEnum):
+    REQUIREMENT_BASELINE_CONFIRMATION = "REQUIREMENT_BASELINE_CONFIRMATION"
+
+
+class GateState(StrEnum):
+    OPEN = "OPEN"
+    DECIDED = "DECIDED"
+
+
+class DecisionOutcome(StrEnum):
+    APPROVED = "APPROVED"
+    CHANGES_REQUESTED = "CHANGES_REQUESTED"
+    REJECTED = "REJECTED"
+
+
 class RequirementDto(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -61,6 +76,7 @@ class RequirementDto(BaseModel):
     requirement_version: int
     required_work_item_set_version: int
     required_work_item_set_hash: str
+    current_sdd_baseline_id: str | None
     revision: int
     created_at: datetime
     updated_at: datetime
@@ -106,3 +122,86 @@ class RequirementPage(BaseModel):
 
     items: tuple[RequirementDto, ...]
     next_cursor: str | None
+
+
+class SddBaselineDto(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    requirement_id: str
+    requirement_version: int
+    artifact_id: str
+    artifact_version: str
+    artifact_hash: str
+    route_snapshot_version: int
+    route_snapshot_hash: str
+    created_by: str
+    created_at: datetime
+
+
+class RegisterSddBaselineResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    requirement: RequirementDto
+    baseline: SddBaselineDto
+
+
+class GateInstanceDto(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    gate_type: GateType
+    requirement_id: str
+    requirement_version: int
+    sdd_baseline_id: str
+    artifact_id: str
+    artifact_version: str
+    artifact_hash: str
+    route_snapshot_version: int
+    route_snapshot_hash: str
+    policy_version: int
+    state: GateState
+    revision: int
+    created_at: datetime
+    decided_at: datetime | None
+
+
+class GateAssignmentDto(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    gate_instance_id: str
+    default_reviewer_id: str
+    current_reviewer_id: str
+    revision: int
+    assigned_at: datetime
+    superseded_at: datetime | None
+
+
+class DecisionDto(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    gate_instance_id: str
+    gate_assignment_id: str
+    reviewer_id: str
+    outcome: DecisionOutcome
+    reason: str
+    subject_revision: int
+    decided_at: datetime
+
+
+class BaselineConfirmationResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    requirement: RequirementDto
+    gate: GateInstanceDto
+    assignment: GateAssignmentDto
+
+
+class BaselineDecisionResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    requirement: RequirementDto
+    gate: GateInstanceDto
+    decision: DecisionDto

@@ -5,6 +5,7 @@ from sqlalchemy import Connection, Engine, inspect, text
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 
 from control_plane.app.shared.db.settings import DbSettings
+from tests.requirement.conftest import IsolatedRequirementDatabase
 
 pytestmark = pytest.mark.integration
 
@@ -128,6 +129,44 @@ def test_gate_cannot_claim_artifact_different_from_its_sdd_baseline(
             )
 
 
+def test_current_sdd_baseline_must_belong_to_the_same_requirement(
+    isolated_requirement_rw_engine: Engine,
+) -> None:
+    with isolated_requirement_rw_engine.begin() as db:
+        _insert_requirement_for_integrity_test(db)
+        db.execute(
+            text(
+                "INSERT INTO requirement.requirement "
+                "(id, workspace_id, type, title, description, acceptance_criteria, "
+                "created_by, initial_repository_id, route_snapshot_version, "
+                "route_snapshot_hash, state, record_state, requirement_version, "
+                "required_work_item_set_version, required_work_item_set_hash, revision) "
+                "VALUES ('10000000-0000-0000-0000-000000000209', "
+                "'20000000-0000-0000-0000-000000000209', 'feat', 'Other', "
+                "'Other requirement', '[\"accepted\"]', 'employee-2', 'repository-2', 1, "
+                "'sha256:route-2', 'PREPARING', 'ACTIVE', 1, 1, 'sha256:set-2', 1)"
+            )
+        )
+        db.execute(
+            text(
+                "INSERT INTO requirement.sdd_baseline "
+                "(id, requirement_id, requirement_version, artifact_id, artifact_version, "
+                "artifact_hash, route_snapshot_version, route_snapshot_hash, created_by) "
+                "VALUES ('10000000-0000-0000-0000-000000000210', "
+                "'10000000-0000-0000-0000-000000000209', 1, 'artifact-2', 'version-1', "
+                "'sha256:artifact-2', 1, 'sha256:route-2', 'employee-2')"
+            )
+        )
+        with pytest.raises(IntegrityError):
+            db.execute(
+                text(
+                    "UPDATE requirement.requirement SET current_sdd_baseline_id="
+                    "'10000000-0000-0000-0000-000000000210' "
+                    "WHERE id='10000000-0000-0000-0000-000000000201'"
+                )
+            )
+
+
 def test_decision_assignment_must_belong_to_the_same_gate(
     isolated_requirement_rw_engine: Engine,
 ) -> None:
@@ -167,21 +206,21 @@ def test_decision_assignment_must_belong_to_the_same_gate(
 
 
 def test_requirement_rw_has_only_expected_module_and_audit_privileges(
-    requirement_rw_engine: Engine,
-    requirement_owner_engine: Engine,
+    isolated_requirement_rw_engine: Engine,
+    isolated_requirement_database: IsolatedRequirementDatabase,
 ) -> None:
     expected = {
         "requirement": {"SELECT", "INSERT", "UPDATE"},
         "work_item": {"SELECT", "INSERT", "UPDATE"},
         "sdd_baseline": {"SELECT", "INSERT"},
-        "gate_instance": {"SELECT", "INSERT", "UPDATE"},
-        "gate_assignment": {"SELECT", "INSERT", "UPDATE"},
+        "gate_instance": {"SELECT", "INSERT"},
+        "gate_assignment": {"SELECT", "INSERT"},
         "decision": {"SELECT", "INSERT"},
         "idempotency_record": {"SELECT", "INSERT", "UPDATE"},
         "outbox_message": {"SELECT", "INSERT", "UPDATE"},
     }
     privileges = ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER")
-    with requirement_rw_engine.connect() as db:
+    with isolated_requirement_rw_engine.connect() as db:
         actual = {
             table_name: {
                 privilege
@@ -207,7 +246,28 @@ def test_requirement_rw_has_only_expected_module_and_audit_privileges(
                 {"privilege": privilege},
             ).scalar_one()
         }
-    with requirement_owner_engine.connect() as db:
+        column_updates = {
+            table_name: {
+                column_name
+                for column_name in db.execute(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_schema='requirement' AND table_name=:table_name"
+                    ),
+                    {"table_name": table_name},
+                ).scalars()
+                if db.execute(
+                    text(
+                        "SELECT has_column_privilege("
+                        "'requirement_rw', 'requirement.' || :table_name, "
+                        ":column_name, 'UPDATE')"
+                    ),
+                    {"table_name": table_name, "column_name": column_name},
+                ).scalar_one()
+            }
+            for table_name in ("gate_instance", "gate_assignment")
+        }
+    with isolated_requirement_database.owner.connect() as db:
         cross_module = {
             table_name: db.execute(
                 text("SELECT has_table_privilege('requirement_rw', :table_name, 'SELECT')"),
@@ -226,6 +286,10 @@ def test_requirement_rw_has_only_expected_module_and_audit_privileges(
 
     assert actual == expected
     assert schema_privileges == {"USAGE"}
+    assert column_updates == {
+        "gate_instance": {"state", "revision", "decided_at"},
+        "gate_assignment": {"superseded_at"},
+    }
     assert cross_module == {
         "identity.account": False,
         "workspace.workspace": False,

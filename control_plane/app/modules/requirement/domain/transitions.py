@@ -46,6 +46,38 @@ class RepositoryBindingConflict(RequirementError):
     pass
 
 
+class RequirementDependencyUnavailable(RequirementError):
+    pass
+
+
+class ArtifactUnavailable(RequirementError):
+    pass
+
+
+class SddBaselineNotFound(RequirementError):
+    pass
+
+
+class StaleBaselineSubject(RequirementError):
+    pass
+
+
+class GateNotFound(RequirementError):
+    pass
+
+
+class GateAlreadyDecided(RequirementError):
+    pass
+
+
+class GateReviewerMismatch(RequirementError):
+    pass
+
+
+class GateReviewerIneligible(RequirementError):
+    pass
+
+
 _FIRST_BATCH_TRANSITIONS = {
     RequirementState.CREATED: {RequirementState.PREPARING, RequirementState.CANCELED},
     RequirementState.PREPARING: {
