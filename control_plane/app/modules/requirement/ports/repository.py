@@ -50,6 +50,24 @@ class RequirementRepository(Protocol):
 
     def work_items(self, requirement_id: str) -> list[Any]: ...
 
+    def work_item_by_id(
+        self,
+        work_item_id: str,
+        *,
+        for_update: bool = False,
+    ) -> Any: ...
+
+    def bind_work_item(
+        self,
+        work_item_id: str,
+        *,
+        expected_revision: int,
+        base_commit_sha: str,
+        task_branch: str,
+        state: str,
+        now: datetime,
+    ) -> Any: ...
+
     def insert_outbox(self, **values: Any) -> Any: ...
 
     def outbox_by_aggregate(

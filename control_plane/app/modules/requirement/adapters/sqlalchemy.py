@@ -128,23 +128,28 @@ class SqlAlchemyRequirementRepository:
         after_id: str | None,
         limit: int,
     ) -> list[Any]:
-        return list(
-            self.db.execute(
-                text(
-                    "SELECT * FROM requirement.requirement "
-                    "WHERE workspace_id=:workspace_id AND ("
-                    ":after_created_at IS NULL OR (created_at, id) > "
-                    "(:after_created_at, CAST(:after_id AS UUID))) "
-                    "ORDER BY created_at, id LIMIT :limit"
-                ),
-                {
-                    "workspace_id": workspace_id,
-                    "after_created_at": after_created_at,
-                    "after_id": after_id,
-                    "limit": limit,
-                },
-            ).mappings()
-        )
+        if after_created_at is None:
+            statement = text(
+                "SELECT * FROM requirement.requirement WHERE workspace_id=:workspace_id "
+                "ORDER BY created_at, id LIMIT :limit"
+            )
+            parameters: dict[str, object] = {
+                "workspace_id": workspace_id,
+                "limit": limit,
+            }
+        else:
+            statement = text(
+                "SELECT * FROM requirement.requirement WHERE workspace_id=:workspace_id "
+                "AND (created_at, id) > (:after_created_at, CAST(:after_id AS UUID)) "
+                "ORDER BY created_at, id LIMIT :limit"
+            )
+            parameters = {
+                "workspace_id": workspace_id,
+                "after_created_at": after_created_at,
+                "after_id": after_id,
+                "limit": limit,
+            }
+        return list(self.db.execute(statement, parameters).mappings())
 
     def insert_work_item(self, **values: Any) -> Any:
         parameters = {
@@ -181,6 +186,54 @@ class SqlAlchemyRequirementRepository:
                 ),
                 {"requirement_id": requirement_id},
             ).mappings()
+        )
+
+    def work_item_by_id(
+        self,
+        work_item_id: str,
+        *,
+        for_update: bool = False,
+    ) -> Any:
+        suffix = " FOR UPDATE" if for_update else ""
+        return (
+            self.db.execute(
+                text(f"SELECT * FROM requirement.work_item WHERE id=:id{suffix}"),
+                {"id": work_item_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def bind_work_item(
+        self,
+        work_item_id: str,
+        *,
+        expected_revision: int,
+        base_commit_sha: str,
+        task_branch: str,
+        state: str,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.work_item SET repository_state='BOUND', "
+                    "base_commit_sha=:base_commit_sha, task_branch=:task_branch, state=:state, "
+                    "revision=revision + 1, updated_at=:now "
+                    "WHERE id=:id AND revision=:expected_revision "
+                    "AND repository_state='WAITING_REPOSITORY' RETURNING *"
+                ),
+                {
+                    "id": work_item_id,
+                    "expected_revision": expected_revision,
+                    "base_commit_sha": base_commit_sha,
+                    "task_branch": task_branch,
+                    "state": state,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one_or_none()
         )
 
     def insert_outbox(self, **values: Any) -> Any:

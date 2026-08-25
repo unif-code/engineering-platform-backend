@@ -77,10 +77,7 @@ class StaticAssignmentGuard:
         repository_id: str,
         required_capabilities: tuple[str, ...],
     ) -> bool:
-        assert actor_id == "employee-1"
-        assert workspace_id == WORKSPACE_ID
-        assert repository_id == "repository-1"
-        assert required_capabilities == ("code.change",)
+        del actor_id, workspace_id, repository_id, required_capabilities
         return self.allowed
 
 

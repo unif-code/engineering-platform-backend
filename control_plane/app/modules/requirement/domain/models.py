@@ -92,3 +92,17 @@ class CreateRequirementResult(BaseModel):
 
     requirement: RequirementDto
     work_item: WorkItemDto
+
+
+class RequirementDetailsDto(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    requirement: RequirementDto
+    work_items: tuple[WorkItemDto, ...]
+
+
+class RequirementPage(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    items: tuple[RequirementDto, ...]
+    next_cursor: str | None

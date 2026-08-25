@@ -365,15 +365,15 @@ git commit -m "feat(requirement): create governed requirements"
 - Cursor: base64url 编码的不可解释 `{createdAt,id}` 游标；查询固定 `ORDER BY created_at, id`。
 - Internal binding command: 只接受受控 Adapter identity，不暴露 HTTP route。
 
-- [ ] **Step 1: 写 Workspace 隔离、稳定 cursor 和绑定状态失败测试**
+- [x] **Step 1: 写 Workspace 隔离、稳定 cursor 和绑定状态失败测试**
 
 覆盖其他 Workspace 不可见、无效 cursor Fail Closed、相同时间按 ID 稳定翻页、重复 Binding 回传幂等、冲突 base commit/branch 拒绝。
 
-- [ ] **Step 2: 运行测试确认 RED**
+- [x] **Step 2: 运行测试确认 RED**
 
 Run: `python -m pytest tests/requirement/test_queries.py tests/requirement/test_commands.py -q`
 
-- [ ] **Step 3: 实现查询和内部绑定回传**
+- [x] **Step 3: 实现查询和内部绑定回传**
 
 Binding Ready 保存不可变 `repositoryId/baseCommitSha/taskBranch`；只有负责人有效时 WorkItem 才进入 READY：
 
@@ -391,7 +391,7 @@ repository.bind_work_item(
 )
 ```
 
-- [ ] **Step 4: 运行测试确认 GREEN 并提交**
+- [x] **Step 4: 运行测试确认 GREEN 并提交**
 
 Run: `python -m pytest tests/requirement/test_queries.py tests/requirement/test_commands.py -q`
 
