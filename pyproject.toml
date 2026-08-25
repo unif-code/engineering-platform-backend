@@ -69,6 +69,7 @@ containers = [
   "control_plane.app.modules.workspace",
   "control_plane.app.modules.authorization",
   "control_plane.app.modules.configuration",
+  "control_plane.app.modules.requirement",
 ]
 exhaustive = false
 
@@ -97,6 +98,11 @@ forbidden_modules = [
   "control_plane.app.modules.authorization.domain",
   "control_plane.app.modules.authorization.ports",
   "control_plane.app.modules.authorization.adapters",
+  "control_plane.app.modules.requirement.api",
+  "control_plane.app.modules.requirement.application",
+  "control_plane.app.modules.requirement.domain",
+  "control_plane.app.modules.requirement.ports",
+  "control_plane.app.modules.requirement.adapters",
 ]
 # Facade 再导出是合法路径：只禁直连深层，不禁经由公开入口 __init__ 的间接链。
 allow_indirect_imports = true
@@ -126,6 +132,11 @@ forbidden_modules = [
   "control_plane.app.modules.authorization.domain",
   "control_plane.app.modules.authorization.ports",
   "control_plane.app.modules.authorization.adapters",
+  "control_plane.app.modules.requirement.api",
+  "control_plane.app.modules.requirement.application",
+  "control_plane.app.modules.requirement.domain",
+  "control_plane.app.modules.requirement.ports",
+  "control_plane.app.modules.requirement.adapters",
 ]
 # Facade 再导出是合法路径：只禁直连深层，不禁经由公开入口 __init__ 的间接链。
 allow_indirect_imports = true
@@ -155,6 +166,11 @@ forbidden_modules = [
   "control_plane.app.modules.authorization.domain",
   "control_plane.app.modules.authorization.ports",
   "control_plane.app.modules.authorization.adapters",
+  "control_plane.app.modules.requirement.api",
+  "control_plane.app.modules.requirement.application",
+  "control_plane.app.modules.requirement.domain",
+  "control_plane.app.modules.requirement.ports",
+  "control_plane.app.modules.requirement.adapters",
 ]
 allow_indirect_imports = true
 
@@ -183,6 +199,11 @@ forbidden_modules = [
   "control_plane.app.modules.authorization.domain",
   "control_plane.app.modules.authorization.ports",
   "control_plane.app.modules.authorization.adapters",
+  "control_plane.app.modules.requirement.api",
+  "control_plane.app.modules.requirement.application",
+  "control_plane.app.modules.requirement.domain",
+  "control_plane.app.modules.requirement.ports",
+  "control_plane.app.modules.requirement.adapters",
 ]
 allow_indirect_imports = true
 
@@ -211,6 +232,11 @@ forbidden_modules = [
   "control_plane.app.modules.workspace.domain",
   "control_plane.app.modules.workspace.ports",
   "control_plane.app.modules.workspace.adapters",
+  "control_plane.app.modules.requirement.api",
+  "control_plane.app.modules.requirement.application",
+  "control_plane.app.modules.requirement.domain",
+  "control_plane.app.modules.requirement.ports",
+  "control_plane.app.modules.requirement.adapters",
 ]
 allow_indirect_imports = true
 
@@ -230,6 +256,7 @@ source_modules = [
   "control_plane.app.modules.workspace.domain",
   "control_plane.app.modules.authorization.domain",
   "control_plane.app.modules.configuration.domain",
+  "control_plane.app.modules.requirement.domain",
 ]
 forbidden_modules = ["control_plane.app.shared.api"]
 
@@ -242,6 +269,7 @@ source_modules = [
   "control_plane.app.modules.organization",
   "control_plane.app.modules.workspace",
   "control_plane.app.modules.authorization",
+  "control_plane.app.modules.requirement",
 ]
 forbidden_modules = [
   "control_plane.app.modules.configuration.api",
@@ -256,6 +284,44 @@ allow_indirect_imports = true
 name = "configuration must use other modules through package-root Facades"
 type = "forbidden"
 source_modules = ["control_plane.app.modules.configuration"]
+forbidden_modules = [
+  "control_plane.app.modules.identity.api",
+  "control_plane.app.modules.identity.application",
+  "control_plane.app.modules.identity.domain",
+  "control_plane.app.modules.identity.ports",
+  "control_plane.app.modules.identity.adapters",
+  "control_plane.app.modules.audit.api",
+  "control_plane.app.modules.audit.application",
+  "control_plane.app.modules.audit.domain",
+  "control_plane.app.modules.audit.ports",
+  "control_plane.app.modules.audit.adapters",
+  "control_plane.app.modules.organization.api",
+  "control_plane.app.modules.organization.application",
+  "control_plane.app.modules.organization.domain",
+  "control_plane.app.modules.organization.ports",
+  "control_plane.app.modules.organization.adapters",
+  "control_plane.app.modules.workspace.api",
+  "control_plane.app.modules.workspace.application",
+  "control_plane.app.modules.workspace.domain",
+  "control_plane.app.modules.workspace.ports",
+  "control_plane.app.modules.workspace.adapters",
+  "control_plane.app.modules.authorization.api",
+  "control_plane.app.modules.authorization.application",
+  "control_plane.app.modules.authorization.domain",
+  "control_plane.app.modules.authorization.ports",
+  "control_plane.app.modules.authorization.adapters",
+  "control_plane.app.modules.requirement.api",
+  "control_plane.app.modules.requirement.application",
+  "control_plane.app.modules.requirement.domain",
+  "control_plane.app.modules.requirement.ports",
+  "control_plane.app.modules.requirement.adapters",
+]
+allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "requirement must use business modules through package-root Facades"
+type = "forbidden"
+source_modules = ["control_plane.app.modules.requirement"]
 forbidden_modules = [
   "control_plane.app.modules.identity.api",
   "control_plane.app.modules.identity.application",
