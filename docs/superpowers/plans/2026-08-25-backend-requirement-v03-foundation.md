@@ -269,7 +269,7 @@ git commit -m "feat(requirement): persist requirement foundations"
 - Produces: `create_requirement(...)` 与 `start_requirement_preparation(...)` Facade。
 - Consumes: current actor、Workspace ID、initial Repository ID 和创建输入；不接收客户端提供的状态/版本/hash。
 
-- [ ] **Step 1: 写创建原子性、负责人解析和 Outbox 的失败测试**
+- [x] **Step 1: 写创建原子性、负责人解析和 Outbox 的失败测试**
 
 关键断言：
 
@@ -295,13 +295,13 @@ assert repository.pending_topics() == ["requirement.repository-binding.requested
 
 另测资格无效时 `UNASSIGNED`、相同 key 重放返回同一结果、相同 key 不同 payload 冲突，以及 Outbox/Audit 任一步抛错时事实全部回滚。
 
-- [ ] **Step 2: 运行命令测试确认 RED**
+- [x] **Step 2: 运行命令测试确认 RED**
 
 Run: `python -m pytest tests/requirement/test_commands.py -q`
 
 Expected: 缺少 Application 命令。
 
-- [ ] **Step 3: 实现创建命令和稳定 fingerprint**
+- [x] **Step 3: 实现创建命令和稳定 fingerprint**
 
 创建命令生成确定性 payload fingerprint，只保存必要元数据：
 
@@ -319,7 +319,7 @@ fingerprint = sha256(canonical_json(payload)).hexdigest()
 
 同一事务依次 claim idempotency、插入 Requirement、首个 WorkItem、Binding request Outbox、Audit、sealed result；任何异常由上层 `engine.begin()` 回滚。
 
-- [ ] **Step 4: 实现内部 preparation 命令**
+- [x] **Step 4: 实现内部 preparation 命令**
 
 `start_requirement_preparation` 锁定 Requirement，确认相同 aggregate/version 的 Binding request 已存在，再以 CAS 推进：
 
@@ -334,13 +334,13 @@ updated = repository.update_requirement_state(
 )
 ```
 
-- [ ] **Step 5: 运行命令、回滚和并发测试确认 GREEN**
+- [x] **Step 5: 运行命令、回滚和并发测试确认 GREEN**
 
 Run: `python -m pytest tests/requirement/test_commands.py -q`
 
 Expected: PASS；同 key 并发只产生一组事实和一条 Outbox。
 
-- [ ] **Step 6: 提交创建链**
+- [x] **Step 6: 提交创建链**
 
 ```bash
 git add control_plane/app/modules/requirement/application control_plane/app/modules/requirement/__init__.py tests/requirement/test_commands.py

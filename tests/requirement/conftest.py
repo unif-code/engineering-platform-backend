@@ -1,6 +1,7 @@
 import os
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from uuid import uuid4
 
 import pytest
@@ -80,10 +81,10 @@ def requirement_rw_engine(requirement_owner_engine: Engine) -> Iterator[Engine]:
 
 
 @pytest.fixture
-def isolated_requirement_rw_engine(
+def isolated_requirement_database(
     requirement_owner_engine: Engine,
     monkeypatch: pytest.MonkeyPatch,
-) -> Iterator[Engine]:
+) -> Iterator["IsolatedRequirementDatabase"]:
     owner_url = make_url(DbSettings().migration_database_url)
     database_name = f"test_requirement_repository_{uuid4().hex}"
     maintenance = create_engine(
@@ -98,9 +99,22 @@ def isolated_requirement_rw_engine(
     isolated_owner = create_engine(target_url, pool_pre_ping=True)
     try:
         with _temporary_requirement_role_engine(isolated_owner) as engine:
-            yield engine
+            yield IsolatedRequirementDatabase(owner=isolated_owner, runtime=engine)
     finally:
         isolated_owner.dispose()
         with maintenance.connect() as db:
             db.execute(text(f'DROP DATABASE "{database_name}"'))
         maintenance.dispose()
+
+
+@dataclass(frozen=True, slots=True)
+class IsolatedRequirementDatabase:
+    owner: Engine
+    runtime: Engine
+
+
+@pytest.fixture
+def isolated_requirement_rw_engine(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> Engine:
+    return isolated_requirement_database.runtime
