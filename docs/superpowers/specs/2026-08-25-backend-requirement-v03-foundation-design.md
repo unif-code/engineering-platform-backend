@@ -1,7 +1,7 @@
 # V0.3 Requirement 领域基础 · 后端设计
 
 - 日期：2026-08-25
-- 状态：设计已获口头确认，待书面复核
+- 状态：用户已确认并授权继续实施（2026-08-25）
 - 仓库：`engineering-platform-backend`
 - 目标分支：`codex/backend-requirement-v0.3`
 - 代码基线：远端 `main@60d2eadb844734c6da108feba6c74e8ef9dda7b0`；本地从文件树等价的 `57225ccef07b7039c7760b1589e69ab70f2ccb88` 分叉，两者 tree 均为 `ef1bf27de0dafdcc9e4c52e1c721141761a6ab10`
