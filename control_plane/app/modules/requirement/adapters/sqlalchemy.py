@@ -360,6 +360,39 @@ class SqlAlchemyRequirementRepository:
             ).mappings()
         )
 
+    def claim_delivery_requests(
+        self,
+        *,
+        limit: int,
+        available_before: datetime,
+        lease_until: datetime,
+    ) -> list[Any]:
+        return list(
+            self.db.execute(
+                text(
+                    "WITH candidates AS ("
+                    "SELECT id FROM requirement.outbox_message "
+                    "WHERE topic IN ("
+                    "'requirement.integration-merge-request.requested', "
+                    "'requirement.integration-merge.requested') "
+                    "AND state IN ('PENDING', 'FAILED') "
+                    "AND available_at <= :available_before "
+                    "ORDER BY available_at, created_at, "
+                    "CASE topic "
+                    "WHEN 'requirement.integration-merge-request.requested' THEN 0 "
+                    "ELSE 1 END, id FOR UPDATE SKIP LOCKED LIMIT :limit"
+                    ") UPDATE requirement.outbox_message AS message "
+                    "SET attempts=message.attempts + 1, available_at=:lease_until "
+                    "FROM candidates WHERE message.id=candidates.id RETURNING message.*"
+                ),
+                {
+                    "available_before": available_before,
+                    "lease_until": lease_until,
+                    "limit": limit,
+                },
+            ).mappings()
+        )
+
     def outbox_by_id(self, message_id: str, *, for_update: bool = False) -> Any:
         suffix = " FOR UPDATE" if for_update else ""
         return (
@@ -385,6 +418,38 @@ class SqlAlchemyRequirementRepository:
                     "FROM requirement.work_item AS work_item "
                     "JOIN requirement.requirement AS requirement "
                     "ON requirement.id=work_item.requirement_id "
+                    "WHERE work_item.id=:work_item_id"
+                ),
+                {"work_item_id": work_item_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def integration_delivery_context(self, work_item_id: str) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "SELECT requirement.id AS requirement_id, "
+                    "requirement.state AS requirement_state, requirement.workspace_id, "
+                    "work_item.id AS work_item_id, work_item.revision AS work_item_revision, "
+                    "work_item.state AS work_item_state, work_item.repository_id, "
+                    "work_item.repository_state, work_item.human_owner_id, "
+                    "work_item.required_capabilities, work_item.base_commit_sha, "
+                    "work_item.task_branch, work_item.integration_delivery_state, "
+                    "work_item.integration_merge_request_binding_id, "
+                    "delivery_request.payload->>'actorId' AS request_actor_id "
+                    "FROM requirement.work_item AS work_item "
+                    "JOIN requirement.requirement AS requirement "
+                    "ON requirement.id=work_item.requirement_id "
+                    "LEFT JOIN LATERAL ("
+                    "SELECT payload FROM requirement.outbox_message "
+                    "WHERE topic IN ("
+                    "'requirement.integration-merge-request.requested', "
+                    "'requirement.integration-merge.requested') "
+                    "AND payload->>'workItemId'=work_item.id::text "
+                    "ORDER BY created_at DESC, id DESC LIMIT 1"
+                    ") AS delivery_request ON TRUE "
                     "WHERE work_item.id=:work_item_id"
                 ),
                 {"work_item_id": work_item_id},

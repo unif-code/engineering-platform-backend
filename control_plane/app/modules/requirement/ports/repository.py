@@ -59,6 +59,8 @@ class RequirementRepository(Protocol):
 
     def repository_binding_context(self, work_item_id: str) -> Any: ...
 
+    def integration_delivery_context(self, work_item_id: str) -> Any: ...
+
     def bind_work_item(
         self,
         work_item_id: str,
@@ -96,6 +98,14 @@ class RequirementRepository(Protocol):
     def insert_outbox(self, **values: Any) -> Any: ...
 
     def claim_binding_requests(
+        self,
+        *,
+        limit: int,
+        available_before: datetime,
+        lease_until: datetime,
+    ) -> list[Any]: ...
+
+    def claim_delivery_requests(
         self,
         *,
         limit: int,

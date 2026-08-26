@@ -6,6 +6,8 @@ from typing import Any
 from sqlalchemy import Connection
 
 from control_plane.app.modules.requirement.application import (
+    IntegrationDeliveryMessageInvalid,
+    IntegrationDeliveryRequestMissing,
     RequirementDependencies,
     WorkItemActorDenied,
     WorkItemDeliveryConflict,
@@ -13,7 +15,13 @@ from control_plane.app.modules.requirement.application import (
     WorkItemDeliveryResult,
 )
 from control_plane.app.modules.requirement.application import (
+    acknowledge_integration_delivery_request as _acknowledge_integration_delivery_request,
+)
+from control_plane.app.modules.requirement.application import (
     acknowledge_repository_binding_request as _acknowledge_repository_binding_request,
+)
+from control_plane.app.modules.requirement.application import (
+    claim_integration_delivery_requests as _claim_integration_delivery_requests,
 )
 from control_plane.app.modules.requirement.application import (
     claim_repository_binding_requests as _claim_repository_binding_requests,
@@ -22,6 +30,9 @@ from control_plane.app.modules.requirement.application import (
     create_requirement as _create_requirement,
 )
 from control_plane.app.modules.requirement.application import decide_baseline as _decide_baseline
+from control_plane.app.modules.requirement.application import (
+    get_integration_delivery_context as _get_integration_delivery_context,
+)
 from control_plane.app.modules.requirement.application import (
     get_repository_binding_context as _get_repository_binding_context,
 )
@@ -32,6 +43,21 @@ from control_plane.app.modules.requirement.application import (
     list_requirements as _list_requirements,
 )
 from control_plane.app.modules.requirement.application import (
+    record_external_merge_drift as _record_external_merge_drift,
+)
+from control_plane.app.modules.requirement.application import (
+    record_integration_delivery_blocked as _record_integration_delivery_blocked,
+)
+from control_plane.app.modules.requirement.application import (
+    record_integration_merged as _record_integration_merged,
+)
+from control_plane.app.modules.requirement.application import (
+    record_integration_mr_ready as _record_integration_mr_ready,
+)
+from control_plane.app.modules.requirement.application import (
+    record_integration_reconciliation_pending as _record_integration_reconciliation_pending,
+)
+from control_plane.app.modules.requirement.application import (
     record_repository_binding as _record_repository_binding,
 )
 from control_plane.app.modules.requirement.application import (
@@ -39,6 +65,9 @@ from control_plane.app.modules.requirement.application import (
 )
 from control_plane.app.modules.requirement.application import (
     register_sdd_baseline as _register_sdd_baseline,
+)
+from control_plane.app.modules.requirement.application import (
+    release_integration_delivery_request as _release_integration_delivery_request,
 )
 from control_plane.app.modules.requirement.application import (
     release_repository_binding_request as _release_repository_binding_request,
@@ -74,6 +103,9 @@ from control_plane.app.modules.requirement.domain import (
     GateState,
     GateType,
     IntegrationDeliveryBlockedReason,
+    IntegrationDeliveryContext,
+    IntegrationDeliveryRequestKind,
+    IntegrationDeliveryRequestMessage,
     IntegrationDeliveryState,
     InvalidRequirementCursor,
     InvalidRequirementInput,
@@ -154,6 +186,53 @@ def claim_repository_binding_requests(
         limit=limit,
         available_before=available_before,
         lease_until=lease_until,
+    )
+
+
+def claim_integration_delivery_requests(
+    db: Connection,
+    *,
+    limit: int,
+    available_before: datetime,
+    lease_until: datetime,
+    dependencies: RequirementDependencies,
+) -> tuple[IntegrationDeliveryRequestMessage, ...]:
+    return _claim_integration_delivery_requests(
+        dependencies.repository_factory(db),
+        limit=limit,
+        available_before=available_before,
+        lease_until=lease_until,
+    )
+
+
+def acknowledge_integration_delivery_request(
+    db: Connection,
+    *,
+    message_id: str,
+    consumer: str,
+    dependencies: RequirementDependencies,
+) -> None:
+    _acknowledge_integration_delivery_request(
+        dependencies.repository_factory(db),
+        message_id=message_id,
+        consumer=consumer,
+        dependencies=dependencies,
+    )
+
+
+def release_integration_delivery_request(
+    db: Connection,
+    *,
+    message_id: str,
+    error_code: str,
+    available_at: datetime,
+    dependencies: RequirementDependencies,
+) -> None:
+    _release_integration_delivery_request(
+        dependencies.repository_factory(db),
+        message_id=message_id,
+        error_code=error_code,
+        available_at=available_at,
     )
 
 
@@ -294,6 +373,18 @@ def get_repository_binding_context(
     )
 
 
+def get_integration_delivery_context(
+    db: Connection,
+    *,
+    work_item_id: str,
+    dependencies: RequirementDependencies,
+) -> IntegrationDeliveryContext:
+    return _get_integration_delivery_context(
+        dependencies.repository_factory(db),
+        work_item_id=work_item_id,
+    )
+
+
 def list_requirements(
     db: Connection,
     *,
@@ -351,6 +442,113 @@ def record_repository_binding_blocked(
         work_item_id=work_item_id,
         repository_id=repository_id,
         reason_code=reason_code,
+        expected_revision=expected_revision,
+        actor=actor,
+        idempotency_key=idempotency_key,
+        dependencies=dependencies,
+    )
+
+
+def record_integration_mr_ready(
+    db: Connection,
+    *,
+    work_item_id: str,
+    binding_id: str,
+    expected_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    dependencies: RequirementDependencies,
+) -> WorkItemDeliveryResult:
+    return _record_integration_mr_ready(
+        dependencies.repository_factory(db),
+        work_item_id=work_item_id,
+        binding_id=binding_id,
+        expected_revision=expected_revision,
+        actor=actor,
+        idempotency_key=idempotency_key,
+        dependencies=dependencies,
+    )
+
+
+def record_integration_delivery_blocked(
+    db: Connection,
+    *,
+    work_item_id: str,
+    binding_id: str | None,
+    reason_code: IntegrationDeliveryBlockedReason,
+    expected_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    dependencies: RequirementDependencies,
+) -> WorkItemDeliveryResult:
+    return _record_integration_delivery_blocked(
+        dependencies.repository_factory(db),
+        work_item_id=work_item_id,
+        binding_id=binding_id,
+        reason_code=reason_code,
+        expected_revision=expected_revision,
+        actor=actor,
+        idempotency_key=idempotency_key,
+        dependencies=dependencies,
+    )
+
+
+def record_integration_reconciliation_pending(
+    db: Connection,
+    *,
+    work_item_id: str,
+    binding_id: str | None,
+    expected_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    dependencies: RequirementDependencies,
+) -> WorkItemDeliveryResult:
+    return _record_integration_reconciliation_pending(
+        dependencies.repository_factory(db),
+        work_item_id=work_item_id,
+        binding_id=binding_id,
+        expected_revision=expected_revision,
+        actor=actor,
+        idempotency_key=idempotency_key,
+        dependencies=dependencies,
+    )
+
+
+def record_integration_merged(
+    db: Connection,
+    *,
+    work_item_id: str,
+    binding_id: str,
+    expected_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    dependencies: RequirementDependencies,
+) -> WorkItemDeliveryResult:
+    return _record_integration_merged(
+        dependencies.repository_factory(db),
+        work_item_id=work_item_id,
+        binding_id=binding_id,
+        expected_revision=expected_revision,
+        actor=actor,
+        idempotency_key=idempotency_key,
+        dependencies=dependencies,
+    )
+
+
+def record_external_merge_drift(
+    db: Connection,
+    *,
+    work_item_id: str,
+    binding_id: str,
+    expected_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    dependencies: RequirementDependencies,
+) -> WorkItemDeliveryResult:
+    return _record_external_merge_drift(
+        dependencies.repository_factory(db),
+        work_item_id=work_item_id,
+        binding_id=binding_id,
         expected_revision=expected_revision,
         actor=actor,
         idempotency_key=idempotency_key,
@@ -452,6 +650,11 @@ __all__ = [
     "InvalidRequirementInput",
     "InvalidRequirementTransition",
     "IntegrationDeliveryBlockedReason",
+    "IntegrationDeliveryContext",
+    "IntegrationDeliveryMessageInvalid",
+    "IntegrationDeliveryRequestKind",
+    "IntegrationDeliveryRequestMessage",
+    "IntegrationDeliveryRequestMissing",
     "IntegrationDeliveryState",
     "RecordState",
     "RegisterSddBaselineResult",
@@ -484,18 +687,27 @@ __all__ = [
     "WorkItemState",
     "RepositoryBindingRequestMessage",
     "acknowledge_repository_binding_request",
+    "acknowledge_integration_delivery_request",
+    "claim_integration_delivery_requests",
     "claim_repository_binding_requests",
     "create_requirement",
     "decide_baseline",
     "derive_work_item_state",
     "get_requirement",
+    "get_integration_delivery_context",
     "get_repository_binding_context",
     "list_requirements",
     "record_repository_binding",
     "record_repository_binding_blocked",
+    "record_external_merge_drift",
+    "record_integration_delivery_blocked",
+    "record_integration_merged",
+    "record_integration_mr_ready",
+    "record_integration_reconciliation_pending",
     "request_integration_merge",
     "request_integration_merge_request",
     "release_repository_binding_request",
+    "release_integration_delivery_request",
     "register_sdd_baseline",
     "start_requirement_preparation",
     "start_work_item",
