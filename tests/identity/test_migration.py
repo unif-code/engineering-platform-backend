@@ -278,6 +278,7 @@ def test_current_alembic_heads_are_installed(identity_owner_engine: Engine) -> N
         "0008_audit_requirement_grant",
         "0010_identity_policy_reauth",
         "0006_auth_v03_routes",
+        "0001_source_control_foundation",
     }
 
 
