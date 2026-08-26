@@ -193,11 +193,15 @@ class IntegrationDeliveryRequestMessage(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     message_id: str
+    payload_hash: str
     requirement_id: str
-    requirement_version: int
+    requirement_revision: int
     work_item_id: str
+    work_item_revision: int
     repository_id: str
-    request_kind: IntegrationDeliveryRequestKind
+    actor_id: str
+    kind: IntegrationDeliveryRequestKind
+    integration_merge_request_binding_id: str | None
     attempts: int
 
 
@@ -209,14 +213,16 @@ class IntegrationDeliveryContext(BaseModel):
     workspace_id: str
     work_item_id: str
     work_item_revision: int
+    work_item_state: WorkItemState
     repository_id: str
+    repository_state: RepositoryState
+    human_owner_id: str | None
+    required_capabilities: tuple[str, ...]
     base_commit_sha: str | None
     task_branch: str | None
-    human_owner_id: str | None
-    assignment_state: AssignmentState
-    repository_state: RepositoryState
     integration_delivery_state: IntegrationDeliveryState
     integration_merge_request_binding_id: str | None
+    request_actor_id: str
 
 
 class CreateRequirementResult(BaseModel):
