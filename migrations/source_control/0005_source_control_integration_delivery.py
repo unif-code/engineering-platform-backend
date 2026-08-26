@@ -71,13 +71,32 @@ def upgrade() -> None:
                 AND work_item_number IS NULL
                 AND branch_name IS NULL
                 AND base_commit_sha IS NULL
+                AND payload = jsonb_build_object(
+                    'branchBindingId', payload -> 'branchBindingId',
+                    'headSha', payload -> 'headSha'
+                )
+                AND jsonb_typeof(payload -> 'branchBindingId') = 'string'
+                AND length(btrim(payload ->> 'branchBindingId')) > 0
+                AND jsonb_typeof(payload -> 'headSha') = 'string'
+                AND (payload ->> 'headSha') ~ '^[0-9a-f]{40}$'
             )
             OR (
                 operation = 'MERGE_INTEGRATION_MR'
-                AND subject_key ~ '^mr:[^:]+:[0-9a-f]{40}$'
                 AND work_item_number IS NULL
                 AND branch_name IS NULL
                 AND base_commit_sha IS NULL
+                AND payload = jsonb_build_object(
+                    'bindingId', payload -> 'bindingId',
+                    'requestedHeadSha', payload -> 'requestedHeadSha'
+                )
+                AND jsonb_typeof(payload -> 'bindingId') = 'string'
+                AND length(btrim(payload ->> 'bindingId')) > 0
+                AND jsonb_typeof(payload -> 'requestedHeadSha') = 'string'
+                AND (payload ->> 'requestedHeadSha') ~ '^[0-9a-f]{40}$'
+                AND subject_key = (
+                    'mr:' || (payload ->> 'bindingId') || ':' ||
+                    (payload ->> 'requestedHeadSha')
+                )
             )
         )
         """

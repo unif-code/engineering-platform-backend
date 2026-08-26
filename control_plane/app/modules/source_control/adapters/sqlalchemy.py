@@ -254,7 +254,10 @@ class SqlAlchemySourceControlRepository:
     def effect_by_id(self, effect_id: str) -> Any:
         return (
             self.db.execute(
-                text("SELECT * FROM source_control.source_control_effect WHERE id=:id"),
+                text(
+                    "SELECT * FROM source_control.source_control_effect "
+                    "WHERE operation='CREATE_TASK_BRANCH' AND id=:id"
+                ),
                 {"id": effect_id},
             )
             .mappings()
@@ -278,7 +281,8 @@ class SqlAlchemySourceControlRepository:
             self.db.execute(
                 text(
                     f"UPDATE source_control.source_control_effect SET {assignments} "
-                    f"WHERE id=:effect_id AND state=:expected_state{attempt_guard} RETURNING *"
+                    "WHERE operation='CREATE_TASK_BRANCH' "
+                    f"AND id=:effect_id AND state=:expected_state{attempt_guard} RETURNING *"
                 ),
                 {
                     "effect_id": effect_id,

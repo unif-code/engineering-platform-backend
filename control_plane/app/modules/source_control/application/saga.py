@@ -36,27 +36,29 @@ from control_plane.app.modules.source_control.ports import (
 
 
 def _effect_dto(row: Any) -> SourceControlEffectDto:
-    return SourceControlEffectDto(
-        id=str(row["id"]),
-        effect_key=row["effect_key"],
-        operation=row["operation"],
-        subject_key=row["subject_key"],
-        payload=dict(row["payload"]),
-        work_item_id=str(row["work_item_id"]),
-        requirement_id=str(row["requirement_id"]),
-        repository_id=str(row["repository_id"]),
-        work_item_number=row["work_item_number"],
-        branch_name=row["branch_name"],
-        base_commit_sha=row["base_commit_sha"],
-        request_fingerprint=row["request_fingerprint"],
-        attempts=row["attempts"],
-        next_reconcile_at=row["next_reconcile_at"],
-        state=EffectState(row["state"]),
-        last_error_code=row["last_error_code"],
-        callback_state=RequirementCallbackState(row["requirement_callback_state"]),
-        created_at=row["created_at"],
-        updated_at=row["updated_at"],
-        completed_at=row["completed_at"],
+    return SourceControlEffectDto.model_validate(
+        {
+            "id": str(row["id"]),
+            "effect_key": row["effect_key"],
+            "operation": row["operation"],
+            "subject_key": row["subject_key"],
+            "payload": dict(row["payload"]),
+            "work_item_id": str(row["work_item_id"]),
+            "requirement_id": str(row["requirement_id"]),
+            "repository_id": str(row["repository_id"]),
+            "work_item_number": row["work_item_number"],
+            "branch_name": row["branch_name"],
+            "base_commit_sha": row["base_commit_sha"],
+            "request_fingerprint": row["request_fingerprint"],
+            "attempts": row["attempts"],
+            "next_reconcile_at": row["next_reconcile_at"],
+            "state": EffectState(row["state"]),
+            "last_error_code": row["last_error_code"],
+            "callback_state": RequirementCallbackState(row["requirement_callback_state"]),
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+            "completed_at": row["completed_at"],
+        }
     )
 
 
