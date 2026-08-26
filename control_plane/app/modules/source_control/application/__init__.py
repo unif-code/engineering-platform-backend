@@ -7,6 +7,10 @@ from control_plane.app.modules.source_control.application.commands import (
 from control_plane.app.modules.source_control.application.dependencies import (
     SourceControlDependencies,
 )
+from control_plane.app.modules.source_control.application.reconciliation import (
+    process_webhook_inbox,
+    reconcile_due_effects,
+)
 from control_plane.app.modules.source_control.application.relay import (
     accept_binding_request,
     binding_request_payload_hash,
@@ -28,6 +32,8 @@ __all__ = [
     "get_repository_branch_binding",
     "ingest_signed_gitlab_webhook",
     "process_binding_request",
+    "process_webhook_inbox",
+    "reconcile_due_effects",
     "register_workspace_repository",
     "relay_binding_requests",
     "remove_workspace_repository",

@@ -65,6 +65,7 @@ class FakeRequirement:
         self.context = context
         self.ready: list[BindingReadyResult] = []
         self.blocked: list[BindingBlockedResult] = []
+        self.fail_next_ready = False
 
     def claim_requests(
         self,
@@ -91,6 +92,9 @@ class FakeRequirement:
         return self.context
 
     def record_ready(self, result: BindingReadyResult) -> None:
+        if self.fail_next_ready:
+            self.fail_next_ready = False
+            raise RequirementCallbackUnavailable("ready unavailable")
         self.ready.append(result)
 
     def record_blocked(self, result: BindingBlockedResult) -> None:
@@ -114,6 +118,8 @@ class FakeGitLab:
         self.calls: list[tuple[str, str]] = []
         self.create_error: Exception | None = None
         self.task_read_error: Exception | None = None
+        self.task_read_error_once: Exception | None = None
+        self.branch_sha: str | None = None
 
     def get_branch(
         self,
@@ -121,9 +127,13 @@ class FakeGitLab:
         name: str,
     ) -> BranchSnapshot:
         self.calls.append(("GET", name))
+        if name != "main" and self.task_read_error_once is not None:
+            error = self.task_read_error_once
+            self.task_read_error_once = None
+            raise error
         if name != "main" and self.task_read_error is not None:
             raise self.task_read_error
-        return BranchSnapshot(name=name, commit_sha="a" * 40)
+        return BranchSnapshot(name=name, commit_sha=self.branch_sha or "a" * 40)
 
     def create_branch(
         self,

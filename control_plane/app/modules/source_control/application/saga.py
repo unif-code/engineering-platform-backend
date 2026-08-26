@@ -170,7 +170,7 @@ def _complete_effect_block(
         _record_blocked(
             context,
             reason_code=reason_code,
-            idempotency_key=f"source-control:blocked:{effect.id}",
+            idempotency_key=(f"source-control:binding-blocked:{effect.id}:{reason_code}"),
             dependencies=dependencies,
         )
     except RequirementCallbackUnavailable:
@@ -207,7 +207,7 @@ def _replay_existing_binding(
                 base_commit_sha=binding.base_commit_sha,
                 task_branch=binding.branch_name,
                 expected_revision=context.work_item_revision,
-                idempotency_key=f"source-control:ready:{effect.id}",
+                idempotency_key=f"source-control:binding-ready:{effect.id}",
             )
         )
     except RequirementCallbackUnavailable:
@@ -425,7 +425,9 @@ def process_binding_request(
             _record_blocked(
                 context,
                 reason_code="RECONCILIATION_PENDING",
-                idempotency_key=f"source-control:blocked:{effect.id}",
+                idempotency_key=(
+                    f"source-control:binding-blocked:{effect.id}:EXTERNAL_RESULT_UNKNOWN"
+                ),
                 dependencies=dependencies,
             )
         except RequirementCallbackUnavailable:
