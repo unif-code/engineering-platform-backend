@@ -6,6 +6,9 @@ from control_plane.app.modules.source_control.adapters import (
     SqlAlchemySourceControlIntegrationRepository,
     SqlAlchemySourceControlRepository,
 )
+from control_plane.app.modules.source_control.domain import (
+    CreateIntegrationMergeRequestEffectPayload,
+)
 
 NOW = datetime(2026, 8, 26, 5, 0, tzinfo=UTC)
 REPOSITORY_ID = "10000000-0000-0000-0000-000000000501"
@@ -17,6 +20,7 @@ BRANCH_EFFECT_ID = "60000000-0000-0000-0000-000000000501"
 CREATE_MR_EFFECT_ID = "60000000-0000-0000-0000-000000000502"
 BRANCH_BINDING_ID = "70000000-0000-0000-0000-000000000501"
 MR_BINDING_ID = "71000000-0000-0000-0000-000000000501"
+HEAD_SHA = "b" * 40
 
 
 def _insert_repository(repository: SqlAlchemySourceControlRepository) -> None:
@@ -86,7 +90,10 @@ def _insert_create_mr_effect(
         effect_key=f"create-integration-mr:{WORK_ITEM_ID}",
         operation="CREATE_INTEGRATION_MR",
         subject_key=f"work-item:{WORK_ITEM_ID}",
-        payload={"branchBindingId": BRANCH_BINDING_ID},
+        payload=CreateIntegrationMergeRequestEffectPayload(
+            branchBindingId=BRANCH_BINDING_ID,
+            headSha=HEAD_SHA,
+        ),
         work_item_id=WORK_ITEM_ID,
         requirement_id=REQUIREMENT_ID,
         repository_id=REPOSITORY_ID,
@@ -208,6 +215,43 @@ def test_effect_claims_and_callbacks_are_operation_scoped_and_attempt_fenced(
     assert stale is None
     assert succeeded["state"] == "SUCCEEDED"
     assert [str(row["id"]) for row in callbacks] == [CREATE_MR_EFFECT_ID]
+
+
+def test_branch_repository_does_not_return_integration_effect_by_id(
+    isolated_source_control_rw_engine: Engine,
+) -> None:
+    with isolated_source_control_rw_engine.begin() as db:
+        branch = SqlAlchemySourceControlRepository(db)
+        integration = SqlAlchemySourceControlIntegrationRepository(db)
+        _insert_repository(branch)
+        _insert_create_mr_effect(integration)
+
+        found = branch.effect_by_id(CREATE_MR_EFFECT_ID)
+
+    assert found is None
+
+
+def test_branch_repository_does_not_transition_integration_effect(
+    isolated_source_control_rw_engine: Engine,
+) -> None:
+    with isolated_source_control_rw_engine.begin() as db:
+        branch = SqlAlchemySourceControlRepository(db)
+        integration = SqlAlchemySourceControlIntegrationRepository(db)
+        _insert_repository(branch)
+        _insert_create_mr_effect(integration)
+
+        transitioned = branch.transition_effect(
+            CREATE_MR_EFFECT_ID,
+            expected_state="UNKNOWN",
+            values={"state": "RECONCILIATION", "updated_at": NOW},
+        )
+        persisted = integration.effect_by_operation_subject(
+            "CREATE_INTEGRATION_MR",
+            f"work-item:{WORK_ITEM_ID}",
+        )
+
+    assert transitioned is None
+    assert persisted["state"] == "UNKNOWN"
 
 
 def test_repository_appends_observations_and_preserves_immutable_mr_binding(

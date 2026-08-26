@@ -195,7 +195,8 @@ def _insert_integration_graph(db: object) -> None:
             "('60000000-0000-0000-0000-000000000302', 'create-mr:work-item-301', "
             "'CREATE_INTEGRATION_MR', "
             "'work-item:50000000-0000-0000-0000-000000000301', "
-            '\'{"branchBindingId":"70000000-0000-0000-0000-000000000301"}\'::jsonb, '
+            '\'{"branchBindingId":"70000000-0000-0000-0000-000000000301",'
+            '"headSha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}\'::jsonb, '
             "'50000000-0000-0000-0000-000000000301', "
             "'40000000-0000-0000-0000-000000000301', "
             "'10000000-0000-0000-0000-000000000301', "
@@ -464,7 +465,8 @@ def test_different_effect_operations_can_share_one_work_item(
                 "('60000000-0000-0000-0000-000000000302', 'create-mr:work-item-301', "
                 "'CREATE_INTEGRATION_MR', "
                 "'work-item:50000000-0000-0000-0000-000000000301', "
-                '\'{"branchBindingId":"70000000-0000-0000-0000-000000000301"}\'::jsonb, '
+                '\'{"branchBindingId":"70000000-0000-0000-0000-000000000301",'
+                '"headSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}\'::jsonb, '
                 "'50000000-0000-0000-0000-000000000301', "
                 "'40000000-0000-0000-0000-000000000301', "
                 "'10000000-0000-0000-0000-000000000301', "
@@ -482,6 +484,103 @@ def test_different_effect_operations_can_share_one_work_item(
         )
 
     assert operations == ("CREATE_INTEGRATION_MR", "CREATE_TASK_BRANCH")
+
+
+@pytest.mark.parametrize(
+    ("operation", "subject_key", "payload"),
+    [
+        (
+            "CREATE_INTEGRATION_MR",
+            "work-item:50000000-0000-0000-0000-000000000301",
+            "{}",
+        ),
+        (
+            "CREATE_INTEGRATION_MR",
+            "work-item:50000000-0000-0000-0000-000000000301",
+            '{"branchBindingId":"70000000-0000-0000-0000-000000000301",'
+            '"headSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",'
+            '"projectId":"101"}',
+        ),
+        (
+            "CREATE_INTEGRATION_MR",
+            "work-item:50000000-0000-0000-0000-000000000301",
+            '{"branchBindingId":"70000000-0000-0000-0000-000000000301","headSha":42}',
+        ),
+        (
+            "MERGE_INTEGRATION_MR",
+            "mr:71000000-0000-0000-0000-000000000301:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            '{"bindingId":"71000000-0000-0000-0000-000000000301"}',
+        ),
+        (
+            "MERGE_INTEGRATION_MR",
+            "mr:71000000-0000-0000-0000-000000000301:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            '{"bindingId":"71000000-0000-0000-0000-000000000301",'
+            '"requestedHeadSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",'
+            '"token":"must-not-persist"}',
+        ),
+    ],
+)
+def test_database_rejects_non_exact_integration_effect_payloads(
+    isolated_source_control_database: IsolatedSourceControlDatabase,
+    operation: str,
+    subject_key: str,
+    payload: str,
+) -> None:
+    with isolated_source_control_database.owner.begin() as db:
+        _insert_effect_graph(db)
+        with pytest.raises(IntegrityError):
+            db.execute(
+                text(
+                    "INSERT INTO source_control.source_control_effect "
+                    "(id, effect_key, operation, subject_key, payload, work_item_id, "
+                    "requirement_id, repository_id, request_fingerprint, attempts, state, "
+                    "requirement_callback_state) VALUES "
+                    "('60000000-0000-0000-0000-000000000399', 'invalid-payload', "
+                    ":operation, :subject_key, CAST(:payload AS JSONB), "
+                    "'50000000-0000-0000-0000-000000000301', "
+                    "'40000000-0000-0000-0000-000000000301', "
+                    "'10000000-0000-0000-0000-000000000301', "
+                    "'sha256:invalid-payload', 0, 'PLANNED', 'PENDING')"
+                ),
+                {
+                    "operation": operation,
+                    "subject_key": subject_key,
+                    "payload": payload,
+                },
+            )
+
+
+@pytest.mark.parametrize(
+    "subject_key",
+    [
+        "mr:71000000-0000-0000-0000-000000000399:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "mr:71000000-0000-0000-0000-000000000301:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    ],
+)
+def test_database_rejects_merge_effect_subject_payload_mismatch(
+    isolated_source_control_database: IsolatedSourceControlDatabase,
+    subject_key: str,
+) -> None:
+    with isolated_source_control_database.owner.begin() as db:
+        _insert_effect_graph(db)
+        with pytest.raises(IntegrityError):
+            db.execute(
+                text(
+                    "INSERT INTO source_control.source_control_effect "
+                    "(id, effect_key, operation, subject_key, payload, work_item_id, "
+                    "requirement_id, repository_id, request_fingerprint, attempts, state, "
+                    "requirement_callback_state) VALUES "
+                    "('60000000-0000-0000-0000-000000000398', 'mismatched-subject', "
+                    "'MERGE_INTEGRATION_MR', :subject_key, "
+                    '\'{"bindingId":"71000000-0000-0000-0000-000000000301",'
+                    '"requestedHeadSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}\''
+                    "::jsonb, '50000000-0000-0000-0000-000000000301', "
+                    "'40000000-0000-0000-0000-000000000301', "
+                    "'10000000-0000-0000-0000-000000000301', "
+                    "'sha256:mismatched-subject', 0, 'PLANNED', 'PENDING')"
+                ),
+                {"subject_key": subject_key},
+            )
 
 
 def test_0005_backfills_historical_effect_without_rewriting_identity_or_state(

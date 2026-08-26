@@ -56,6 +56,34 @@ class RequirementCallbackState(StrEnum):
     FAILED = "FAILED"
 
 
+ExactHeadSha = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{40}$")]
+
+
+class TaskBranchEffectPayload(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+class CreateIntegrationMergeRequestEffectPayload(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+    branch_binding_id: NonEmptyStr = Field(alias="branchBindingId")
+    head_sha: ExactHeadSha = Field(alias="headSha")
+
+
+class MergeIntegrationMergeRequestEffectPayload(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+    binding_id: NonEmptyStr = Field(alias="bindingId")
+    requested_head_sha: ExactHeadSha = Field(alias="requestedHeadSha")
+
+
+SourceControlEffectPayload = (
+    TaskBranchEffectPayload
+    | CreateIntegrationMergeRequestEffectPayload
+    | MergeIntegrationMergeRequestEffectPayload
+)
+
+
 class WorkspaceRepositoryDto(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -119,7 +147,7 @@ class SourceControlEffectDto(BaseModel):
     effect_key: NonEmptyStr
     operation: EffectOperation
     subject_key: NonEmptyStr = ""
-    payload: dict[str, object] = Field(default_factory=dict)
+    payload: SourceControlEffectPayload = Field(default_factory=TaskBranchEffectPayload)
     work_item_id: NonEmptyStr
     requirement_id: NonEmptyStr
     repository_id: NonEmptyStr
@@ -168,23 +196,34 @@ class SourceControlEffectDto(BaseModel):
             if (
                 any(value is None for value in branch_values)
                 or self.subject_key != work_item_subject
-                or self.payload
+                or not isinstance(self.payload, TaskBranchEffectPayload)
             ):
                 raise ValueError("branch effect operation shape is invalid")
         elif self.operation is EffectOperation.CREATE_INTEGRATION_MR:
-            if any(value is not None for value in branch_values) or (
-                self.subject_key != work_item_subject
+            if (
+                any(value is not None for value in branch_values)
+                or self.subject_key != work_item_subject
+                or not isinstance(
+                    self.payload,
+                    CreateIntegrationMergeRequestEffectPayload,
+                )
             ):
                 raise ValueError("merge request creation effect shape is invalid")
         else:
             subject_parts = self.subject_key.split(":")
             if (
                 any(value is not None for value in branch_values)
+                or not isinstance(
+                    self.payload,
+                    MergeIntegrationMergeRequestEffectPayload,
+                )
                 or len(subject_parts) != 3
                 or subject_parts[0] != "mr"
                 or not subject_parts[1]
                 or len(subject_parts[2]) != 40
                 or any(character not in "0123456789abcdef" for character in subject_parts[2])
+                or subject_parts[1] != self.payload.binding_id
+                or subject_parts[2] != self.payload.requested_head_sha
             ):
                 raise ValueError("merge effect operation shape is invalid")
         return self

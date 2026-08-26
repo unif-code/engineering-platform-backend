@@ -3,6 +3,7 @@ from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
+from pydantic import BaseModel
 from sqlalchemy import Connection, text
 
 _EFFECT_UPDATE_COLUMNS = frozenset(
@@ -134,6 +135,9 @@ class SqlAlchemySourceControlIntegrationRepository:
         )
 
     def insert_effect(self, **values: Any) -> Any:
+        payload = values.get("payload", {})
+        if isinstance(payload, BaseModel):
+            payload = payload.model_dump(mode="json", by_alias=True)
         parameters = {
             "work_item_number": None,
             "branch_name": None,
@@ -141,7 +145,7 @@ class SqlAlchemySourceControlIntegrationRepository:
             "completed_at": None,
             **values,
             "payload": json.dumps(
-                values.get("payload", {}),
+                payload,
                 sort_keys=True,
                 separators=(",", ":"),
             ),

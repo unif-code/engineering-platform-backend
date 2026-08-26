@@ -1,14 +1,16 @@
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pydantic import ValidationError
 
 from control_plane.app.modules.source_control.domain import (
+    CreateIntegrationMergeRequestEffectPayload,
     DeliveryRequestEnvelope,
     DeliveryRequestKind,
     EffectOperation,
     EffectState,
+    MergeIntegrationMergeRequestEffectPayload,
     MergeRequestBindingDto,
     MergeRequestCreationOrigin,
     MergeRequestKind,
@@ -24,6 +26,8 @@ NOW = datetime(2026, 8, 26, 4, 0, tzinfo=UTC)
 BINDING_ID = "70000000-0000-0000-0000-000000000501"
 OBSERVATION_ID = "80000000-0000-0000-0000-000000000501"
 WORK_ITEM_ID = "50000000-0000-0000-0000-000000000501"
+BRANCH_BINDING_ID = "71000000-0000-0000-0000-000000000501"
+HEAD_SHA = "a" * 40
 
 
 def test_delivery_request_shape_binds_topic_kind_and_existing_mr_binding() -> None:
@@ -150,14 +154,17 @@ def test_effect_operation_shapes_preserve_branch_dto_and_reject_ambiguous_fields
         },
         operation=EffectOperation.CREATE_INTEGRATION_MR,
         subject_key=f"work-item:{WORK_ITEM_ID}",
-        payload={"branchBindingId": "71000000-0000-0000-0000-000000000501"},
+        payload=CreateIntegrationMergeRequestEffectPayload(
+            branchBindingId=BRANCH_BINDING_ID,
+            headSha=HEAD_SHA,
+        ),
         work_item_number=None,
         branch_name=None,
         base_commit_sha=None,
     )
 
     assert branch.subject_key == f"work-item:{WORK_ITEM_ID}"
-    assert branch.payload == {}
+    assert branch.payload.model_dump(by_alias=True) == {}
     assert branch_effect_coordinates(branch) == (
         501,
         "feat/wi-501-integration",
@@ -173,8 +180,163 @@ def test_effect_operation_shapes_preserve_branch_dto_and_reject_ambiguous_fields
             },
             operation=EffectOperation.MERGE_INTEGRATION_MR,
             subject_key=merge_effect_subject(BINDING_ID, "a" * 40),
-            payload={"bindingId": BINDING_ID, "requestedHeadSha": "a" * 40},
+            payload=MergeIntegrationMergeRequestEffectPayload(
+                bindingId=BINDING_ID,
+                requestedHeadSha="a" * 40,
+            ),
             work_item_number=501,
             branch_name=None,
             base_commit_sha=None,
+        )
+
+
+@pytest.mark.parametrize(
+    ("operation", "subject_key", "payload"),
+    [
+        (
+            EffectOperation.CREATE_INTEGRATION_MR,
+            f"work-item:{WORK_ITEM_ID}",
+            {"branchBindingId": BRANCH_BINDING_ID},
+        ),
+        (
+            EffectOperation.CREATE_INTEGRATION_MR,
+            f"work-item:{WORK_ITEM_ID}",
+            {
+                "branchBindingId": BRANCH_BINDING_ID,
+                "headSha": HEAD_SHA,
+                "projectId": "101",
+            },
+        ),
+        (
+            EffectOperation.CREATE_INTEGRATION_MR,
+            f"work-item:{WORK_ITEM_ID}",
+            {
+                "branchBindingId": BRANCH_BINDING_ID,
+                "headSha": HEAD_SHA,
+                "token": "must-not-persist",
+            },
+        ),
+        (
+            EffectOperation.MERGE_INTEGRATION_MR,
+            merge_effect_subject(BINDING_ID, HEAD_SHA),
+            {"bindingId": BINDING_ID},
+        ),
+        (
+            EffectOperation.MERGE_INTEGRATION_MR,
+            merge_effect_subject(BINDING_ID, HEAD_SHA),
+            {
+                "bindingId": BINDING_ID,
+                "requestedHeadSha": HEAD_SHA,
+                "providerBody": {"state": "merged"},
+            },
+        ),
+        (
+            EffectOperation.MERGE_INTEGRATION_MR,
+            merge_effect_subject(BINDING_ID, HEAD_SHA),
+            {"bindingId": BINDING_ID, "requestedHeadSha": "A" * 40},
+        ),
+    ],
+)
+def test_integration_effect_payload_rejects_missing_or_unrelated_facts(
+    operation: EffectOperation,
+    subject_key: str,
+    payload: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        SourceControlEffectDto.model_validate(
+            {
+                "id": "60000000-0000-0000-0000-000000000504",
+                "effect_key": "source-control:review-payload",
+                "operation": operation,
+                "subject_key": subject_key,
+                "payload": payload,
+                "work_item_id": WORK_ITEM_ID,
+                "requirement_id": "40000000-0000-0000-0000-000000000501",
+                "repository_id": "10000000-0000-0000-0000-000000000501",
+                "work_item_number": None,
+                "branch_name": None,
+                "base_commit_sha": None,
+                "request_fingerprint": "sha256:payload-review",
+                "attempts": 0,
+                "next_reconcile_at": None,
+                "state": EffectState.PLANNED,
+                "last_error_code": None,
+                "callback_state": RequirementCallbackState.PENDING,
+                "created_at": NOW,
+                "updated_at": NOW,
+                "completed_at": None,
+            }
+        )
+
+
+def test_effect_payload_cannot_be_mutated_after_validation() -> None:
+    effect = SourceControlEffectDto(
+        id="60000000-0000-0000-0000-000000000505",
+        effect_key="source-control:immutable-payload",
+        operation=EffectOperation.CREATE_INTEGRATION_MR,
+        subject_key=f"work-item:{WORK_ITEM_ID}",
+        payload=CreateIntegrationMergeRequestEffectPayload(
+            branchBindingId=BRANCH_BINDING_ID,
+            headSha=HEAD_SHA,
+        ),
+        work_item_id=WORK_ITEM_ID,
+        requirement_id="40000000-0000-0000-0000-000000000501",
+        repository_id="10000000-0000-0000-0000-000000000501",
+        work_item_number=None,
+        branch_name=None,
+        base_commit_sha=None,
+        request_fingerprint="sha256:immutable-payload",
+        attempts=0,
+        next_reconcile_at=None,
+        state=EffectState.PLANNED,
+        last_error_code=None,
+        callback_state=RequirementCallbackState.PENDING,
+        created_at=NOW,
+        updated_at=NOW,
+        completed_at=None,
+    )
+
+    mutable_view = cast(dict[str, object], effect.payload)
+    with pytest.raises(TypeError):
+        mutable_view["headSha"] = "b" * 40
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        MergeIntegrationMergeRequestEffectPayload(
+            bindingId=BRANCH_BINDING_ID,
+            requestedHeadSha=HEAD_SHA,
+        ),
+        MergeIntegrationMergeRequestEffectPayload(
+            bindingId=BINDING_ID,
+            requestedHeadSha="b" * 40,
+        ),
+    ],
+)
+def test_merge_effect_subject_must_match_payload_binding_and_head(
+    payload: MergeIntegrationMergeRequestEffectPayload,
+) -> None:
+    with pytest.raises(ValidationError):
+        SourceControlEffectDto(
+            id="60000000-0000-0000-0000-000000000506",
+            effect_key="source-control:subject-payload-match",
+            operation=EffectOperation.MERGE_INTEGRATION_MR,
+            subject_key=merge_effect_subject(BINDING_ID, HEAD_SHA),
+            payload=payload,
+            work_item_id=WORK_ITEM_ID,
+            requirement_id="40000000-0000-0000-0000-000000000501",
+            repository_id="10000000-0000-0000-0000-000000000501",
+            work_item_number=None,
+            branch_name=None,
+            base_commit_sha=None,
+            request_fingerprint="sha256:subject-payload-match",
+            attempts=0,
+            next_reconcile_at=None,
+            state=EffectState.PLANNED,
+            last_error_code=None,
+            callback_state=RequirementCallbackState.PENDING,
+            created_at=NOW,
+            updated_at=NOW,
+            completed_at=None,
         )
