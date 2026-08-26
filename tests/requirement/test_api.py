@@ -22,7 +22,7 @@ from control_plane.app.shared.api.request_id import request_id_middleware
 from tests.requirement.conftest import IsolatedRequirementDatabase
 from tests.requirement.test_baseline_gate import _gate_dependencies
 from tests.requirement.test_commands import WORKSPACE_ID, Actor
-from tests.requirement.test_delivery_commands import _ready_requirement
+from tests.requirement.test_delivery_commands import _merge_ready_work_item, _ready_requirement
 
 SAME_ORIGIN = {"Origin": "http://testserver"}
 
@@ -619,3 +619,28 @@ def test_start_route_reports_current_owner_mismatch_as_an_actor_denial(
     assert response.status_code == 403
     assert response.headers["content-type"].startswith("application/problem+json")
     assert response.json()["title"] == "WorkItem actor denied"
+
+
+def test_merge_route_requires_capability_and_current_owner_together(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    current, _binding_id = _merge_ready_work_item(
+        isolated_requirement_database,
+        key_suffix="http-merge-non-owner",
+    )
+    client, holder, guard, _dependencies = _client(
+        isolated_requirement_database,
+        allowed={("merge_request.merge", WORKSPACE_ID)},
+    )
+    holder.value = Actor("merge-operator-1")
+
+    response = client.post(
+        f"/api/v1/requirements/{current.requirement.id}/work-items/"
+        f"{current.work_items[0].id}:request-integration-merge",
+        headers=_versioned_headers("http-merge-non-owner", current.requirement.revision),
+    )
+
+    assert response.status_code == 403
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["title"] == "WorkItem actor denied"
+    assert guard.calls == [("merge_request.merge", WORKSPACE_ID)]

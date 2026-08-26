@@ -7,6 +7,7 @@ from control_plane.app.modules.requirement import (
     RequirementError,
     RequirementState,
     StaleRequirementRevision,
+    WorkItemActorDenied,
     WorkItemDeliveryResult,
     WorkItemNotFound,
     WorkItemState,
@@ -397,35 +398,14 @@ def test_request_integration_mr_replays_without_a_second_outbox(
 def test_request_integration_merge_persists_binding_reference_only(
     isolated_requirement_database: IsolatedRequirementDatabase,
 ) -> None:
-    started = _started_work_item(isolated_requirement_database)
-    binding_id = "30000000-0000-0000-0000-000000000301"
-    with isolated_requirement_database.owner.begin() as db:
-        db.execute(
-            text("UPDATE requirement.requirement SET state='VERIFYING' WHERE id=:requirement_id"),
-            {"requirement_id": started.requirement.id},
-        )
-        db.execute(
-            text(
-                "UPDATE requirement.work_item SET state='VERIFYING', "
-                "integration_delivery_state='MR_OPEN', "
-                "integration_merge_request_binding_id=:binding_id "
-                "WHERE id=:work_item_id"
-            ),
-            {"binding_id": binding_id, "work_item_id": started.work_item.id},
-        )
-    with isolated_requirement_database.runtime.connect() as db:
-        current = get_requirement(
-            db,
-            requirement_id=started.requirement.id,
-            dependencies=_gate_dependencies(),
-        )
+    current, binding_id = _merge_ready_work_item(isolated_requirement_database)
     with isolated_requirement_database.runtime.begin() as db:
         result = request_integration_merge(
             db,
             requirement_id=current.requirement.id,
             work_item_id=current.work_items[0].id,
             expected_revision=current.requirement.revision,
-            actor=Actor("merge-operator-1"),
+            actor=Actor("employee-1"),
             idempotency_key="request-integration-merge-1",
             dependencies=_gate_dependencies(),
         )
@@ -449,6 +429,76 @@ def test_request_integration_merge_persists_binding_reference_only(
         "workItemRevision": result.work_item.revision,
         "integrationMergeRequestBindingId": binding_id,
         "repositoryId": result.work_item.repository_id,
-        "actorId": "merge-operator-1",
+        "actorId": "employee-1",
     }
     assert not ({"branch", "projectId", "mrIid", "headSha"} & set(payload))
+
+
+def _merge_ready_work_item(
+    database: IsolatedRequirementDatabase,
+    *,
+    key_suffix: str = "default",
+) -> tuple[RequirementDetailsDto, str]:
+    started = _started_work_item(database, key_suffix=key_suffix)
+    binding_id = "30000000-0000-0000-0000-000000000301"
+    with database.owner.begin() as db:
+        db.execute(
+            text("UPDATE requirement.requirement SET state='VERIFYING' WHERE id=:requirement_id"),
+            {"requirement_id": started.requirement.id},
+        )
+        db.execute(
+            text(
+                "UPDATE requirement.work_item SET state='VERIFYING', "
+                "integration_delivery_state='MR_OPEN', "
+                "integration_merge_request_binding_id=:binding_id "
+                "WHERE id=:work_item_id"
+            ),
+            {"binding_id": binding_id, "work_item_id": started.work_item.id},
+        )
+    with database.runtime.connect() as db:
+        current = get_requirement(
+            db,
+            requirement_id=started.requirement.id,
+            dependencies=_gate_dependencies(),
+        )
+    return current, binding_id
+
+
+def test_request_integration_merge_rejects_merge_capable_non_owner(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    current, _binding_id = _merge_ready_work_item(
+        isolated_requirement_database,
+        key_suffix="non-owner",
+    )
+
+    with pytest.raises(WorkItemActorDenied):
+        with isolated_requirement_database.runtime.begin() as db:
+            request_integration_merge(
+                db,
+                requirement_id=current.requirement.id,
+                work_item_id=current.work_items[0].id,
+                expected_revision=current.requirement.revision,
+                actor=Actor("merge-operator-1"),
+                idempotency_key="request-integration-merge-non-owner",
+                dependencies=_gate_dependencies(),
+            )
+    with isolated_requirement_database.owner.connect() as db:
+        delivery_state = db.execute(
+            text(
+                "SELECT integration_delivery_state FROM requirement.work_item "
+                "WHERE id=:work_item_id"
+            ),
+            {"work_item_id": current.work_items[0].id},
+        ).scalar_one()
+        outbox_count = db.execute(
+            text(
+                "SELECT count(*) FROM requirement.outbox_message "
+                "WHERE aggregate_id=:requirement_id "
+                "AND topic='requirement.integration-merge.requested'"
+            ),
+            {"requirement_id": current.requirement.id},
+        ).scalar_one()
+
+    assert delivery_state == IntegrationDeliveryState.MR_OPEN.value
+    assert outbox_count == 0

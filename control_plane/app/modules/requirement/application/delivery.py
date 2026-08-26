@@ -484,7 +484,7 @@ def _request_delivery(
         actor=actor,
         idempotency_key=idempotency_key,
         dependencies=dependencies,
-        owner_required=not request_merge,
+        owner_required=True,
         command=command,
     )
 
