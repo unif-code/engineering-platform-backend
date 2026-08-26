@@ -58,6 +58,8 @@ class SourceControlRepository(Protocol):
         for_update: bool = False,
     ) -> Any: ...
 
+    def effect_by_id(self, effect_id: str) -> Any: ...
+
     def transition_effect(
         self,
         effect_id: str,
@@ -74,6 +76,8 @@ class SourceControlRepository(Protocol):
         lease_until: datetime,
     ) -> list[Any]: ...
 
+    def pending_callback_effects(self, *, limit: int) -> list[Any]: ...
+
     def insert_binding(self, **values: Any) -> Any: ...
 
     def binding_by_work_item(self, work_item_id: str) -> Any: ...
@@ -81,6 +85,18 @@ class SourceControlRepository(Protocol):
     def accept_webhook(self, **values: Any) -> Any: ...
 
     def webhook_by_message(self, repository_id: str, webhook_id: str) -> Any: ...
+
+    def webhook_by_id(self, inbox_id: str, *, for_update: bool = False) -> Any: ...
+
+    def make_unknown_effect_due(
+        self,
+        *,
+        repository_id: str,
+        branch_name: str,
+        now: datetime,
+    ) -> int: ...
+
+    def complete_webhook(self, inbox_id: str, *, now: datetime) -> Any: ...
 
 
 class SourceControlRepositoryFactory(Protocol):

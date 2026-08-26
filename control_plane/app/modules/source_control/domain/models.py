@@ -145,6 +145,12 @@ class ProcessBindingRequestResult(BaseModel):
     blocked_reason: NonEmptyStr | None
 
 
+class ReconcileDueEffectsResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    effects: tuple[SourceControlEffectDto, ...]
+
+
 class GitLabWebhookEnvelope(BaseModel):
     model_config = ConfigDict(frozen=True)
 

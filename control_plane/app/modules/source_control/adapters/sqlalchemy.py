@@ -226,6 +226,16 @@ class SqlAlchemySourceControlRepository:
             .one_or_none()
         )
 
+    def effect_by_id(self, effect_id: str) -> Any:
+        return (
+            self.db.execute(
+                text("SELECT * FROM source_control.source_control_effect WHERE id=:id"),
+                {"id": effect_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
     def transition_effect(
         self,
         effect_id: str,
@@ -269,6 +279,19 @@ class SqlAlchemySourceControlRepository:
                     "FROM candidates WHERE effect.id=candidates.id RETURNING effect.*"
                 ),
                 {"limit": limit, "now": now, "lease_until": lease_until},
+            ).mappings()
+        )
+
+    def pending_callback_effects(self, *, limit: int) -> list[Any]:
+        return list(
+            self.db.execute(
+                text(
+                    "SELECT * FROM source_control.source_control_effect "
+                    "WHERE state IN ('SUCCEEDED', 'BLOCKED') "
+                    "AND requirement_callback_state <> 'ACKED' "
+                    "ORDER BY updated_at, id LIMIT :limit"
+                ),
+                {"limit": limit},
             ).mappings()
         )
 
@@ -336,6 +359,52 @@ class SqlAlchemySourceControlRepository:
                     "WHERE repository_id=:repository_id AND webhook_id=:webhook_id"
                 ),
                 {"repository_id": repository_id, "webhook_id": webhook_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def webhook_by_id(self, inbox_id: str, *, for_update: bool = False) -> Any:
+        suffix = " FOR UPDATE" if for_update else ""
+        return (
+            self.db.execute(
+                text(f"SELECT * FROM source_control.webhook_inbox WHERE id=:id{suffix}"),
+                {"id": inbox_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def make_unknown_effect_due(
+        self,
+        *,
+        repository_id: str,
+        branch_name: str,
+        now: datetime,
+    ) -> int:
+        result = self.db.execute(
+            text(
+                "UPDATE source_control.source_control_effect SET next_reconcile_at=:now, "
+                "updated_at=:now WHERE repository_id=:repository_id "
+                "AND branch_name=:branch_name AND state='UNKNOWN'"
+            ),
+            {
+                "repository_id": repository_id,
+                "branch_name": branch_name,
+                "now": now,
+            },
+        )
+        return result.rowcount
+
+    def complete_webhook(self, inbox_id: str, *, now: datetime) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE source_control.webhook_inbox SET state='PROCESSED', "
+                    "processed_at=:now, updated_at=:now, last_error_code=NULL "
+                    "WHERE id=:id AND state='RECEIVED' RETURNING *"
+                ),
+                {"id": inbox_id, "now": now},
             )
             .mappings()
             .one_or_none()
