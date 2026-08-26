@@ -1,7 +1,14 @@
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    model_validator,
+)
 
 NonEmptyStr = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 PositiveInt = Annotated[int, Field(ge=1)]
@@ -15,6 +22,12 @@ class EffectState(StrEnum):
     RECONCILIATION = "RECONCILIATION"
     SUCCEEDED = "SUCCEEDED"
     BLOCKED = "BLOCKED"
+
+
+class EffectOperation(StrEnum):
+    CREATE_TASK_BRANCH = "CREATE_TASK_BRANCH"
+    CREATE_INTEGRATION_MR = "CREATE_INTEGRATION_MR"
+    MERGE_INTEGRATION_MR = "MERGE_INTEGRATION_MR"
 
 
 class InboxState(StrEnum):
@@ -104,13 +117,15 @@ class SourceControlEffectDto(BaseModel):
 
     id: NonEmptyStr
     effect_key: NonEmptyStr
-    operation: Literal["CREATE_TASK_BRANCH"]
+    operation: EffectOperation
+    subject_key: NonEmptyStr = ""
+    payload: dict[str, object] = Field(default_factory=dict)
     work_item_id: NonEmptyStr
     requirement_id: NonEmptyStr
     repository_id: NonEmptyStr
-    work_item_number: PositiveInt
-    branch_name: NonEmptyStr
-    base_commit_sha: NonEmptyStr
+    work_item_number: PositiveInt | None
+    branch_name: NonEmptyStr | None
+    base_commit_sha: NonEmptyStr | None
     request_fingerprint: NonEmptyStr
     attempts: NonNegativeInt
     next_reconcile_at: AwareDatetime | None
@@ -120,6 +135,59 @@ class SourceControlEffectDto(BaseModel):
     created_at: AwareDatetime
     updated_at: AwareDatetime
     completed_at: AwareDatetime | None
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_historical_branch_subject(cls, values: object) -> object:
+        if not isinstance(values, dict):
+            return values
+        if (
+            values.get("operation")
+            in {
+                EffectOperation.CREATE_TASK_BRANCH,
+                EffectOperation.CREATE_TASK_BRANCH.value,
+            }
+            and "subject_key" not in values
+            and values.get("work_item_id")
+        ):
+            return {
+                **values,
+                "subject_key": f"work-item:{values['work_item_id']}",
+            }
+        return values
+
+    @model_validator(mode="after")
+    def validate_operation_shape(self) -> "SourceControlEffectDto":
+        branch_values = (
+            self.work_item_number,
+            self.branch_name,
+            self.base_commit_sha,
+        )
+        work_item_subject = f"work-item:{self.work_item_id}"
+        if self.operation is EffectOperation.CREATE_TASK_BRANCH:
+            if (
+                any(value is None for value in branch_values)
+                or self.subject_key != work_item_subject
+                or self.payload
+            ):
+                raise ValueError("branch effect operation shape is invalid")
+        elif self.operation is EffectOperation.CREATE_INTEGRATION_MR:
+            if any(value is not None for value in branch_values) or (
+                self.subject_key != work_item_subject
+            ):
+                raise ValueError("merge request creation effect shape is invalid")
+        else:
+            subject_parts = self.subject_key.split(":")
+            if (
+                any(value is not None for value in branch_values)
+                or len(subject_parts) != 3
+                or subject_parts[0] != "mr"
+                or not subject_parts[1]
+                or len(subject_parts[2]) != 40
+                or any(character not in "0123456789abcdef" for character in subject_parts[2])
+            ):
+                raise ValueError("merge effect operation shape is invalid")
+        return self
 
 
 class RepositoryBranchBindingDto(BaseModel):

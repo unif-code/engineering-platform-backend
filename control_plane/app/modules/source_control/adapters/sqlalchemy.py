@@ -1,3 +1,4 @@
+import json
 from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
@@ -203,20 +204,28 @@ class SqlAlchemySourceControlRepository:
         )
 
     def insert_effect(self, **values: Any) -> Any:
+        parameters = {
+            "subject_key": f"work-item:{values['work_item_id']}",
+            "payload": json.dumps({}, separators=(",", ":")),
+            "completed_at": None,
+            **values,
+        }
         return (
             self.db.execute(
                 text(
                     "INSERT INTO source_control.source_control_effect "
-                    "(id, effect_key, operation, work_item_id, requirement_id, repository_id, "
-                    "work_item_number, branch_name, base_commit_sha, request_fingerprint, "
-                    "attempts, next_reconcile_at, state, requirement_callback_state, "
-                    "created_at, updated_at) VALUES "
-                    "(:id, :effect_key, :operation, :work_item_id, :requirement_id, "
-                    ":repository_id, :work_item_number, :branch_name, :base_commit_sha, "
+                    "(id, effect_key, operation, subject_key, payload, work_item_id, "
+                    "requirement_id, repository_id, work_item_number, branch_name, "
+                    "base_commit_sha, request_fingerprint, attempts, next_reconcile_at, "
+                    "state, requirement_callback_state, created_at, updated_at, "
+                    "completed_at) VALUES "
+                    "(:id, :effect_key, :operation, :subject_key, CAST(:payload AS JSONB), "
+                    ":work_item_id, :requirement_id, :repository_id, :work_item_number, "
+                    ":branch_name, :base_commit_sha, "
                     ":request_fingerprint, :attempts, :next_reconcile_at, :state, "
-                    ":requirement_callback_state, :now, :now) RETURNING *"
+                    ":requirement_callback_state, :now, :now, :completed_at) RETURNING *"
                 ),
-                values,
+                parameters,
             )
             .mappings()
             .one()
@@ -233,7 +242,8 @@ class SqlAlchemySourceControlRepository:
             self.db.execute(
                 text(
                     "SELECT * FROM source_control.source_control_effect "
-                    f"WHERE work_item_id=:work_item_id{suffix}"
+                    "WHERE operation='CREATE_TASK_BRANCH' "
+                    f"AND work_item_id=:work_item_id{suffix}"
                 ),
                 {"work_item_id": work_item_id},
             )
@@ -293,7 +303,8 @@ class SqlAlchemySourceControlRepository:
                 text(
                     "WITH candidates AS ("
                     "SELECT id FROM source_control.source_control_effect "
-                    "WHERE state IN ('UNKNOWN', 'IN_FLIGHT', 'RECONCILIATION') "
+                    "WHERE operation='CREATE_TASK_BRANCH' "
+                    "AND state IN ('UNKNOWN', 'IN_FLIGHT', 'RECONCILIATION') "
                     "AND next_reconcile_at <= :now "
                     "ORDER BY next_reconcile_at, id FOR UPDATE SKIP LOCKED LIMIT :limit"
                     ") UPDATE source_control.source_control_effect AS effect "
@@ -310,7 +321,8 @@ class SqlAlchemySourceControlRepository:
             self.db.execute(
                 text(
                     "SELECT * FROM source_control.source_control_effect "
-                    "WHERE state IN ('SUCCEEDED', 'BLOCKED') "
+                    "WHERE operation='CREATE_TASK_BRANCH' "
+                    "AND state IN ('SUCCEEDED', 'BLOCKED') "
                     "AND requirement_callback_state <> 'ACKED' "
                     "ORDER BY updated_at, id LIMIT :limit"
                 ),
@@ -420,7 +432,8 @@ class SqlAlchemySourceControlRepository:
         result = self.db.execute(
             text(
                 "UPDATE source_control.source_control_effect SET next_reconcile_at=:now, "
-                "updated_at=:now WHERE repository_id=:repository_id "
+                "updated_at=:now WHERE operation='CREATE_TASK_BRANCH' "
+                "AND repository_id=:repository_id "
                 "AND branch_name=:branch_name AND state='UNKNOWN'"
             ),
             {

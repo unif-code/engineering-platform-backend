@@ -17,6 +17,7 @@ from control_plane.app.modules.source_control.domain import (
     RequirementCallbackState,
     RequirementCallbackUnavailable,
     SourceControlEffectDto,
+    branch_effect_coordinates,
     build_task_branch_name,
 )
 from control_plane.app.modules.source_control.ports import (
@@ -39,6 +40,8 @@ def _effect_dto(row: Any) -> SourceControlEffectDto:
         id=str(row["id"]),
         effect_key=row["effect_key"],
         operation=row["operation"],
+        subject_key=row["subject_key"],
+        payload=dict(row["payload"]),
         work_item_id=str(row["work_item_id"]),
         requirement_id=str(row["requirement_id"]),
         repository_id=str(row["repository_id"]),
@@ -491,13 +494,14 @@ def process_binding_request(
             blocked_reason=None,
         )
     effect = _effect_dto(in_flight_row)
+    _work_item_number, branch_name, base_commit_sha = branch_effect_coordinates(effect)
 
     try:
         verified = create_and_verify_branch(
             gitlab,
             profile,
-            branch_name=effect.branch_name,
-            base_commit_sha=effect.base_commit_sha,
+            branch_name=branch_name,
+            base_commit_sha=base_commit_sha,
         )
     except GitLabResultUnknown:
         with dependencies.engine.begin() as db:

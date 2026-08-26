@@ -20,6 +20,7 @@ from control_plane.app.modules.source_control.domain import (
     RequirementCallbackState,
     RequirementCallbackUnavailable,
     SourceControlEffectDto,
+    branch_effect_coordinates,
 )
 from control_plane.app.modules.source_control.ports import (
     BindingBlockedResult,
@@ -111,6 +112,7 @@ def _complete_success(
     RepositoryBranchBindingDto | None,
     bool,
 ]:
+    work_item_number, branch_name, base_commit_sha = branch_effect_coordinates(effect)
     now = dependencies.clock.now()
     with dependencies.engine.begin() as db:
         repository = dependencies.repository_factory(db)
@@ -144,9 +146,9 @@ def _complete_success(
                 requirement_id=effect.requirement_id,
                 workspace_id=context.workspace_id,
                 repository_id=effect.repository_id,
-                work_item_number=effect.work_item_number,
-                base_commit_sha=effect.base_commit_sha,
-                branch_name=effect.branch_name,
+                work_item_number=work_item_number,
+                base_commit_sha=base_commit_sha,
+                branch_name=branch_name,
                 effect_id=effect.id,
                 now=now,
             )
@@ -252,6 +254,7 @@ def _reconcile_effect(
     *,
     dependencies: SourceControlDependencies,
 ) -> SourceControlEffectDto:
+    _work_item_number, branch_name, base_commit_sha = branch_effect_coordinates(effect)
     requirement = dependencies.requirement
     eligibility = dependencies.eligibility
     gitlab = dependencies.gitlab
@@ -313,14 +316,14 @@ def _reconcile_effect(
     profile = _repository_profile(repository_row)
     try:
         gitlab.validate_repository(profile)
-        observed = gitlab.get_branch(profile, effect.branch_name)
+        observed = gitlab.get_branch(profile, branch_name)
     except GitLabBranchNotFound:
         try:
             observed = create_and_verify_branch(
                 gitlab,
                 profile,
-                branch_name=effect.branch_name,
-                base_commit_sha=effect.base_commit_sha,
+                branch_name=branch_name,
+                base_commit_sha=base_commit_sha,
             )
         except (GitLabProviderUnavailable, GitLabResultUnknown):
             return _return_unknown(effect, dependencies=dependencies)
@@ -356,7 +359,7 @@ def _reconcile_effect(
             binding=None,
             dependencies=dependencies,
         )
-    if observed is not None and observed.commit_sha == effect.base_commit_sha:
+    if observed is not None and observed.commit_sha == base_commit_sha:
         succeeded, binding, completed = _complete_success(
             effect,
             context,
