@@ -196,6 +196,7 @@ def claim_binding_requests(
     lease_until: datetime,
 ) -> list[Any]: ...
 
+
 def outbox_by_id(self, message_id: str, *, for_update: bool = False) -> Any: ...
 def publish_outbox(self, message_id: str, *, now: datetime) -> Any: ...
 def release_outbox(
@@ -275,11 +276,14 @@ def test_effect_transition_matrix(current, target):
 
 
 def test_branch_name_is_deterministic_and_unicode_safe():
-    assert build_task_branch_name(
-        requirement_type=RequirementType.FEAT,
-        work_item_number=42,
-        title="创建 GitLab 分支 / HMAC 验签",
-    ) == "feat/wi-42-创建-gitlab-分支-hmac-验签"
+    assert (
+        build_task_branch_name(
+            requirement_type=RequirementType.FEAT,
+            work_item_number=42,
+            title="创建 GitLab 分支 / HMAC 验签",
+        )
+        == "feat/wi-42-创建-gitlab-分支-hmac-验签"
+    )
 
 
 def test_branch_name_rejects_git_ref_forbidden_sequences():
@@ -437,15 +441,23 @@ class SourceControlRepository(Protocol):
 
     def insert_workspace_repository(self, **values: Any) -> Any: ...
     def workspace_repository(self, repository_id: str, *, for_update: bool = False) -> Any: ...
-    def remove_workspace_repository(self, repository_id: str, *, expected_revision: int, now: datetime) -> Any: ...
+    def remove_workspace_repository(
+        self, repository_id: str, *, expected_revision: int, now: datetime
+    ) -> Any: ...
     def accept_binding_request(self, **values: Any) -> Any: ...
     def binding_request(self, message_id: str, *, for_update: bool = False) -> Any: ...
-    def claim_binding_requests(self, *, limit: int, now: datetime, lease_until: datetime) -> list[Any]: ...
+    def claim_binding_requests(
+        self, *, limit: int, now: datetime, lease_until: datetime
+    ) -> list[Any]: ...
     def next_work_item_number(self) -> int: ...
     def insert_effect(self, **values: Any) -> Any: ...
     def effect_by_work_item(self, work_item_id: str, *, for_update: bool = False) -> Any: ...
-    def transition_effect(self, effect_id: str, *, expected_state: str, values: Mapping[str, object]) -> Any: ...
-    def claim_unknown_effects(self, *, limit: int, now: datetime, lease_until: datetime) -> list[Any]: ...
+    def transition_effect(
+        self, effect_id: str, *, expected_state: str, values: Mapping[str, object]
+    ) -> Any: ...
+    def claim_unknown_effects(
+        self, *, limit: int, now: datetime, lease_until: datetime
+    ) -> list[Any]: ...
     def insert_binding(self, **values: Any) -> Any: ...
     def binding_by_work_item(self, work_item_id: str) -> Any: ...
     def accept_webhook(self, **values: Any) -> Any: ...
@@ -532,7 +544,9 @@ Expected: failure because the application Facade and inter-module ports do not e
 
 ```python
 class RequirementBindingPort(Protocol):
-    def claim_requests(self, *, limit: int, lease_until: datetime) -> tuple[BindingRequestEnvelope, ...]: ...
+    def claim_requests(
+        self, *, limit: int, lease_until: datetime
+    ) -> tuple[BindingRequestEnvelope, ...]: ...
     def acknowledge_request(self, message_id: str) -> None: ...
     def release_request(self, message_id: str, *, error_code: str, retry_at: datetime) -> None: ...
     def binding_context(self, work_item_id: str) -> RequirementBindingContext: ...
@@ -621,9 +635,7 @@ Also test: token is only in `PRIVATE-TOKEN` header; URLs encode project/branch; 
 - [ ] **Step 2: Write failing Saga idempotency and guard tests**
 
 ```python
-def test_duplicate_processing_reuses_effect_number_name_and_binding(
-    repository, dependencies
-):
+def test_duplicate_processing_reuses_effect_number_name_and_binding(repository, dependencies):
     first = process_binding_request(repository, message_id=MESSAGE_ID, dependencies=dependencies)
     second = process_binding_request(repository, message_id=MESSAGE_ID, dependencies=dependencies)
     assert second == first
@@ -826,9 +838,7 @@ def test_reconciliation_converges_observed_branch(
     assert repository.binding_count(work_item_id=effect.work_item_id) == binding_count
 
 
-def test_requirement_callback_failure_does_not_undo_external_success(
-    repository, dependencies
-):
+def test_requirement_callback_failure_does_not_undo_external_success(repository, dependencies):
     effect = succeeded_effect_with_binding(repository)
     dependencies.requirements.fail_next_ready = True
     reconcile_due_effects(repository, limit=10, dependencies=dependencies)
