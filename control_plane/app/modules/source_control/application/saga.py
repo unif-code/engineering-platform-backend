@@ -3,6 +3,9 @@ from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 
+from control_plane.app.modules.source_control.application.audit import (
+    append_lifecycle_audit,
+)
 from control_plane.app.modules.source_control.application.dependencies import (
     SourceControlDependencies,
 )
@@ -72,6 +75,8 @@ def _repository_profile(row: Any) -> GitLabRepositoryProfile:
     return GitLabRepositoryProfile(
         repository_id=str(row["id"]),
         project_id=row["project_id"],
+        project_path=row["project_path"],
+        connection_ref=row["connection_ref"],
         default_branch=row["default_branch"],
         credential_secret_ref=row["credential_secret_ref"],
     )
@@ -95,6 +100,27 @@ def _set_callback_state(
                 "updated_at": now,
             },
         )
+        if updated is not None:
+            append_lifecycle_audit(
+                repository,
+                action=(
+                    "source_control.requirement_callback.acked"
+                    if callback_state is RequirementCallbackState.ACKED
+                    else "source_control.requirement_callback.failed"
+                ),
+                target_type="source_control_effect",
+                target_id=effect_id,
+                dependencies=dependencies,
+                result=(
+                    "SUCCESS" if callback_state is RequirementCallbackState.ACKED else "FAILURE"
+                ),
+                reason=(
+                    None
+                    if callback_state is RequirementCallbackState.ACKED
+                    else "REQUIREMENT_CALLBACK_UNAVAILABLE"
+                ),
+                correlation_id=f"source-control:effect:{effect_id}",
+            )
     return _effect_dto(updated)
 
 
@@ -133,9 +159,20 @@ def _complete_preflight_block(
         dependencies=dependencies,
     )
     with dependencies.engine.begin() as db:
-        dependencies.repository_factory(db).complete_binding_request(
+        repository = dependencies.repository_factory(db)
+        repository.complete_binding_request(
             message_id,
             now=dependencies.clock.now(),
+        )
+        append_lifecycle_audit(
+            repository,
+            action="source_control.binding.blocked",
+            target_type="binding_request_inbox",
+            target_id=message_id,
+            dependencies=dependencies,
+            result="DENIED",
+            reason=reason_code,
+            correlation_id=f"source-control:work-item:{context.work_item_id}",
         )
     return ProcessBindingRequestResult(
         effect=None,
@@ -155,7 +192,7 @@ def _complete_effect_block(
     completed_at = dependencies.clock.now()
     with dependencies.engine.begin() as db:
         repository = dependencies.repository_factory(db)
-        repository.transition_effect(
+        blocked_row = repository.transition_effect(
             effect.id,
             expected_state=EffectState.IN_FLIGHT.value,
             values={
@@ -166,6 +203,17 @@ def _complete_effect_block(
             },
         )
         repository.complete_binding_request(message_id, now=completed_at)
+        if blocked_row is not None:
+            append_lifecycle_audit(
+                repository,
+                action="source_control.effect.blocked",
+                target_type="source_control_effect",
+                target_id=effect.id,
+                dependencies=dependencies,
+                result="DENIED",
+                reason=reason_code,
+                correlation_id=f"source-control:effect:{effect.id}",
+            )
     try:
         _record_blocked(
             context,
@@ -364,6 +412,14 @@ def process_binding_request(
                     next_reconcile_at=None,
                     now=dependencies.clock.now(),
                 )
+                append_lifecycle_audit(
+                    repository,
+                    action="source_control.effect.planned",
+                    target_type="source_control_effect",
+                    target_id=str(effect_row["id"]),
+                    dependencies=dependencies,
+                    correlation_id=f"source-control:work-item:{context.work_item_id}",
+                )
     except IntegrityError:
         with dependencies.engine.connect() as db:
             effect_row = dependencies.repository_factory(db).effect_by_work_item(
@@ -375,15 +431,27 @@ def process_binding_request(
     if effect.state is not EffectState.PLANNED:
         return ProcessBindingRequestResult(effect=effect, binding=None, blocked_reason=None)
     with dependencies.engine.begin() as db:
-        in_flight_row = dependencies.repository_factory(db).transition_effect(
+        in_flight_at = dependencies.clock.now()
+        repository = dependencies.repository_factory(db)
+        in_flight_row = repository.transition_effect(
             effect.id,
             expected_state=EffectState.PLANNED.value,
             values={
                 "state": EffectState.IN_FLIGHT.value,
                 "attempts": effect.attempts + 1,
-                "updated_at": dependencies.clock.now(),
+                "next_reconcile_at": in_flight_at + timedelta(minutes=2),
+                "updated_at": in_flight_at,
             },
         )
+        if in_flight_row is not None:
+            append_lifecycle_audit(
+                repository,
+                action="source_control.effect.in_flight",
+                target_type="source_control_effect",
+                target_id=effect.id,
+                dependencies=dependencies,
+                correlation_id=f"source-control:effect:{effect.id}",
+            )
     if in_flight_row is None:
         with dependencies.engine.connect() as db:
             current = dependencies.repository_factory(db).effect_by_work_item(context.work_item_id)
@@ -420,6 +488,17 @@ def process_binding_request(
                 message_id,
                 now=dependencies.clock.now(),
             )
+            if unknown_row is not None:
+                append_lifecycle_audit(
+                    dependencies.repository_factory(db),
+                    action="source_control.effect.unknown",
+                    target_type="source_control_effect",
+                    target_id=effect.id,
+                    dependencies=dependencies,
+                    result="UNKNOWN",
+                    reason="EXTERNAL_RESULT_UNKNOWN",
+                    correlation_id=f"source-control:effect:{effect.id}",
+                )
         effect = _effect_dto(unknown_row)
         try:
             _record_blocked(
@@ -495,6 +574,23 @@ def process_binding_request(
             now=completed_at,
         )
         repository.complete_binding_request(message_id, now=completed_at)
+        append_lifecycle_audit(
+            repository,
+            action="source_control.binding.created",
+            target_type="repository_branch_binding",
+            target_id=str(binding_row["id"]),
+            dependencies=dependencies,
+            correlation_id=f"source-control:effect:{effect.id}",
+        )
+        if succeeded_row is not None:
+            append_lifecycle_audit(
+                repository,
+                action="source_control.effect.succeeded",
+                target_type="source_control_effect",
+                target_id=effect.id,
+                dependencies=dependencies,
+                correlation_id=f"source-control:effect:{effect.id}",
+            )
     return _replay_existing_binding(
         _binding_dto(binding_row),
         _effect_dto(succeeded_row),

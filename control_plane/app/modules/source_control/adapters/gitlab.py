@@ -23,8 +23,11 @@ _FULL_COMMIT_SHA = re.compile(r"^[0-9a-fA-F]{40,64}$")
 class HttpxGitLabAdapter:
     client: httpx.Client
     secrets: SecretReferencePort
+    connection_ref: str
 
     def _headers(self, repository: GitLabRepositoryProfile) -> dict[str, str]:
+        if repository.connection_ref != self.connection_ref:
+            raise GitLabAccessDenied("GitLab connection is not authorized for the repository")
         return {"PRIVATE-TOKEN": self.secrets.resolve(repository.credential_secret_ref)}
 
     @staticmethod
@@ -94,4 +97,7 @@ class HttpxGitLabAdapter:
             if response.status_code >= 500:
                 raise GitLabResultUnknown("GitLab branch creation result is unknown")
             raise GitLabProviderUnavailable("GitLab branch creation was rejected")
-        return self._decode_branch(response)
+        try:
+            return self._decode_branch(response)
+        except GitLabProviderUnavailable as error:
+            raise GitLabResultUnknown("GitLab branch creation result is unknown") from error

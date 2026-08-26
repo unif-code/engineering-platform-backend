@@ -139,16 +139,19 @@ class SqlAlchemySourceControlRepository:
         )
 
     def pending_binding_request_ids(self, *, limit: int, now: datetime) -> list[str]:
-        return list(
-            self.db.execute(
+        return [
+            str(value)
+            for value in self.db.execute(
                 text(
                     "SELECT message_id FROM source_control.binding_request_inbox "
-                    "WHERE state IN ('RECEIVED', 'FAILED') AND available_at <= :now "
+                    "WHERE (state IN ('RECEIVED', 'FAILED') OR "
+                    "(state='PROCESSING' AND available_at <= :now)) "
+                    "AND available_at <= :now "
                     "ORDER BY available_at, message_id LIMIT :limit"
                 ),
                 {"limit": limit, "now": now},
             ).scalars()
-        )
+        ]
 
     def complete_binding_request(self, message_id: str, *, now: datetime) -> Any:
         return (
@@ -283,7 +286,8 @@ class SqlAlchemySourceControlRepository:
                 text(
                     "WITH candidates AS ("
                     "SELECT id FROM source_control.source_control_effect "
-                    "WHERE state='UNKNOWN' AND next_reconcile_at <= :now "
+                    "WHERE state IN ('UNKNOWN', 'IN_FLIGHT', 'RECONCILIATION') "
+                    "AND next_reconcile_at <= :now "
                     "ORDER BY next_reconcile_at, id FOR UPDATE SKIP LOCKED LIMIT :limit"
                     ") UPDATE source_control.source_control_effect AS effect "
                     "SET state='RECONCILIATION', attempts=effect.attempts + 1, "
@@ -388,15 +392,16 @@ class SqlAlchemySourceControlRepository:
         )
 
     def pending_webhook_ids(self, *, limit: int) -> list[str]:
-        return list(
-            self.db.execute(
+        return [
+            str(value)
+            for value in self.db.execute(
                 text(
                     "SELECT id FROM source_control.webhook_inbox WHERE state='RECEIVED' "
                     "ORDER BY received_at, id LIMIT :limit"
                 ),
                 {"limit": limit},
             ).scalars()
-        )
+        ]
 
     def make_unknown_effect_due(
         self,

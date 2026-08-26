@@ -37,11 +37,23 @@ def test_render_contains_the_typed_requirement_contract() -> None:
 
 
 def test_source_control_webhook_is_connector_only() -> None:
-    public_paths = set(create_app().openapi()["paths"])
+    public_schema = create_app().openapi()
+    public_paths = set(public_schema["paths"])
     connector = create_source_control_connector_app()
     connector_paths = set(connector.openapi()["paths"])
 
     assert not any(path.startswith("/webhooks/gitlab/") for path in public_paths)
+    assert public_schema["components"]["schemas"]["RepositoryBindingBlockedReason"]["enum"] == [
+        "CONNECTOR_UNAVAILABLE",
+        "REPOSITORY_NOT_FOUND",
+        "ACCESS_DENIED",
+        "POLICY_DENIED",
+        "BINDING_CONFLICT",
+        "OWNER_UNASSIGNED",
+        "OWNER_INELIGIBLE",
+        "REPOSITORY_NOT_AUTHORIZED",
+        "RECONCILIATION_PENDING",
+    ]
     assert connector_paths == {"/healthz", "/readyz", "/webhooks/gitlab/{repository_id}"}
 
 
