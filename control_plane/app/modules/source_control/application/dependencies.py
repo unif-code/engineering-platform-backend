@@ -5,9 +5,11 @@ from sqlalchemy import Engine
 from control_plane.app.modules.audit import TransactionalAuditAppender
 from control_plane.app.modules.source_control.ports import (
     ClockPort,
+    GitLabPort,
     OwnerEligibilityPort,
     RandomPort,
     RequirementBindingPort,
+    SourceControlPolicyPort,
     SourceControlRepositoryFactory,
 )
 
@@ -21,3 +23,5 @@ class SourceControlDependencies:
     audit: TransactionalAuditAppender
     clock: ClockPort
     random: RandomPort
+    gitlab: GitLabPort | None = None
+    policy: SourceControlPolicyPort | None = None
