@@ -15,6 +15,10 @@ from control_plane.app.modules.source_control import (
     remove_workspace_repository,
 )
 from control_plane.app.modules.source_control.adapters import SqlAlchemySourceControlRepository
+from control_plane.app.modules.source_control.application.reconciliation import (
+    _complete_success,
+)
+from control_plane.app.modules.source_control.application.saga import _effect_dto
 from control_plane.app.modules.source_control.ports import (
     GitLabBranchNotFound,
     GitLabProviderUnavailable,
@@ -81,7 +85,54 @@ def test_reconciliation_converges_observed_branch(
         ).scalar_one()
 
     assert result.effects[0].state is expected_state
+    assert result.effects[0].next_reconcile_at is None
     assert actual_bindings == binding_count
+
+
+def test_stale_reconciliation_lease_cannot_create_binding_after_new_owner_blocks(
+    isolated_source_control_rw_engine: Engine,
+) -> None:
+    dependencies, requirement, _gitlab, _effect = _unknown_effect(isolated_source_control_rw_engine)
+    with isolated_source_control_rw_engine.begin() as db:
+        repository = SqlAlchemySourceControlRepository(db)
+        old_claim = repository.claim_unknown_effects(
+            limit=1,
+            now=NOW,
+            lease_until=NOW,
+        )[0]
+        new_claim = repository.claim_unknown_effects(
+            limit=1,
+            now=NOW,
+            lease_until=NOW + timedelta(minutes=2),
+        )[0]
+        blocked = repository.transition_effect(
+            str(new_claim["id"]),
+            expected_state=EffectState.RECONCILIATION.value,
+            expected_attempts=int(new_claim["attempts"]),
+            values={
+                "state": EffectState.BLOCKED.value,
+                "last_error_code": "OWNER_INELIGIBLE",
+                "next_reconcile_at": None,
+                "completed_at": NOW,
+                "updated_at": NOW,
+            },
+        )
+    assert blocked is not None
+
+    current, binding, completed = _complete_success(
+        _effect_dto(old_claim),
+        requirement.context,
+        dependencies=dependencies,
+    )
+    with isolated_source_control_rw_engine.connect() as db:
+        binding_count = db.exec_driver_sql(
+            "SELECT count(*) FROM source_control.repository_branch_binding"
+        ).scalar_one()
+
+    assert completed is False
+    assert current.state is EffectState.BLOCKED
+    assert binding is None
+    assert binding_count == 0
 
 
 def test_reconciliation_retries_missing_branch_with_same_name_and_base(

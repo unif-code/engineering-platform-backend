@@ -61,6 +61,8 @@ def test_gitlab_adapter_reads_main_creates_from_exact_sha_and_reads_back() -> No
         calls.append((request.method, request.url.raw_path.decode(), dict(request.url.params)))
         assert request.headers["PRIVATE-TOKEN"] == "test-only-token"
         assert "test-only-token" not in str(request.url)
+        if request.method == "GET" and "/repository/" not in request.url.path:
+            return httpx.Response(200, json={"path_with_namespace": "platform/backend"})
         if request.method == "GET" and request.url.path.endswith("/branches/main"):
             return httpx.Response(200, json={"name": "main", "commit": {"id": BASE_SHA}})
         if request.method == "POST":
@@ -83,8 +85,8 @@ def test_gitlab_adapter_reads_main_creates_from_exact_sha_and_reads_back() -> No
         )
 
     assert result.commit_sha == BASE_SHA
-    assert [method for method, _, _ in calls] == ["GET", "POST", "GET"]
-    assert "%2F" in calls[0][1] or "platform/backend" not in calls[0][1]
+    assert [method for method, _, _ in calls] == ["GET", "GET", "POST", "GET"]
+    assert "%2F" in calls[1][1] or "platform/backend" not in calls[1][1]
 
 
 @pytest.mark.parametrize("status", [401, 403])
@@ -124,10 +126,12 @@ def test_unknown_or_conflicting_create_converges_through_exact_readback(
         nonlocal calls
         calls += 1
         if calls == 1:
-            return httpx.Response(200, json={"name": "main", "commit": {"id": BASE_SHA}})
-        if calls == 2 and post_result == "timeout":
-            raise httpx.ReadTimeout("timeout", request=request)
+            return httpx.Response(200, json={"path_with_namespace": "platform/backend"})
         if calls == 2:
+            return httpx.Response(200, json={"name": "main", "commit": {"id": BASE_SHA}})
+        if calls == 3 and post_result == "timeout":
+            raise httpx.ReadTimeout("timeout", request=request)
+        if calls == 3:
             return httpx.Response(409, text="already exists")
         return httpx.Response(
             200,
@@ -142,7 +146,7 @@ def test_unknown_or_conflicting_create_converges_through_exact_readback(
         )
 
     assert result.commit_sha == BASE_SHA
-    assert calls == 3
+    assert calls == 4
 
 
 def test_malformed_successful_create_response_is_unknown_until_exact_readback() -> None:
@@ -152,8 +156,10 @@ def test_malformed_successful_create_response_is_unknown_until_exact_readback() 
         nonlocal calls
         calls += 1
         if calls == 1:
-            return httpx.Response(200, json={"name": "main", "commit": {"id": BASE_SHA}})
+            return httpx.Response(200, json={"path_with_namespace": "platform/backend"})
         if calls == 2:
+            return httpx.Response(200, json={"name": "main", "commit": {"id": BASE_SHA}})
+        if calls == 3:
             return httpx.Response(201, content=b"created-but-unreadable")
         return httpx.Response(
             200,
@@ -168,7 +174,7 @@ def test_malformed_successful_create_response_is_unknown_until_exact_readback() 
         )
 
     assert result.commit_sha == BASE_SHA
-    assert calls == 3
+    assert calls == 4
 
 
 def test_differing_readback_sha_is_a_branch_conflict() -> None:
@@ -178,8 +184,10 @@ def test_differing_readback_sha_is_a_branch_conflict() -> None:
         nonlocal calls
         calls += 1
         if calls == 1:
-            return httpx.Response(200, json={"name": "main", "commit": {"id": BASE_SHA}})
+            return httpx.Response(200, json={"path_with_namespace": "platform/backend"})
         if calls == 2:
+            return httpx.Response(200, json={"name": "main", "commit": {"id": BASE_SHA}})
+        if calls == 3:
             return httpx.Response(201, json={"name": TASK_BRANCH, "commit": {"id": BASE_SHA}})
         return httpx.Response(
             200,
@@ -206,3 +214,20 @@ def test_adapter_rejects_repository_for_a_different_authorized_connection() -> N
         _adapter(client, connection_ref="gitlab-secondary").get_branch(_profile(), "main")
 
     assert calls == 0
+
+
+def test_project_profile_path_mismatch_fails_closed_before_branch_write() -> None:
+    methods: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        methods.append(request.method)
+        return httpx.Response(200, json={"path_with_namespace": "other/backend"})
+
+    with _client(handler) as client, pytest.raises(GitLabAccessDenied):
+        run_create_branch_saga(
+            _adapter(client),
+            _profile(),
+            TASK_BRANCH,
+        )
+
+    assert methods == ["GET"]

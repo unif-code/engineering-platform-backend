@@ -67,6 +67,7 @@ class SourceControlRepository(Protocol):
         effect_id: str,
         *,
         expected_state: str,
+        expected_attempts: int | None = None,
         values: Mapping[str, object],
     ) -> Any: ...
 

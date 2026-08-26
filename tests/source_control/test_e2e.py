@@ -209,6 +209,45 @@ def test_worker_happy_path_converges_duplicate_delivery_without_duplicate_facts(
     }
 
 
+def test_worker_recovers_crashed_in_flight_effect_and_completes_inbox_handoff(
+    isolated_source_control_database: IsolatedSourceControlDatabase,
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    create_assigned_requirement(isolated_requirement_database)
+    gitlab = FakeGitLab()
+    dependencies = _dependencies(
+        isolated_source_control_database,
+        isolated_requirement_database,
+        gitlab,
+    )
+    _register(isolated_source_control_database, dependencies)
+    run_worker_once("relay", limit=10, dependencies=dependencies)
+    gitlab.create_error = RuntimeError("simulated worker crash")
+
+    with pytest.raises(RuntimeError, match="simulated worker crash"):
+        run_worker_once("process", limit=10, dependencies=dependencies)
+    with isolated_source_control_database.owner.begin() as db:
+        db.execute(
+            text("UPDATE source_control.binding_request_inbox SET available_at=:now"),
+            {"now": FixedClock().now()},
+        )
+
+    recovered = run_worker_once("process", limit=10, dependencies=dependencies)
+    with isolated_source_control_database.owner.connect() as db:
+        state = db.execute(
+            text(
+                "SELECT inbox.state, effect.state, "
+                "(SELECT count(*) FROM source_control.repository_branch_binding) "
+                "FROM source_control.binding_request_inbox AS inbox "
+                "JOIN source_control.source_control_effect AS effect "
+                "ON effect.work_item_id=inbox.work_item_id"
+            )
+        ).one()
+
+    assert (recovered.claimed, recovered.processed) == (1, 1)
+    assert state == ("PROCESSED", EffectState.IN_FLIGHT.value, 0)
+
+
 def test_signed_webhook_only_schedules_unknown_effect_then_reconciliation_binds(
     isolated_source_control_database: IsolatedSourceControlDatabase,
     isolated_requirement_database: IsolatedRequirementDatabase,
@@ -223,6 +262,7 @@ def test_signed_webhook_only_schedules_unknown_effect_then_reconciliation_binds(
         gitlab,
     )
     _register(isolated_source_control_database, dependencies)
+
     run_worker_once("relay", limit=10, dependencies=dependencies)
 
     unknown = run_worker_once("process", limit=10, dependencies=dependencies)
@@ -317,6 +357,19 @@ def test_runtime_roles_cannot_cross_write_and_audit_contains_no_secret_or_body(
     )
     _register(isolated_source_control_database, dependencies)
 
+    rejected_body = b"private-invalid-webhook-body"
+    connector = TestClient(
+        create_source_control_connector_app(
+            runtime_provider=lambda: SourceControlWebhookRuntime(dependencies)
+        )
+    )
+    rejected = connector.post(
+        f"/webhooks/gitlab/{REPOSITORY_ID}",
+        content=rejected_body,
+        headers=_signed_push_headers(rejected_body, "e2e-rejected-webhook"),
+    )
+    assert rejected.status_code == 400
+
     with isolated_source_control_database.runtime.begin() as db, pytest.raises(DBAPIError):
         db.execute(text("INSERT INTO requirement.requirement (id) VALUES ('forbidden')"))
     with isolated_requirement_database.runtime.begin() as db, pytest.raises(DBAPIError):
@@ -333,8 +386,11 @@ def test_runtime_roles_cannot_cross_write_and_audit_contains_no_secret_or_body(
             if value is not None
         )
     assert REPOSITORY_ID in serialized
+    assert "source_control.webhook.rejected" in serialized
+    assert "WEBHOOK_PAYLOAD_INVALID" in serialized
     assert "whsec_" not in serialized
     assert "object_kind" not in serialized
+    assert rejected_body.decode() not in serialized
 
 
 def test_unassembled_connector_and_worker_fail_closed_without_leaking_details(

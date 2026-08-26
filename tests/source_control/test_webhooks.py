@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine
 
+from control_plane.app.modules.audit import AuditEnvelope
 from control_plane.app.modules.source_control import (
     SourceControlDependencies,
     WebhookIdConflict,
@@ -52,9 +53,9 @@ class FixedRandom:
 
 class FakeAudit:
     def __init__(self) -> None:
-        self.events: list[object] = []
+        self.events: list[AuditEnvelope] = []
 
-    def append_in_transaction(self, _db: object, envelope: object) -> None:
+    def append_in_transaction(self, _db: object, envelope: AuditEnvelope) -> None:
         self.events.append(envelope)
 
 
@@ -277,6 +278,53 @@ def test_project_mismatch_is_rejected_after_valid_signature(
             headers=_headers(body),
             dependencies=dependencies,
         )
+
+    assert isinstance(dependencies.audit, FakeAudit)
+    rejection = dependencies.audit.events[-1]
+    assert rejection.action == "source_control.webhook.rejected"
+    assert rejection.reason == "WEBHOOK_PROJECT_MISMATCH"
+
+
+@pytest.mark.parametrize(
+    ("case", "expected_exception", "reason"),
+    [
+        ("signature", WebhookSignatureInvalid, "WEBHOOK_SIGNATURE_INVALID"),
+        ("replay", WebhookReplayRejected, "WEBHOOK_REPLAY_REJECTED"),
+        ("json", WebhookPayloadInvalid, "WEBHOOK_PAYLOAD_INVALID"),
+    ],
+)
+def test_rejected_webhook_records_only_allowlisted_security_audit(
+    isolated_source_control_rw_engine: Engine,
+    case: str,
+    expected_exception: type[Exception],
+    reason: str,
+) -> None:
+    dependencies = _dependencies(isolated_source_control_rw_engine)
+    _register(isolated_source_control_rw_engine, dependencies)
+    body = b"not-json" if case == "json" else _body()
+    headers = _headers(body)
+    if case == "signature":
+        headers["webhook-signature"] = "v1,private-invalid-signature"
+    elif case == "replay":
+        stale = int((NOW - timedelta(minutes=6)).timestamp())
+        headers = _headers(body, timestamp=stale)
+
+    with pytest.raises(expected_exception):
+        ingest_signed_gitlab_webhook(
+            repository_id=REPOSITORY_ID,
+            raw_body=body,
+            headers=headers,
+            dependencies=dependencies,
+        )
+
+    assert isinstance(dependencies.audit, FakeAudit)
+    rejection = dependencies.audit.events[-1]
+    assert rejection.action == "source_control.webhook.rejected"
+    assert rejection.reason == reason
+    serialized = repr(rejection)
+    assert SIGNING_TOKEN not in serialized
+    assert body.decode() not in serialized
+    assert headers["webhook-signature"] not in serialized
 
 
 def test_connector_route_returns_only_sanitized_acceptance(

@@ -59,6 +59,8 @@ class SecretReferencePort(Protocol):
 
 
 class GitLabPort(Protocol):
+    def validate_repository(self, repository: GitLabRepositoryProfile) -> None: ...
+
     def get_branch(
         self,
         repository: GitLabRepositoryProfile,
@@ -113,6 +115,7 @@ def run_create_branch_saga(
     repository: GitLabRepositoryProfile,
     branch_name: str,
 ) -> BranchSnapshot:
+    gitlab.validate_repository(repository)
     base = gitlab.get_branch(repository, repository.default_branch)
     return create_and_verify_branch(
         gitlab,

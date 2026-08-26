@@ -122,6 +122,9 @@ class FakeGitLab:
         self.task_read_error_once: Exception | None = None
         self.branch_sha: str | None = None
 
+    def validate_repository(self, _repository: GitLabRepositoryProfile) -> None:
+        return None
+
     def get_branch(
         self,
         _repository: GitLabRepositoryProfile,
@@ -434,6 +437,39 @@ def test_unexpected_process_crash_leaves_in_flight_effect_with_recovery_due_time
     assert row.next_reconcile_at > NOW
 
 
+def test_recovered_in_flight_effect_completes_inbox_handoff(
+    isolated_source_control_rw_engine: Engine,
+) -> None:
+    dependencies, _requirement, gitlab = _saga_dependencies(isolated_source_control_rw_engine)
+    _seed_binding_request(isolated_source_control_rw_engine, dependencies)
+    gitlab.create_error = RuntimeError("simulated process crash")
+
+    with pytest.raises(RuntimeError, match="simulated process crash"):
+        process_binding_request(
+            message_id="30000000-0000-0000-0000-000000000501",
+            dependencies=dependencies,
+        )
+    with isolated_source_control_rw_engine.begin() as db:
+        db.exec_driver_sql(
+            "UPDATE source_control.binding_request_inbox SET available_at=%s",
+            (NOW,),
+        )
+
+    recovered = process_binding_request(
+        message_id="30000000-0000-0000-0000-000000000501",
+        dependencies=dependencies,
+    )
+    with isolated_source_control_rw_engine.connect() as db:
+        inbox = db.exec_driver_sql(
+            "SELECT state, processed_at FROM source_control.binding_request_inbox"
+        ).one()
+
+    assert recovered.effect is not None
+    assert recovered.effect.state is EffectState.IN_FLIGHT
+    assert inbox.state == "PROCESSED"
+    assert inbox.processed_at is not None
+
+
 def test_create_access_denial_blocks_without_creating_binding(
     isolated_source_control_rw_engine: Engine,
 ) -> None:
@@ -451,6 +487,7 @@ def test_create_access_denial_blocks_without_creating_binding(
     assert result.binding is None
     assert result.blocked_reason == "ACCESS_DENIED"
     assert requirement.blocked[0].reason_code == "ACCESS_DENIED"
+    assert result.effect.next_reconcile_at is None
 
 
 @pytest.mark.parametrize(
