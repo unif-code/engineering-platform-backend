@@ -1,3 +1,7 @@
+from control_plane.app.modules.requirement.domain.delivery import (
+    transition_human_work_started,
+    transition_integration_mr_ready,
+)
 from control_plane.app.modules.requirement.domain.models import (
     AssignmentState,
     BaselineConfirmationResult,
@@ -10,6 +14,11 @@ from control_plane.app.modules.requirement.domain.models import (
     GateInstanceDto,
     GateState,
     GateType,
+    IntegrationDeliveryBlockedReason,
+    IntegrationDeliveryContext,
+    IntegrationDeliveryRequestKind,
+    IntegrationDeliveryRequestMessage,
+    IntegrationDeliveryState,
     RecordState,
     RegisterSddBaselineResult,
     RepositoryBindingBlockedReason,
@@ -66,6 +75,11 @@ __all__ = [
     "GateReviewerMismatch",
     "GateState",
     "GateType",
+    "IntegrationDeliveryBlockedReason",
+    "IntegrationDeliveryContext",
+    "IntegrationDeliveryRequestKind",
+    "IntegrationDeliveryRequestMessage",
+    "IntegrationDeliveryState",
     "InvalidRequirementCursor",
     "InvalidRequirementInput",
     "InvalidRequirementTransition",
@@ -96,4 +110,6 @@ __all__ = [
     "WorkItemState",
     "derive_work_item_state",
     "transition_requirement",
+    "transition_human_work_started",
+    "transition_integration_mr_ready",
 ]
