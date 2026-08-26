@@ -7,6 +7,10 @@ from sqlalchemy import Connection
 
 from control_plane.app.modules.requirement.application import (
     RequirementDependencies,
+    WorkItemActorDenied,
+    WorkItemDeliveryConflict,
+    WorkItemDeliveryDto,
+    WorkItemDeliveryResult,
 )
 from control_plane.app.modules.requirement.application import (
     acknowledge_repository_binding_request as _acknowledge_repository_binding_request,
@@ -40,8 +44,15 @@ from control_plane.app.modules.requirement.application import (
     release_repository_binding_request as _release_repository_binding_request,
 )
 from control_plane.app.modules.requirement.application import (
+    request_integration_merge as _request_integration_merge,
+)
+from control_plane.app.modules.requirement.application import (
+    request_integration_merge_request as _request_integration_merge_request,
+)
+from control_plane.app.modules.requirement.application import (
     start_requirement_preparation as _start_requirement_preparation,
 )
+from control_plane.app.modules.requirement.application import start_work_item as _start_work_item
 from control_plane.app.modules.requirement.application import (
     submit_baseline_confirmation as _submit_baseline_confirmation,
 )
@@ -62,6 +73,8 @@ from control_plane.app.modules.requirement.domain import (
     GateReviewerMismatch,
     GateState,
     GateType,
+    IntegrationDeliveryBlockedReason,
+    IntegrationDeliveryState,
     InvalidRequirementCursor,
     InvalidRequirementInput,
     InvalidRequirementTransition,
@@ -187,6 +200,69 @@ def start_requirement_preparation(
     return _start_requirement_preparation(
         dependencies.repository_factory(db),
         requirement_id=requirement_id,
+        expected_revision=expected_revision,
+        actor=actor,
+        idempotency_key=idempotency_key,
+        dependencies=dependencies,
+    )
+
+
+def start_work_item(
+    db: Connection,
+    *,
+    requirement_id: str,
+    work_item_id: str,
+    expected_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    dependencies: RequirementDependencies,
+) -> WorkItemDeliveryResult:
+    return _start_work_item(
+        dependencies.repository_factory(db),
+        requirement_id=requirement_id,
+        work_item_id=work_item_id,
+        expected_revision=expected_revision,
+        actor=actor,
+        idempotency_key=idempotency_key,
+        dependencies=dependencies,
+    )
+
+
+def request_integration_merge_request(
+    db: Connection,
+    *,
+    requirement_id: str,
+    work_item_id: str,
+    expected_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    dependencies: RequirementDependencies,
+) -> WorkItemDeliveryResult:
+    return _request_integration_merge_request(
+        dependencies.repository_factory(db),
+        requirement_id=requirement_id,
+        work_item_id=work_item_id,
+        expected_revision=expected_revision,
+        actor=actor,
+        idempotency_key=idempotency_key,
+        dependencies=dependencies,
+    )
+
+
+def request_integration_merge(
+    db: Connection,
+    *,
+    requirement_id: str,
+    work_item_id: str,
+    expected_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    dependencies: RequirementDependencies,
+) -> WorkItemDeliveryResult:
+    return _request_integration_merge(
+        dependencies.repository_factory(db),
+        requirement_id=requirement_id,
+        work_item_id=work_item_id,
         expected_revision=expected_revision,
         actor=actor,
         idempotency_key=idempotency_key,
@@ -375,6 +451,8 @@ __all__ = [
     "InvalidRequirementCursor",
     "InvalidRequirementInput",
     "InvalidRequirementTransition",
+    "IntegrationDeliveryBlockedReason",
+    "IntegrationDeliveryState",
     "RecordState",
     "RegisterSddBaselineResult",
     "RepositoryBindingConflict",
@@ -398,6 +476,10 @@ __all__ = [
     "StaleRequirementRevision",
     "StaleWorkItemRevision",
     "WorkItemDto",
+    "WorkItemActorDenied",
+    "WorkItemDeliveryConflict",
+    "WorkItemDeliveryDto",
+    "WorkItemDeliveryResult",
     "WorkItemNotFound",
     "WorkItemState",
     "RepositoryBindingRequestMessage",
@@ -411,9 +493,12 @@ __all__ = [
     "list_requirements",
     "record_repository_binding",
     "record_repository_binding_blocked",
+    "request_integration_merge",
+    "request_integration_merge_request",
     "release_repository_binding_request",
     "register_sdd_baseline",
     "start_requirement_preparation",
+    "start_work_item",
     "submit_baseline_confirmation",
     "transition_requirement",
 ]

@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Annotated, Any, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy import Engine
 from sqlalchemy.exc import SQLAlchemyError
@@ -14,6 +14,9 @@ from control_plane.app.modules.requirement import (
     get_requirement,
     list_requirements,
     register_sdd_baseline,
+    request_integration_merge,
+    request_integration_merge_request,
+    start_work_item,
     submit_baseline_confirmation,
 )
 from control_plane.app.modules.requirement.api.dto import (
@@ -27,8 +30,11 @@ from control_plane.app.modules.requirement.api.dto import (
     RequirementDetailsResponseDto,
     RequirementListResponseDto,
     SubmitBaselineConfirmationRequestDto,
+    WorkItemDeliveryCommandRequestDto,
+    WorkItemDeliveryResponseDto,
 )
 from control_plane.app.modules.requirement.application import RequirementDependencies
+from control_plane.app.modules.requirement.application.delivery import WorkItemActorDenied
 from control_plane.app.modules.requirement.domain import (
     ArtifactUnavailable,
     GateNotFound,
@@ -40,6 +46,7 @@ from control_plane.app.modules.requirement.domain import (
     RequirementError,
     RequirementNotFound,
     SddBaselineNotFound,
+    WorkItemNotFound,
 )
 from control_plane.app.shared.api.concurrency import entity_tag, require_if_match
 from control_plane.app.shared.api.idempotency import require_idempotency_key
@@ -59,6 +66,8 @@ REQUIREMENT_READ_CAPABILITY = "requirement.read"
 REQUIREMENT_BASELINE_SUBMIT_CAPABILITY = "requirement.baseline.submit"
 REQUIREMENT_BASELINE_DECIDE_CAPABILITY = "requirement.baseline.decide"
 WORK_ITEM_ASSIGN_CAPABILITY = "work_item.assign"
+WORK_ITEM_EXECUTE_CAPABILITY = "work_item.execute"
+MERGE_REQUEST_MERGE_CAPABILITY = "merge_request.merge"
 
 _RESPONSES = cast(
     dict[int | str, dict[str, Any]],
@@ -127,8 +136,12 @@ def _versioned_preflight(
 
 
 def _problem(error: Exception) -> Response:
-    if isinstance(error, (RequirementNotFound, SddBaselineNotFound, GateNotFound)):
+    if isinstance(
+        error, (RequirementNotFound, WorkItemNotFound, SddBaselineNotFound, GateNotFound)
+    ):
         return problem_response(404, "Requirement subject not found")
+    if isinstance(error, WorkItemActorDenied):
+        return problem_response(403, "WorkItem actor denied")
     if isinstance(error, (GateReviewerMismatch, GateReviewerIneligible)):
         return problem_response(403, "Baseline reviewer denied")
     if isinstance(error, InvalidRequirementInput):
@@ -399,6 +412,137 @@ def create_requirement_router(
             BaselineDecisionResponseDto.from_domain(decision),
             status_code=200,
             revision=decision.requirement.revision,
+        )
+
+    @router.post(
+        "/{requirementId}/work-items/{workItemId}:start",
+        operation_id="requirements_start_work_item",
+        response_model=WorkItemDeliveryResponseDto,
+        responses={**_RESPONSES, 200: {"headers": _ETAG_HEADER}},
+        dependencies=[Depends(_assert_versioned_preflight), Depends(_versioned_preflight)],
+    )
+    def requirement_start_work_item(
+        requirement_id: Annotated[UUID, Path(alias="requirementId")],
+        work_item_id: Annotated[UUID, Path(alias="workItemId")],
+        principal: Annotated[Any, Depends(principal_provider)],
+        preflight: Annotated[_VersionedPreflight, Depends(_versioned_preflight)],
+        body: Annotated[WorkItemDeliveryCommandRequestDto | None, Body()] = None,
+    ) -> Response:
+        del body
+        runtime = runtime_provider()
+        details = authorized_details(
+            runtime,
+            principal,
+            str(requirement_id),
+            WORK_ITEM_EXECUTE_CAPABILITY,
+        )
+        if isinstance(details, Response):
+            return details
+        try:
+            with runtime.engine.begin() as db:
+                result = start_work_item(
+                    db,
+                    requirement_id=str(requirement_id),
+                    work_item_id=str(work_item_id),
+                    expected_revision=preflight.expected_revision,
+                    actor=principal,
+                    idempotency_key=preflight.idempotency_key,
+                    dependencies=runtime.dependencies,
+                )
+        except Exception as error:
+            return _problem(error)
+        return _json(
+            WorkItemDeliveryResponseDto.from_domain(result),
+            status_code=200,
+            revision=result.requirement.revision,
+        )
+
+    @router.post(
+        "/{requirementId}/work-items/{workItemId}:request-integration-mr",
+        operation_id="requirements_request_integration_merge_request",
+        status_code=202,
+        response_model=WorkItemDeliveryResponseDto,
+        responses={**_RESPONSES, 202: {"headers": _ETAG_HEADER}},
+        dependencies=[Depends(_assert_versioned_preflight), Depends(_versioned_preflight)],
+    )
+    def requirement_request_integration_merge_request(
+        requirement_id: Annotated[UUID, Path(alias="requirementId")],
+        work_item_id: Annotated[UUID, Path(alias="workItemId")],
+        principal: Annotated[Any, Depends(principal_provider)],
+        preflight: Annotated[_VersionedPreflight, Depends(_versioned_preflight)],
+        body: Annotated[WorkItemDeliveryCommandRequestDto | None, Body()] = None,
+    ) -> Response:
+        del body
+        runtime = runtime_provider()
+        details = authorized_details(
+            runtime,
+            principal,
+            str(requirement_id),
+            WORK_ITEM_EXECUTE_CAPABILITY,
+        )
+        if isinstance(details, Response):
+            return details
+        try:
+            with runtime.engine.begin() as db:
+                result = request_integration_merge_request(
+                    db,
+                    requirement_id=str(requirement_id),
+                    work_item_id=str(work_item_id),
+                    expected_revision=preflight.expected_revision,
+                    actor=principal,
+                    idempotency_key=preflight.idempotency_key,
+                    dependencies=runtime.dependencies,
+                )
+        except Exception as error:
+            return _problem(error)
+        return _json(
+            WorkItemDeliveryResponseDto.from_domain(result),
+            status_code=202,
+            revision=result.requirement.revision,
+        )
+
+    @router.post(
+        "/{requirementId}/work-items/{workItemId}:request-integration-merge",
+        operation_id="requirements_request_integration_merge",
+        status_code=202,
+        response_model=WorkItemDeliveryResponseDto,
+        responses={**_RESPONSES, 202: {"headers": _ETAG_HEADER}},
+        dependencies=[Depends(_assert_versioned_preflight), Depends(_versioned_preflight)],
+    )
+    def requirement_request_integration_merge(
+        requirement_id: Annotated[UUID, Path(alias="requirementId")],
+        work_item_id: Annotated[UUID, Path(alias="workItemId")],
+        principal: Annotated[Any, Depends(principal_provider)],
+        preflight: Annotated[_VersionedPreflight, Depends(_versioned_preflight)],
+        body: Annotated[WorkItemDeliveryCommandRequestDto | None, Body()] = None,
+    ) -> Response:
+        del body
+        runtime = runtime_provider()
+        details = authorized_details(
+            runtime,
+            principal,
+            str(requirement_id),
+            MERGE_REQUEST_MERGE_CAPABILITY,
+        )
+        if isinstance(details, Response):
+            return details
+        try:
+            with runtime.engine.begin() as db:
+                result = request_integration_merge(
+                    db,
+                    requirement_id=str(requirement_id),
+                    work_item_id=str(work_item_id),
+                    expected_revision=preflight.expected_revision,
+                    actor=principal,
+                    idempotency_key=preflight.idempotency_key,
+                    dependencies=runtime.dependencies,
+                )
+        except Exception as error:
+            return _problem(error)
+        return _json(
+            WorkItemDeliveryResponseDto.from_domain(result),
+            status_code=202,
+            revision=result.requirement.revision,
         )
 
     return router
