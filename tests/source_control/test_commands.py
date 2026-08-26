@@ -1,4 +1,6 @@
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -16,6 +18,7 @@ from control_plane.app.modules.source_control import (
     SourceControlDependencies,
     accept_binding_request,
     process_binding_request,
+    reconcile_due_effects,
     register_workspace_repository,
     remove_workspace_repository,
 )
@@ -121,6 +124,7 @@ class FakeGitLab:
         self.task_read_error: Exception | None = None
         self.task_read_error_once: Exception | None = None
         self.branch_sha: str | None = None
+        self.before_create: Callable[[], None] | None = None
 
     def validate_repository(self, _repository: GitLabRepositoryProfile) -> None:
         return None
@@ -147,6 +151,10 @@ class FakeGitLab:
         ref_sha: str,
     ) -> BranchSnapshot:
         self.calls.append(("POST", name))
+        before_create = self.before_create
+        self.before_create = None
+        if before_create is not None:
+            before_create()
         self.created.append((name, ref_sha))
         if self.create_error is not None:
             raise self.create_error
@@ -583,3 +591,120 @@ def test_concurrent_processing_leaves_one_effect_and_binding(
     assert binding_count == 1
     assert len(gitlab.created) == 1
     assert any(not isinstance(outcome, Exception) for outcome in outcomes)
+
+
+def test_stale_initial_success_cannot_bind_after_reconciliation_blocks(
+    isolated_source_control_rw_engine: Engine,
+) -> None:
+    dependencies, requirement, gitlab = _saga_dependencies(isolated_source_control_rw_engine)
+    _seed_binding_request(isolated_source_control_rw_engine, dependencies)
+
+    def takeover() -> None:
+        with isolated_source_control_rw_engine.begin() as db:
+            db.exec_driver_sql(
+                "UPDATE source_control.source_control_effect SET next_reconcile_at=%s",
+                (NOW,),
+            )
+        reconciled = reconcile_due_effects(
+            limit=1,
+            dependencies=replace(dependencies, eligibility=FakeEligibility(False)),
+        )
+        assert reconciled.effects[0].state is EffectState.BLOCKED
+
+    gitlab.before_create = takeover
+    result = process_binding_request(
+        message_id="30000000-0000-0000-0000-000000000501",
+        dependencies=dependencies,
+    )
+    with isolated_source_control_rw_engine.connect() as db:
+        facts = db.exec_driver_sql(
+            "SELECT effect.state, inbox.state, "
+            "(SELECT count(*) FROM source_control.repository_branch_binding) "
+            "FROM source_control.source_control_effect AS effect "
+            "JOIN source_control.binding_request_inbox AS inbox "
+            "ON inbox.work_item_id=effect.work_item_id"
+        ).one()
+
+    assert result.effect is not None
+    assert result.effect.state is EffectState.BLOCKED
+    assert result.binding is None
+    assert facts == (EffectState.BLOCKED.value, "PROCESSING", 0)
+    assert requirement.ready == []
+    assert len(requirement.blocked) == 1
+
+
+def test_stale_initial_denial_cannot_block_after_reconciliation_succeeds(
+    isolated_source_control_rw_engine: Engine,
+) -> None:
+    dependencies, requirement, gitlab = _saga_dependencies(isolated_source_control_rw_engine)
+    _seed_binding_request(isolated_source_control_rw_engine, dependencies)
+
+    def takeover() -> None:
+        with isolated_source_control_rw_engine.begin() as db:
+            db.exec_driver_sql(
+                "UPDATE source_control.source_control_effect SET next_reconcile_at=%s",
+                (NOW,),
+            )
+        reconciled = reconcile_due_effects(limit=1, dependencies=dependencies)
+        assert reconciled.effects[0].state is EffectState.SUCCEEDED
+
+    gitlab.before_create = takeover
+    gitlab.create_error = GitLabAccessDenied("late denial")
+    result = process_binding_request(
+        message_id="30000000-0000-0000-0000-000000000501",
+        dependencies=dependencies,
+    )
+    with isolated_source_control_rw_engine.connect() as db:
+        facts = db.exec_driver_sql(
+            "SELECT effect.state, inbox.state, "
+            "(SELECT count(*) FROM source_control.repository_branch_binding) "
+            "FROM source_control.source_control_effect AS effect "
+            "JOIN source_control.binding_request_inbox AS inbox "
+            "ON inbox.work_item_id=effect.work_item_id"
+        ).one()
+
+    assert result.effect is not None
+    assert result.effect.state is EffectState.SUCCEEDED
+    assert result.binding is not None
+    assert facts == (EffectState.SUCCEEDED.value, "PROCESSING", 1)
+    assert len(requirement.ready) == 1
+    assert requirement.blocked == []
+
+
+def test_stale_initial_unknown_cannot_overwrite_reconciliation_success(
+    isolated_source_control_rw_engine: Engine,
+) -> None:
+    dependencies, requirement, gitlab = _saga_dependencies(isolated_source_control_rw_engine)
+    _seed_binding_request(isolated_source_control_rw_engine, dependencies)
+
+    def takeover() -> None:
+        with isolated_source_control_rw_engine.begin() as db:
+            db.exec_driver_sql(
+                "UPDATE source_control.source_control_effect SET next_reconcile_at=%s",
+                (NOW,),
+            )
+        reconciled = reconcile_due_effects(limit=1, dependencies=dependencies)
+        assert reconciled.effects[0].state is EffectState.SUCCEEDED
+        gitlab.task_read_error = GitLabProviderUnavailable("late unreadable result")
+
+    gitlab.before_create = takeover
+    gitlab.create_error = GitLabResultUnknown("late timeout")
+    result = process_binding_request(
+        message_id="30000000-0000-0000-0000-000000000501",
+        dependencies=dependencies,
+    )
+    with isolated_source_control_rw_engine.connect() as db:
+        facts = db.exec_driver_sql(
+            "SELECT effect.state, inbox.state, "
+            "(SELECT count(*) FROM source_control.repository_branch_binding) "
+            "FROM source_control.source_control_effect AS effect "
+            "JOIN source_control.binding_request_inbox AS inbox "
+            "ON inbox.work_item_id=effect.work_item_id"
+        ).one()
+
+    assert result.effect is not None
+    assert result.effect.state is EffectState.SUCCEEDED
+    assert result.binding is not None
+    assert facts == (EffectState.SUCCEEDED.value, "PROCESSING", 1)
+    assert len(requirement.ready) == 1
+    assert requirement.blocked == []
