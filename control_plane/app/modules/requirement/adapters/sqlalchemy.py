@@ -266,6 +266,52 @@ class SqlAlchemyRequirementRepository:
             .one_or_none()
         )
 
+    def update_work_item_delivery(
+        self,
+        work_item_id: str,
+        *,
+        expected_revision: int,
+        state: str,
+        delivery_state: str,
+        binding_id: str | None,
+        blocked_reason: str | None,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.work_item SET state=:state, "
+                    "integration_delivery_state=:delivery_state, "
+                    "integration_merge_request_binding_id=CAST(:binding_id AS UUID), "
+                    "integration_blocked_reason_code=:blocked_reason, "
+                    "integration_updated_at=:now, revision=revision + 1, updated_at=:now "
+                    "WHERE id=:id AND revision=:expected_revision RETURNING *"
+                ),
+                {
+                    "id": work_item_id,
+                    "expected_revision": expected_revision,
+                    "state": state,
+                    "delivery_state": delivery_state,
+                    "binding_id": binding_id,
+                    "blocked_reason": blocked_reason,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def required_work_item_states(self, requirement_id: str) -> tuple[str, ...]:
+        return tuple(
+            self.db.execute(
+                text(
+                    "SELECT state FROM requirement.work_item "
+                    "WHERE requirement_id=:requirement_id ORDER BY created_at, id"
+                ),
+                {"requirement_id": requirement_id},
+            ).scalars()
+        )
+
     def insert_outbox(self, **values: Any) -> Any:
         parameters = {
             **values,

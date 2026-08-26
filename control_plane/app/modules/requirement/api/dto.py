@@ -3,6 +3,10 @@ from uuid import UUID
 
 from pydantic import ConfigDict, Field
 
+from control_plane.app.modules.requirement.application.delivery import (
+    WorkItemDeliveryDto,
+    WorkItemDeliveryResult,
+)
 from control_plane.app.modules.requirement.domain import (
     AssignmentState,
     BaselineConfirmationResult,
@@ -15,6 +19,8 @@ from control_plane.app.modules.requirement.domain import (
     GateInstanceDto,
     GateState,
     GateType,
+    IntegrationDeliveryBlockedReason,
+    IntegrationDeliveryState,
     RecordState,
     RegisterSddBaselineResult,
     RepositoryBindingBlockedReason,
@@ -59,6 +65,10 @@ class DecideBaselineRequestDto(StrictCamelModel):
     reason: str = Field(min_length=1, max_length=2000)
 
 
+class WorkItemDeliveryCommandRequestDto(StrictCamelModel):
+    pass
+
+
 class RequirementResponseDto(CamelModel):
     id: UUID
     workspace_id: UUID
@@ -101,6 +111,10 @@ class WorkItemResponseDto(CamelModel):
     task_branch: str | None
     repository_blocked_reason_code: RepositoryBindingBlockedReason | None
     repository_blocked_at: datetime | None
+    integration_delivery_state: IntegrationDeliveryState
+    integration_merge_request_binding_id: UUID | None
+    integration_blocked_reason_code: IntegrationDeliveryBlockedReason | None
+    integration_updated_at: datetime | None
     revision: int
     created_at: datetime
     updated_at: datetime
@@ -120,6 +134,37 @@ class CreateRequirementResponseDto(CamelModel):
             requirement=RequirementResponseDto.from_domain(value.requirement),
             work_item=WorkItemResponseDto.from_domain(value.work_item),
         )
+
+
+class WorkItemDeliveryResponseDto(CamelModel):
+    requirement: RequirementResponseDto
+    work_item: "WorkItemDeliveryProjectionResponseDto"
+
+    @classmethod
+    def from_domain(cls, value: WorkItemDeliveryResult) -> "WorkItemDeliveryResponseDto":
+        return cls(
+            requirement=RequirementResponseDto.from_domain(value.requirement),
+            work_item=WorkItemDeliveryProjectionResponseDto.from_domain(value.work_item),
+        )
+
+
+class WorkItemDeliveryProjectionResponseDto(CamelModel):
+    id: UUID
+    requirement_id: UUID
+    human_owner_id: str | None
+    assignment_state: AssignmentState
+    repository_state: RepositoryState
+    state: WorkItemState
+    repository_id: str
+    integration_delivery_state: IntegrationDeliveryState
+    integration_merge_request_binding_id: UUID | None
+    integration_blocked_reason_code: IntegrationDeliveryBlockedReason | None
+    integration_updated_at: datetime | None
+    revision: int
+
+    @classmethod
+    def from_domain(cls, value: WorkItemDeliveryDto) -> "WorkItemDeliveryProjectionResponseDto":
+        return cls.model_validate(value.model_dump(mode="json"))
 
 
 class RequirementDetailsResponseDto(CamelModel):

@@ -3,6 +3,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from control_plane.app.bootstrap.app import create_app, requirement_dependencies
 from control_plane.app.modules.requirement import (
@@ -21,11 +22,12 @@ from control_plane.app.shared.api.request_id import request_id_middleware
 from tests.requirement.conftest import IsolatedRequirementDatabase
 from tests.requirement.test_baseline_gate import _gate_dependencies
 from tests.requirement.test_commands import WORKSPACE_ID, Actor
+from tests.requirement.test_delivery_commands import _ready_requirement
 
 SAME_ORIGIN = {"Origin": "http://testserver"}
 
 
-def test_bootstrap_exposes_six_requirement_endpoints_with_fail_closed_dependencies() -> None:
+def test_bootstrap_exposes_requirement_delivery_endpoints_with_fail_closed_dependencies() -> None:
     schema = create_app().openapi()
     paths = schema["paths"]
 
@@ -35,6 +37,9 @@ def test_bootstrap_exposes_six_requirement_endpoints_with_fail_closed_dependenci
         "/api/v1/requirements/{requirementId}/sdd-baselines",
         "/api/v1/requirements/{requirementId}/baseline-confirmations",
         "/api/v1/requirements/{requirementId}/baseline-decisions",
+        "/api/v1/requirements/{requirementId}/work-items/{workItemId}:start",
+        "/api/v1/requirements/{requirementId}/work-items/{workItemId}:request-integration-mr",
+        "/api/v1/requirements/{requirementId}/work-items/{workItemId}:request-integration-merge",
     }
     assert set(paths["/api/v1/requirements"]) >= {"get", "post"}
     create = paths["/api/v1/requirements"]["post"]
@@ -51,6 +56,19 @@ def test_bootstrap_exposes_six_requirement_endpoints_with_fail_closed_dependenci
         assert headers["Idempotency-Key"]["required"] is True
         assert headers["If-Match"]["required"] is True
         assert operation["security"] == [{"EpSessionCookie": []}]
+    for suffix, status in (
+        ("start", "200"),
+        ("request-integration-mr", "202"),
+        ("request-integration-merge", "202"),
+    ):
+        operation = paths["/api/v1/requirements/{requirementId}/work-items/{workItemId}:" + suffix][
+            "post"
+        ]
+        headers = {item["name"]: item for item in operation["parameters"] if item["in"] == "header"}
+        assert headers["Idempotency-Key"]["required"] is True
+        assert headers["If-Match"]["required"] is True
+        assert status in operation["responses"]
+        assert operation["security"] == [{"EpSessionCookie": []}]
     requirement_schema = schema["components"]["schemas"]["RequirementResponseDto"]
     assert requirement_schema["properties"]["workspaceId"]["format"] == "uuid"
     assert requirement_schema["properties"]["state"] == {
@@ -64,6 +82,13 @@ def test_bootstrap_exposes_six_requirement_endpoints_with_fail_closed_dependenci
     ]
     assert work_item_schema["properties"]["repositoryBlockedAt"]["anyOf"] == [
         {"format": "date-time", "type": "string"},
+        {"type": "null"},
+    ]
+    assert work_item_schema["properties"]["integrationDeliveryState"] == {
+        "$ref": "#/components/schemas/IntegrationDeliveryState"
+    }
+    assert work_item_schema["properties"]["integrationMergeRequestBindingId"]["anyOf"] == [
+        {"format": "uuid", "type": "string"},
         {"type": "null"},
     ]
 
@@ -439,3 +464,158 @@ def test_unknown_capability_and_cross_workspace_access_are_denied(
         ("requirement.create", WORKSPACE_ID),
         ("requirement.read", WORKSPACE_ID),
     ]
+
+
+def _versioned_headers(key: str, revision: int) -> dict[str, str]:
+    return {
+        **SAME_ORIGIN,
+        "Idempotency-Key": key,
+        "If-Match": f'"v{revision}"',
+    }
+
+
+def _provider_private_fields(value: object) -> set[str]:
+    forbidden = {
+        "branch",
+        "taskBranch",
+        "baseCommitSha",
+        "projectId",
+        "mrIid",
+        "headSha",
+        "gitlabProjectId",
+    }
+    if isinstance(value, dict):
+        return (set(value) & forbidden) | {
+            item for nested in value.values() for item in _provider_private_fields(nested)
+        }
+    if isinstance(value, list):
+        return {item for nested in value for item in _provider_private_fields(nested)}
+    return set()
+
+
+def test_integration_routes_require_server_capabilities_and_concurrency_headers(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    ready = _ready_requirement(isolated_requirement_database, key_suffix="http-delivery")
+    client, _holder, guard, _dependencies = _client(
+        isolated_requirement_database,
+        allowed={
+            ("work_item.execute", WORKSPACE_ID),
+            ("merge_request.merge", WORKSPACE_ID),
+        },
+    )
+    requirement_id = ready.requirement.id
+    work_item_id = ready.work_items[0].id
+    base_url = f"/api/v1/requirements/{requirement_id}/work-items/{work_item_id}"
+
+    started = client.post(
+        f"{base_url}:start",
+        headers=_versioned_headers("http-start-1", ready.requirement.revision),
+    )
+    requested_mr = client.post(
+        f"{base_url}:request-integration-mr",
+        headers=_versioned_headers("http-mr-1", ready.requirement.revision + 1),
+    )
+    binding_id = "30000000-0000-0000-0000-000000000302"
+    with isolated_requirement_database.owner.begin() as db:
+        db.execute(
+            text(
+                "UPDATE requirement.requirement SET state='VERIFYING', "
+                "revision=revision + 1 WHERE id=:requirement_id"
+            ),
+            {"requirement_id": requirement_id},
+        )
+        db.execute(
+            text(
+                "UPDATE requirement.work_item SET state='VERIFYING', "
+                "integration_delivery_state='MR_OPEN', "
+                "integration_merge_request_binding_id=:binding_id, revision=revision + 1 "
+                "WHERE id=:work_item_id"
+            ),
+            {"binding_id": binding_id, "work_item_id": work_item_id},
+        )
+    requested_merge = client.post(
+        f"{base_url}:request-integration-merge",
+        headers=_versioned_headers("http-merge-1", ready.requirement.revision + 3),
+    )
+
+    assert started.status_code == 200
+    assert started.headers["etag"] == f'"v{ready.requirement.revision + 1}"'
+    assert requested_mr.status_code == 202
+    assert requested_mr.headers["etag"] == f'"v{ready.requirement.revision + 2}"'
+    assert requested_merge.status_code == 202
+    assert requested_merge.headers["etag"] == f'"v{ready.requirement.revision + 4}"'
+    assert guard.calls == [
+        ("work_item.execute", WORKSPACE_ID),
+        ("work_item.execute", WORKSPACE_ID),
+        ("merge_request.merge", WORKSPACE_ID),
+    ]
+    for response in (started, requested_mr, requested_merge):
+        assert _provider_private_fields(response.json()) == set()
+
+
+def test_integration_routes_reject_missing_concurrency_headers_and_provider_body(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    client, _holder, _guard, _dependencies = _client(isolated_requirement_database)
+    requirement_id = "00000000-0000-0000-0000-000000000301"
+    work_item_id = "00000000-0000-0000-0000-000000000302"
+    urls = [
+        f"/api/v1/requirements/{requirement_id}/work-items/{work_item_id}:start",
+        f"/api/v1/requirements/{requirement_id}/work-items/{work_item_id}:request-integration-mr",
+        f"/api/v1/requirements/{requirement_id}/work-items/{work_item_id}:request-integration-merge",
+    ]
+
+    for index, url in enumerate(urls):
+        missing_key = client.post(url, headers={**SAME_ORIGIN, "If-Match": '"v1"'})
+        missing_revision = client.post(
+            url,
+            headers={**SAME_ORIGIN, "Idempotency-Key": f"missing-revision-{index}"},
+        )
+        forged_provider_body = client.post(
+            url,
+            json={"branch": "attacker", "mrIid": 7, "headSha": "forged"},
+            headers=_versioned_headers(f"forged-provider-{index}", 1),
+        )
+        for response in (missing_key, missing_revision, forged_provider_body):
+            assert response.status_code == 422
+            assert response.headers["content-type"].startswith("application/problem+json")
+
+
+def test_integration_route_hides_cross_requirement_work_item(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    first = _ready_requirement(isolated_requirement_database, key_suffix="http-cross-first")
+    second = _ready_requirement(isolated_requirement_database, key_suffix="http-cross-second")
+    client, _holder, _guard, _dependencies = _client(
+        isolated_requirement_database,
+        allowed={("work_item.execute", WORKSPACE_ID)},
+    )
+
+    response = client.post(
+        f"/api/v1/requirements/{first.requirement.id}/work-items/{second.work_items[0].id}:start",
+        headers=_versioned_headers("http-cross-requirement", first.requirement.revision),
+    )
+
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("application/problem+json")
+
+
+def test_start_route_reports_current_owner_mismatch_as_an_actor_denial(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    ready = _ready_requirement(isolated_requirement_database, key_suffix="http-owner-denied")
+    client, holder, _guard, _dependencies = _client(
+        isolated_requirement_database,
+        allowed={("work_item.execute", WORKSPACE_ID)},
+    )
+    holder.value = Actor("employee-2")
+
+    response = client.post(
+        f"/api/v1/requirements/{ready.requirement.id}/work-items/{ready.work_items[0].id}:start",
+        headers=_versioned_headers("http-owner-denied", ready.requirement.revision),
+    )
+
+    assert response.status_code == 403
+    assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["title"] == "WorkItem actor denied"

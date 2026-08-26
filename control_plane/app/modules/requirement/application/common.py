@@ -13,6 +13,8 @@ from control_plane.app.modules.requirement.domain import (
     GateInstanceDto,
     GateState,
     GateType,
+    IntegrationDeliveryBlockedReason,
+    IntegrationDeliveryState,
     RecordState,
     RepositoryBindingBlockedReason,
     RepositoryState,
@@ -81,6 +83,18 @@ def work_item_dto(row: Any) -> WorkItemDto:
             else RepositoryBindingBlockedReason(row["repository_blocked_reason_code"])
         ),
         repository_blocked_at=row["repository_blocked_at"],
+        integration_delivery_state=IntegrationDeliveryState(row["integration_delivery_state"]),
+        integration_merge_request_binding_id=(
+            None
+            if row["integration_merge_request_binding_id"] is None
+            else str(row["integration_merge_request_binding_id"])
+        ),
+        integration_blocked_reason_code=(
+            None
+            if row["integration_blocked_reason_code"] is None
+            else IntegrationDeliveryBlockedReason(row["integration_blocked_reason_code"])
+        ),
+        integration_updated_at=row["integration_updated_at"],
         revision=row["revision"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],

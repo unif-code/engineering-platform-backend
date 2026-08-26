@@ -79,6 +79,20 @@ class RequirementRepository(Protocol):
         now: datetime,
     ) -> Any: ...
 
+    def update_work_item_delivery(
+        self,
+        work_item_id: str,
+        *,
+        expected_revision: int,
+        state: str,
+        delivery_state: str,
+        binding_id: str | None,
+        blocked_reason: str | None,
+        now: datetime,
+    ) -> Any: ...
+
+    def required_work_item_states(self, requirement_id: str) -> tuple[str, ...]: ...
+
     def insert_outbox(self, **values: Any) -> Any: ...
 
     def claim_binding_requests(
