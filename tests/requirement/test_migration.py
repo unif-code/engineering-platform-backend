@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy import Connection, Engine, inspect, text
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 
+from control_plane.app.modules.requirement import RepositoryBindingBlockedReason
 from control_plane.app.shared.db.settings import DbSettings
 from tests.requirement.conftest import IsolatedRequirementDatabase
 
@@ -125,6 +126,38 @@ def test_repository_binding_blocked_state_requires_a_structured_reason_and_times
     assert "BLOCKED" in constraint
     assert "repository_blocked_reason_code" in constraint
     assert "repository_blocked_at" in constraint
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "OWNER_UNASSIGNED",
+        "OWNER_INELIGIBLE",
+        "REPOSITORY_NOT_AUTHORIZED",
+        "RECONCILIATION_PENDING",
+    ],
+)
+def test_source_control_blocked_reasons_are_valid_requirement_facts(
+    isolated_requirement_rw_engine: Engine,
+    reason: str,
+) -> None:
+    reason_code = RepositoryBindingBlockedReason(reason)
+    with isolated_requirement_rw_engine.begin() as db:
+        _insert_requirement_for_integrity_test(db)
+        db.execute(
+            text(
+                "INSERT INTO requirement.work_item "
+                "(id, requirement_id, created_by, human_owner_id, executor_type, "
+                "executor_id, required_capabilities, assignment_state, repository_state, "
+                "state, repository_id, base_commit_sha, task_branch, "
+                "repository_blocked_reason_code, repository_blocked_at, revision) VALUES "
+                "('10000000-0000-0000-0000-000000000211', "
+                "'10000000-0000-0000-0000-000000000201', 'employee-1', 'employee-1', "
+                "'HUMAN', 'employee-1', '[\"code.change\"]', 'ASSIGNED', 'BLOCKED', "
+                "'DRAFT', 'repository-1', NULL, NULL, :reason, now(), 1)"
+            ),
+            {"reason": reason_code.value},
+        )
 
 
 def test_gate_cannot_claim_artifact_different_from_its_sdd_baseline(

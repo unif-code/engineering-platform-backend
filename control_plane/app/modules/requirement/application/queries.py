@@ -8,10 +8,14 @@ from control_plane.app.modules.requirement.application.common import (
     work_item_dto,
 )
 from control_plane.app.modules.requirement.domain import (
+    AssignmentState,
     InvalidRequirementCursor,
+    RepositoryBindingContext,
     RequirementDetailsDto,
     RequirementNotFound,
     RequirementPage,
+    RequirementType,
+    WorkItemNotFound,
 )
 from control_plane.app.modules.requirement.ports import RequirementRepository
 
@@ -79,4 +83,26 @@ def list_requirements(
     return RequirementPage(
         items=tuple(requirement_dto(row) for row in visible),
         next_cursor=next_cursor,
+    )
+
+
+def get_repository_binding_context(
+    repository: RequirementRepository,
+    *,
+    work_item_id: str,
+) -> RepositoryBindingContext:
+    row = repository.repository_binding_context(work_item_id)
+    if row is None:
+        raise WorkItemNotFound(work_item_id)
+    return RepositoryBindingContext(
+        requirement_id=str(row["requirement_id"]),
+        requirement_type=RequirementType(row["requirement_type"]),
+        requirement_title=row["requirement_title"],
+        workspace_id=str(row["workspace_id"]),
+        work_item_id=str(row["work_item_id"]),
+        work_item_revision=row["work_item_revision"],
+        repository_id=row["repository_id"],
+        assignment_state=AssignmentState(row["assignment_state"]),
+        human_owner_id=row["human_owner_id"],
+        required_capabilities=tuple(row["required_capabilities"]),
     )

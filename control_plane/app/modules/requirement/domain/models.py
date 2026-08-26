@@ -40,6 +40,10 @@ class RepositoryBindingBlockedReason(StrEnum):
     ACCESS_DENIED = "ACCESS_DENIED"
     POLICY_DENIED = "POLICY_DENIED"
     BINDING_CONFLICT = "BINDING_CONFLICT"
+    OWNER_UNASSIGNED = "OWNER_UNASSIGNED"
+    OWNER_INELIGIBLE = "OWNER_INELIGIBLE"
+    REPOSITORY_NOT_AUTHORIZED = "REPOSITORY_NOT_AUTHORIZED"
+    RECONCILIATION_PENDING = "RECONCILIATION_PENDING"
 
 
 class WorkItemState(StrEnum):
@@ -112,6 +116,32 @@ class WorkItemDto(BaseModel):
     revision: int
     created_at: datetime
     updated_at: datetime
+
+
+class RepositoryBindingRequestMessage(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    message_id: str
+    requirement_id: str
+    requirement_version: int
+    work_item_id: str
+    repository_id: str
+    attempts: int
+
+
+class RepositoryBindingContext(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    requirement_id: str
+    requirement_type: RequirementType
+    requirement_title: str
+    workspace_id: str
+    work_item_id: str
+    work_item_revision: int
+    repository_id: str
+    assignment_state: AssignmentState
+    human_owner_id: str | None
+    required_capabilities: tuple[str, ...]
 
 
 class CreateRequirementResult(BaseModel):

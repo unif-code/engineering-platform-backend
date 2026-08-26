@@ -1,5 +1,6 @@
 import hashlib
 import json
+from datetime import datetime
 from typing import Any
 
 from control_plane.app.modules.audit import AuditEnvelope, record
@@ -34,6 +35,8 @@ from control_plane.app.modules.requirement.domain import (
     RegisterSddBaselineResult,
     RepositoryBindingBlockedReason,
     RepositoryBindingConflict,
+    RepositoryBindingMessageInvalid,
+    RepositoryBindingRequestMessage,
     RepositoryState,
     RequirementDependencyUnavailable,
     RequirementDto,
@@ -66,6 +69,14 @@ from control_plane.app.shared.idempotency import (
     IdempotentResponse,
     canonical_request_fingerprint,
     execute_idempotent,
+)
+
+_BINDING_RELEASE_ERROR_CODES = frozenset(
+    {
+        "BINDING_REQUEST_CONFLICT",
+        "BINDING_REQUEST_INVALID",
+        "SOURCE_CONTROL_UNAVAILABLE",
+    }
 )
 
 
@@ -266,6 +277,111 @@ def create_requirement(
         idempotency_sealing_key=material.idempotency_sealing_key,
     )
     return CreateRequirementResult.model_validate(execution.response.body)
+
+
+def claim_repository_binding_requests(
+    repository: RequirementRepository,
+    *,
+    limit: int,
+    available_before: datetime,
+    lease_until: datetime,
+) -> tuple[RepositoryBindingRequestMessage, ...]:
+    rows = repository.claim_binding_requests(
+        limit=limit,
+        available_before=available_before,
+        lease_until=lease_until,
+    )
+    messages: list[RepositoryBindingRequestMessage] = []
+    for row in rows:
+        payload = row["payload"]
+        if (
+            row["aggregate_type"] != "REQUIREMENT"
+            or not isinstance(payload, dict)
+            or set(payload) != {"workItemId", "repositoryId"}
+            or not all(
+                isinstance(payload[field], str) and payload[field].strip()
+                for field in ("workItemId", "repositoryId")
+            )
+        ):
+            raise RepositoryBindingMessageInvalid(str(row["id"]))
+        messages.append(
+            RepositoryBindingRequestMessage(
+                message_id=str(row["id"]),
+                requirement_id=str(row["aggregate_id"]),
+                requirement_version=row["aggregate_version"],
+                work_item_id=payload["workItemId"],
+                repository_id=payload["repositoryId"],
+                attempts=row["attempts"],
+            )
+        )
+    return tuple(messages)
+
+
+def acknowledge_repository_binding_request(
+    repository: RequirementRepository,
+    *,
+    message_id: str,
+    consumer: str,
+    dependencies: RequirementDependencies,
+) -> RequirementDto:
+    if consumer != "SOURCE_CONTROL":
+        raise InvalidRequirementInput("repository binding consumer is invalid")
+    message = repository.outbox_by_id(message_id, for_update=True)
+    if message is None or message["topic"] != "requirement.repository-binding.requested":
+        raise RepositoryBindingRequestMissing(message_id)
+    requirement = repository.requirement_by_id(
+        str(message["aggregate_id"]),
+        for_update=True,
+    )
+    if requirement is None:
+        raise RequirementNotFound(str(message["aggregate_id"]))
+    if message["state"] != "PUBLISHED":
+        published = repository.publish_outbox(message_id, now=dependencies.clock.now())
+        if published is None:
+            raise RepositoryBindingRequestMissing(message_id)
+    if RequirementState(requirement["state"]) is RequirementState.CREATED:
+        updated = repository.update_requirement_state(
+            str(requirement["id"]),
+            expected_revision=requirement["revision"],
+            state=RequirementState.PREPARING.value,
+            now=dependencies.clock.now(),
+        )
+        if updated is None:
+            raise StaleRequirementRevision(str(requirement["id"]))
+        audit(
+            repository,
+            dependencies=dependencies,
+            actor="SYSTEM",
+            action="requirement.repository_binding.request_acknowledged",
+            target_type="REQUIREMENT",
+            target_id=str(requirement["id"]),
+            reason=f"consumer={consumer}; messageId={message_id}",
+        )
+        requirement = updated
+    return requirement_dto(requirement)
+
+
+def release_repository_binding_request(
+    repository: RequirementRepository,
+    *,
+    message_id: str,
+    error_code: str,
+    available_at: datetime,
+) -> None:
+    if error_code not in _BINDING_RELEASE_ERROR_CODES:
+        raise InvalidRequirementInput("repository binding release error code is invalid")
+    message = repository.outbox_by_id(message_id, for_update=True)
+    if message is None or message["topic"] != "requirement.repository-binding.requested":
+        raise RepositoryBindingRequestMissing(message_id)
+    if message["state"] == "PUBLISHED":
+        return
+    released = repository.release_outbox(
+        message_id,
+        error_code=error_code,
+        available_at=available_at,
+    )
+    if released is None:
+        raise RepositoryBindingRequestMissing(message_id)
 
 
 def _start_requirement_preparation_once(

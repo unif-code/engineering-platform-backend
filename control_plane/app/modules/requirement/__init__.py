@@ -1,5 +1,6 @@
 """Public Requirement facade; other modules must not import internals."""
 
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import Connection
@@ -8,9 +9,18 @@ from control_plane.app.modules.requirement.application import (
     RequirementDependencies,
 )
 from control_plane.app.modules.requirement.application import (
+    acknowledge_repository_binding_request as _acknowledge_repository_binding_request,
+)
+from control_plane.app.modules.requirement.application import (
+    claim_repository_binding_requests as _claim_repository_binding_requests,
+)
+from control_plane.app.modules.requirement.application import (
     create_requirement as _create_requirement,
 )
 from control_plane.app.modules.requirement.application import decide_baseline as _decide_baseline
+from control_plane.app.modules.requirement.application import (
+    get_repository_binding_context as _get_repository_binding_context,
+)
 from control_plane.app.modules.requirement.application import (
     get_requirement as _get_requirement,
 )
@@ -25,6 +35,9 @@ from control_plane.app.modules.requirement.application import (
 )
 from control_plane.app.modules.requirement.application import (
     register_sdd_baseline as _register_sdd_baseline,
+)
+from control_plane.app.modules.requirement.application import (
+    release_repository_binding_request as _release_repository_binding_request,
 )
 from control_plane.app.modules.requirement.application import (
     start_requirement_preparation as _start_requirement_preparation,
@@ -56,6 +69,9 @@ from control_plane.app.modules.requirement.domain import (
     RegisterSddBaselineResult,
     RepositoryBindingBlockedReason,
     RepositoryBindingConflict,
+    RepositoryBindingContext,
+    RepositoryBindingMessageInvalid,
+    RepositoryBindingRequestMessage,
     RepositoryBindingRequestMissing,
     RepositoryState,
     RequirementDependencyUnavailable,
@@ -112,6 +128,53 @@ def create_requirement(
     )
 
 
+def claim_repository_binding_requests(
+    db: Connection,
+    *,
+    limit: int,
+    available_before: datetime,
+    lease_until: datetime,
+    dependencies: RequirementDependencies,
+) -> tuple[RepositoryBindingRequestMessage, ...]:
+    return _claim_repository_binding_requests(
+        dependencies.repository_factory(db),
+        limit=limit,
+        available_before=available_before,
+        lease_until=lease_until,
+    )
+
+
+def acknowledge_repository_binding_request(
+    db: Connection,
+    *,
+    message_id: str,
+    consumer: str,
+    dependencies: RequirementDependencies,
+) -> RequirementDto:
+    return _acknowledge_repository_binding_request(
+        dependencies.repository_factory(db),
+        message_id=message_id,
+        consumer=consumer,
+        dependencies=dependencies,
+    )
+
+
+def release_repository_binding_request(
+    db: Connection,
+    *,
+    message_id: str,
+    error_code: str,
+    available_at: datetime,
+    dependencies: RequirementDependencies,
+) -> None:
+    _release_repository_binding_request(
+        dependencies.repository_factory(db),
+        message_id=message_id,
+        error_code=error_code,
+        available_at=available_at,
+    )
+
+
 def start_requirement_preparation(
     db: Connection,
     *,
@@ -140,6 +203,18 @@ def get_requirement(
     return _get_requirement(
         dependencies.repository_factory(db),
         requirement_id=requirement_id,
+    )
+
+
+def get_repository_binding_context(
+    db: Connection,
+    *,
+    work_item_id: str,
+    dependencies: RequirementDependencies,
+) -> RepositoryBindingContext:
+    return _get_repository_binding_context(
+        dependencies.repository_factory(db),
+        work_item_id=work_item_id,
     )
 
 
@@ -303,6 +378,8 @@ __all__ = [
     "RecordState",
     "RegisterSddBaselineResult",
     "RepositoryBindingConflict",
+    "RepositoryBindingMessageInvalid",
+    "RepositoryBindingContext",
     "RepositoryBindingBlockedReason",
     "RepositoryBindingRequestMissing",
     "RepositoryState",
@@ -323,13 +400,18 @@ __all__ = [
     "WorkItemDto",
     "WorkItemNotFound",
     "WorkItemState",
+    "RepositoryBindingRequestMessage",
+    "acknowledge_repository_binding_request",
+    "claim_repository_binding_requests",
     "create_requirement",
     "decide_baseline",
     "derive_work_item_state",
     "get_requirement",
+    "get_repository_binding_context",
     "list_requirements",
     "record_repository_binding",
     "record_repository_binding_blocked",
+    "release_repository_binding_request",
     "register_sdd_baseline",
     "start_requirement_preparation",
     "submit_baseline_confirmation",

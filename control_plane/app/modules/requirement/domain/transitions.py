@@ -30,6 +30,10 @@ class RepositoryBindingRequestMissing(RequirementError):
     pass
 
 
+class RepositoryBindingMessageInvalid(RequirementError):
+    pass
+
+
 class InvalidRequirementCursor(RequirementError):
     pass
 

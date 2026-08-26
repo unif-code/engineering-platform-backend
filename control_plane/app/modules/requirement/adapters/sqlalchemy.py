@@ -286,6 +286,106 @@ class SqlAlchemyRequirementRepository:
             .one()
         )
 
+    def claim_binding_requests(
+        self,
+        *,
+        limit: int,
+        available_before: datetime,
+        lease_until: datetime,
+    ) -> list[Any]:
+        return list(
+            self.db.execute(
+                text(
+                    "WITH candidates AS ("
+                    "SELECT id FROM requirement.outbox_message "
+                    "WHERE topic='requirement.repository-binding.requested' "
+                    "AND state IN ('PENDING', 'FAILED') "
+                    "AND available_at <= :available_before "
+                    "ORDER BY available_at, id FOR UPDATE SKIP LOCKED LIMIT :limit"
+                    ") UPDATE requirement.outbox_message AS message "
+                    "SET attempts=message.attempts + 1, available_at=:lease_until "
+                    "FROM candidates WHERE message.id=candidates.id RETURNING message.*"
+                ),
+                {
+                    "available_before": available_before,
+                    "lease_until": lease_until,
+                    "limit": limit,
+                },
+            ).mappings()
+        )
+
+    def outbox_by_id(self, message_id: str, *, for_update: bool = False) -> Any:
+        suffix = " FOR UPDATE" if for_update else ""
+        return (
+            self.db.execute(
+                text(f"SELECT * FROM requirement.outbox_message WHERE id=:id{suffix}"),
+                {"id": message_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def repository_binding_context(self, work_item_id: str) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "SELECT requirement.id AS requirement_id, "
+                    "requirement.type AS requirement_type, "
+                    "requirement.title AS requirement_title, "
+                    "requirement.workspace_id, work_item.id AS work_item_id, "
+                    "work_item.revision AS work_item_revision, work_item.repository_id, "
+                    "work_item.assignment_state, work_item.human_owner_id, "
+                    "work_item.required_capabilities "
+                    "FROM requirement.work_item AS work_item "
+                    "JOIN requirement.requirement AS requirement "
+                    "ON requirement.id=work_item.requirement_id "
+                    "WHERE work_item.id=:work_item_id"
+                ),
+                {"work_item_id": work_item_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def publish_outbox(self, message_id: str, *, now: datetime) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.outbox_message SET state='PUBLISHED', "
+                    "published_at=:now, last_error_code=NULL "
+                    "WHERE id=:id AND state IN ('PENDING', 'FAILED') RETURNING *"
+                ),
+                {"id": message_id, "now": now},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def release_outbox(
+        self,
+        message_id: str,
+        *,
+        error_code: str,
+        available_at: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.outbox_message SET state='FAILED', "
+                    "last_error_code=:error_code, available_at=:available_at, "
+                    "published_at=NULL WHERE id=:id "
+                    "AND state IN ('PENDING', 'FAILED') RETURNING *"
+                ),
+                {
+                    "id": message_id,
+                    "error_code": error_code,
+                    "available_at": available_at,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
     def outbox_by_aggregate(
         self,
         aggregate_id: str,
