@@ -137,6 +137,14 @@ class RepositoryBranchBindingDto(BaseModel):
     created_at: AwareDatetime
 
 
+class ProcessBindingRequestResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    effect: SourceControlEffectDto | None
+    binding: RepositoryBranchBindingDto | None
+    blocked_reason: NonEmptyStr | None
+
+
 class GitLabWebhookEnvelope(BaseModel):
     model_config = ConfigDict(frozen=True)
 

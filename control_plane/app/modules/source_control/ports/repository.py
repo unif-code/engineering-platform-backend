@@ -37,6 +37,14 @@ class SourceControlRepository(Protocol):
         lease_until: datetime,
     ) -> list[Any]: ...
 
+    def claim_binding_request(
+        self,
+        message_id: str,
+        *,
+        now: datetime,
+        lease_until: datetime,
+    ) -> Any: ...
+
     def complete_binding_request(self, message_id: str, *, now: datetime) -> Any: ...
 
     def next_work_item_number(self) -> int: ...

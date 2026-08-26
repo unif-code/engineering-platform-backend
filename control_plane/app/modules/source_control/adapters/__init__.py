@@ -3,6 +3,7 @@
 from control_plane.app.modules.source_control.adapters.eligibility import (
     CurrentOwnerEligibilityAdapter,
 )
+from control_plane.app.modules.source_control.adapters.gitlab import HttpxGitLabAdapter
 from control_plane.app.modules.source_control.adapters.requirement import (
     RequirementFacadeBindingAdapter,
 )
@@ -12,6 +13,7 @@ from control_plane.app.modules.source_control.adapters.sqlalchemy import (
 
 __all__ = [
     "CurrentOwnerEligibilityAdapter",
+    "HttpxGitLabAdapter",
     "RequirementFacadeBindingAdapter",
     "SqlAlchemySourceControlRepository",
 ]

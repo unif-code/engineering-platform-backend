@@ -6,6 +6,7 @@ dependencies = [
   "argon2-cffi>=23.1",
   "cryptography>=44.0",
   "fastapi>=0.115",
+  "httpx>=0.28",
   "pyotp>=2.9",
   "uvicorn>=0.34",
   "pydantic>=2.10",
@@ -18,7 +19,6 @@ dependencies = [
 [dependency-groups]
 dev = [
   "pytest>=8.3",
-  "httpx>=0.28",
   "ruff>=0.9",
   "mypy>=1.14",
   "import-linter>=2.1",

@@ -132,11 +132,6 @@ def relay_binding_requests(
             raise RequirementCallbackUnavailable(
                 "Requirement acknowledgement unavailable"
             ) from error
-        with dependencies.engine.begin() as db:
-            dependencies.repository_factory(db).complete_binding_request(
-                envelope.message_id,
-                now=dependencies.clock.now(),
-            )
         accepted += 1
     return RelayBindingRequestsResult(
         claimed=len(messages),

@@ -153,6 +153,33 @@ class SqlAlchemySourceControlRepository:
             .one_or_none()
         )
 
+    def claim_binding_request(
+        self,
+        message_id: str,
+        *,
+        now: datetime,
+        lease_until: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE source_control.binding_request_inbox "
+                    "SET state='PROCESSING', attempts=attempts + 1, "
+                    "available_at=:lease_until, updated_at=:now, last_error_code=NULL "
+                    "WHERE message_id=:message_id AND ("
+                    "state IN ('RECEIVED', 'FAILED') "
+                    "OR (state='PROCESSING' AND available_at <= :now)) RETURNING *"
+                ),
+                {
+                    "message_id": message_id,
+                    "now": now,
+                    "lease_until": lease_until,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
     def next_work_item_number(self) -> int:
         return int(
             self.db.execute(
