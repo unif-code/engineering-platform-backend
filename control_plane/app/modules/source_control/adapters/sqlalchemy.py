@@ -138,6 +138,18 @@ class SqlAlchemySourceControlRepository:
             ).mappings()
         )
 
+    def pending_binding_request_ids(self, *, limit: int, now: datetime) -> list[str]:
+        return list(
+            self.db.execute(
+                text(
+                    "SELECT message_id FROM source_control.binding_request_inbox "
+                    "WHERE state IN ('RECEIVED', 'FAILED') AND available_at <= :now "
+                    "ORDER BY available_at, message_id LIMIT :limit"
+                ),
+                {"limit": limit, "now": now},
+            ).scalars()
+        )
+
     def complete_binding_request(self, message_id: str, *, now: datetime) -> Any:
         return (
             self.db.execute(
@@ -373,6 +385,17 @@ class SqlAlchemySourceControlRepository:
             )
             .mappings()
             .one_or_none()
+        )
+
+    def pending_webhook_ids(self, *, limit: int) -> list[str]:
+        return list(
+            self.db.execute(
+                text(
+                    "SELECT id FROM source_control.webhook_inbox WHERE state='RECEIVED' "
+                    "ORDER BY received_at, id LIMIT :limit"
+                ),
+                {"limit": limit},
+            ).scalars()
         )
 
     def make_unknown_effect_due(

@@ -6,6 +6,10 @@ from pathlib import Path
 import pytest
 
 from control_plane.app import __version__
+from control_plane.app.bootstrap.app import create_app
+from control_plane.app.bootstrap.source_control_connector import (
+    create_source_control_connector_app,
+)
 from scripts import export_openapi
 from scripts.export_openapi import render
 
@@ -30,6 +34,15 @@ def test_render_contains_the_typed_requirement_contract() -> None:
         "/api/v1/requirements/{requirementId}/baseline-confirmations",
         "/api/v1/requirements/{requirementId}/baseline-decisions",
     }
+
+
+def test_source_control_webhook_is_connector_only() -> None:
+    public_paths = set(create_app().openapi()["paths"])
+    connector = create_source_control_connector_app()
+    connector_paths = set(connector.openapi()["paths"])
+
+    assert not any(path.startswith("/webhooks/gitlab/") for path in public_paths)
+    assert connector_paths == {"/healthz", "/readyz", "/webhooks/gitlab/{repository_id}"}
 
 
 # 真正的守门用例：不先导出，直接校验入库件。

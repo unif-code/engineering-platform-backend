@@ -5,6 +5,10 @@ class SourceControlError(ValueError):
     """A deterministic Source Control denial."""
 
 
+class SourceControlDependencyUnavailable(RuntimeError):
+    pass
+
+
 class InvalidEffectTransition(SourceControlError):
     pass
 
