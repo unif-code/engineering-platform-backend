@@ -154,6 +154,54 @@ def test_requirement_integration_delivery_columns_and_checks_exist(
 
 
 @pytest.mark.parametrize(
+    ("delivery_state", "merge_request_binding_id", "blocked_reason"),
+    [
+        ("MR_OPEN", None, None),
+        ("NOT_STARTED", "10000000-0000-0000-0000-000000000221", None),
+        ("BLOCKED", None, None),
+        ("BLOCKED", None, "UNKNOWN_REASON"),
+        ("IMPLEMENTING", None, "MR_CONFLICT"),
+    ],
+    ids=[
+        "mr-open-without-binding",
+        "not-started-with-binding",
+        "blocked-without-reason",
+        "blocked-with-unknown-reason",
+        "non-blocked-with-reason",
+    ],
+)
+def test_integration_delivery_constraints_reject_invalid_business_facts(
+    isolated_requirement_rw_engine: Engine,
+    delivery_state: str,
+    merge_request_binding_id: str | None,
+    blocked_reason: str | None,
+) -> None:
+    with isolated_requirement_rw_engine.begin() as db:
+        _insert_requirement_for_integrity_test(db)
+        with pytest.raises(IntegrityError):
+            db.execute(
+                text(
+                    "INSERT INTO requirement.work_item "
+                    "(id, requirement_id, created_by, human_owner_id, executor_type, "
+                    "executor_id, required_capabilities, assignment_state, repository_state, "
+                    "state, repository_id, base_commit_sha, task_branch, "
+                    "integration_delivery_state, integration_merge_request_binding_id, "
+                    "integration_blocked_reason_code, revision) VALUES "
+                    "('10000000-0000-0000-0000-000000000220', "
+                    "'10000000-0000-0000-0000-000000000201', 'employee-1', 'employee-1', "
+                    "'HUMAN', 'employee-1', '[\"code.change\"]', 'ASSIGNED', 'BOUND', "
+                    "'DRAFT', 'repository-1', 'sha256:base', 'task-branch', "
+                    ":delivery_state, :merge_request_binding_id, :blocked_reason, 1)"
+                ),
+                {
+                    "delivery_state": delivery_state,
+                    "merge_request_binding_id": merge_request_binding_id,
+                    "blocked_reason": blocked_reason,
+                },
+            )
+
+
+@pytest.mark.parametrize(
     "reason",
     [
         "OWNER_UNASSIGNED",

@@ -65,6 +65,7 @@ def upgrade() -> None:
         ADD CONSTRAINT ck_requirement_work_item_integration_blocked_reason CHECK (
             (
                 integration_delivery_state = 'BLOCKED'
+                AND integration_blocked_reason_code IS NOT NULL
                 AND integration_blocked_reason_code IN (
                     'OWNER_MISMATCH', 'OWNER_INELIGIBLE', 'MERGE_ACTOR_INELIGIBLE',
                     'REPOSITORY_NOT_AUTHORIZED', 'BRANCH_BINDING_MISSING',
