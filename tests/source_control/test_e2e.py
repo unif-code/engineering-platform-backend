@@ -143,6 +143,11 @@ def _assert_bound_requirement(
     assert row == ("BOUND", None, "a" * 40, branch_name)
 
 
+def _audit_actions(source: IsolatedSourceControlDatabase) -> set[str]:
+    with source.owner.connect() as db:
+        return set(db.execute(text("SELECT action FROM audit.audit_event")).scalars())
+
+
 def test_worker_happy_path_converges_duplicate_delivery_without_duplicate_facts(
     isolated_source_control_database: IsolatedSourceControlDatabase,
     isolated_requirement_database: IsolatedRequirementDatabase,
@@ -193,6 +198,15 @@ def test_worker_happy_path_converges_duplicate_delivery_without_duplicate_facts(
         work_item_id=created.work_item.id,
         branch_name=effect.branch_name,
     )
+    assert _audit_actions(isolated_source_control_database) >= {
+        "source_control.repository.registered",
+        "source_control.binding_request.accepted",
+        "source_control.effect.planned",
+        "source_control.effect.in_flight",
+        "source_control.binding.created",
+        "source_control.effect.succeeded",
+        "source_control.requirement_callback.acked",
+    }
 
 
 def test_signed_webhook_only_schedules_unknown_effect_then_reconciliation_binds(
@@ -281,6 +295,14 @@ def test_signed_webhook_only_schedules_unknown_effect_then_reconciliation_binds(
             {"id": effect.id},
         ).one()
     assert facts == (1, 1, EffectState.SUCCEEDED.value)
+    assert _audit_actions(isolated_source_control_database) >= {
+        "source_control.effect.unknown",
+        "source_control.webhook.accepted",
+        "source_control.webhook.processed",
+        "source_control.reconciliation.started",
+        "source_control.effect.succeeded",
+        "source_control.requirement_callback.acked",
+    }
 
 
 def test_runtime_roles_cannot_cross_write_and_audit_contains_no_secret_or_body(

@@ -1,3 +1,8 @@
+from datetime import timedelta
+
+from control_plane.app.modules.source_control.application.audit import (
+    append_lifecycle_audit,
+)
 from control_plane.app.modules.source_control.application.dependencies import (
     SourceControlDependencies,
 )
@@ -106,6 +111,7 @@ def _complete_success(
     with dependencies.engine.begin() as db:
         repository = dependencies.repository_factory(db)
         binding_row = repository.binding_by_work_item(effect.work_item_id)
+        binding_created = binding_row is None
         if binding_row is None:
             binding_row = repository.insert_binding(
                 id=str(dependencies.random.uuid4()),
@@ -131,6 +137,24 @@ def _complete_success(
                 "updated_at": now,
             },
         )
+        if binding_created:
+            append_lifecycle_audit(
+                repository,
+                action="source_control.binding.created",
+                target_type="repository_branch_binding",
+                target_id=str(binding_row["id"]),
+                dependencies=dependencies,
+                correlation_id=f"source-control:effect:{effect.id}",
+            )
+        if effect_row is not None:
+            append_lifecycle_audit(
+                repository,
+                action="source_control.effect.succeeded",
+                target_type="source_control_effect",
+                target_id=effect.id,
+                dependencies=dependencies,
+                correlation_id=f"source-control:effect:{effect.id}",
+            )
     return _effect_dto(effect_row), _binding_dto(binding_row)
 
 
@@ -142,7 +166,8 @@ def _complete_block(
 ) -> SourceControlEffectDto:
     now = dependencies.clock.now()
     with dependencies.engine.begin() as db:
-        row = dependencies.repository_factory(db).transition_effect(
+        repository = dependencies.repository_factory(db)
+        row = repository.transition_effect(
             effect.id,
             expected_state=EffectState.RECONCILIATION.value,
             values={
@@ -154,6 +179,17 @@ def _complete_block(
                 "updated_at": now,
             },
         )
+        if row is not None:
+            append_lifecycle_audit(
+                repository,
+                action="source_control.effect.blocked",
+                target_type="source_control_effect",
+                target_id=effect.id,
+                dependencies=dependencies,
+                result="DENIED",
+                reason=reason_code,
+                correlation_id=f"source-control:effect:{effect.id}",
+            )
     return _effect_dto(row)
 
 
@@ -167,7 +203,8 @@ def _return_unknown(
         raise RequirementCallbackUnavailable("Source Control policy is unavailable")
     now = dependencies.clock.now()
     with dependencies.engine.begin() as db:
-        row = dependencies.repository_factory(db).transition_effect(
+        repository = dependencies.repository_factory(db)
+        row = repository.transition_effect(
             effect.id,
             expected_state=EffectState.RECONCILIATION.value,
             values={
@@ -180,6 +217,17 @@ def _return_unknown(
                 "updated_at": now,
             },
         )
+        if row is not None:
+            append_lifecycle_audit(
+                repository,
+                action="source_control.effect.unknown",
+                target_type="source_control_effect",
+                target_id=effect.id,
+                dependencies=dependencies,
+                result="UNKNOWN",
+                reason="EXTERNAL_RESULT_UNKNOWN",
+                correlation_id=f"source-control:effect:{effect.id}",
+            )
     return _effect_dto(row)
 
 
@@ -313,11 +361,21 @@ def reconcile_due_effects(
 ) -> ReconcileDueEffectsResult:
     now = dependencies.clock.now()
     with dependencies.engine.begin() as db:
-        claimed_rows = dependencies.repository_factory(db).claim_unknown_effects(
+        repository = dependencies.repository_factory(db)
+        claimed_rows = repository.claim_unknown_effects(
             limit=limit,
             now=now,
-            lease_until=now,
+            lease_until=now + timedelta(minutes=2),
         )
+        for row in claimed_rows:
+            append_lifecycle_audit(
+                repository,
+                action="source_control.reconciliation.started",
+                target_type="source_control_effect",
+                target_id=str(row["id"]),
+                dependencies=dependencies,
+                correlation_id=f"source-control:effect:{row['id']}",
+            )
     effects = [
         _reconcile_effect(_effect_dto(row), dependencies=dependencies) for row in claimed_rows
     ]
@@ -371,4 +429,12 @@ def process_webhook_inbox(
             else 0
         )
         repository.complete_webhook(inbox_id, now=now)
+        append_lifecycle_audit(
+            repository,
+            action="source_control.webhook.processed",
+            target_type="webhook_inbox",
+            target_id=inbox_id,
+            dependencies=dependencies,
+            correlation_id=f"source-control:webhook:{inbox['repository_id']}",
+        )
     return scheduled

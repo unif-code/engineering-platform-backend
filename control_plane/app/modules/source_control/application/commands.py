@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 from control_plane.app.modules.audit import AuditEnvelope
@@ -14,6 +15,8 @@ from control_plane.app.modules.source_control.domain import (
     WorkspaceRepositoryDto,
 )
 from control_plane.app.modules.source_control.ports import SourceControlRepository
+
+_SECRET_REFERENCE = re.compile(r"^(?:openbao|secret-ref):[A-Za-z0-9][A-Za-z0-9._/-]{0,254}$")
 
 
 def _repository_dto(row: Any) -> WorkspaceRepositoryDto:
@@ -34,10 +37,8 @@ def _repository_dto(row: Any) -> WorkspaceRepositoryDto:
     )
 
 
-def _validate_secret_reference(value: str, *, webhook: bool = False) -> None:
-    normalized = value.strip().lower()
-    forbidden = ("glpat-", "whsec_") if webhook else ("glpat-",)
-    if not normalized or normalized.startswith(forbidden):
+def _validate_secret_reference(value: str) -> None:
+    if _SECRET_REFERENCE.fullmatch(value) is None:
         raise InvalidRepositorySecretReference("A secret reference is required")
 
 
@@ -80,7 +81,7 @@ def register_workspace_repository(
 ) -> WorkspaceRepositoryDto:
     _validate_secret_reference(credential_secret_ref)
     if webhook_signing_secret_ref is not None:
-        _validate_secret_reference(webhook_signing_secret_ref, webhook=True)
+        _validate_secret_reference(webhook_signing_secret_ref)
     existing = repository.workspace_repository(repository_id, for_update=True)
     if existing is not None:
         if str(existing["workspace_id"]) != workspace_id:

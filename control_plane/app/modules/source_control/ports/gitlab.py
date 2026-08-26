@@ -41,6 +41,8 @@ class GitLabRepositoryProfile(BaseModel):
 
     repository_id: str
     project_id: str
+    project_path: str
+    connection_ref: str
     default_branch: str
     credential_secret_ref: str
 

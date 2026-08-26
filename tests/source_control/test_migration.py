@@ -189,6 +189,23 @@ def test_source_control_rw_has_minimum_privileges(
     assert sequence_usage is True
 
 
+def test_database_rejects_literal_credentials_outside_the_reference_grammar(
+    isolated_source_control_database: IsolatedSourceControlDatabase,
+) -> None:
+    with isolated_source_control_database.runtime.begin() as db, pytest.raises(DBAPIError):
+        db.execute(
+            text(
+                "INSERT INTO source_control.workspace_repository "
+                "(id, workspace_id, provider, project_id, project_path, default_branch, "
+                "connection_ref, credential_secret_ref, status, revision) VALUES "
+                "('literal-credential-repository', "
+                "'20000000-0000-0000-0000-000000000399', 'GITLAB', 'literal-project', "
+                "'platform/backend', 'main', 'gitlab-dev', "
+                "'custom-gitlab-token-value', 'AUTHORIZED', 1)"
+            )
+        )
+
+
 def test_branch_binding_is_immutable_for_runtime_role(
     isolated_source_control_database: IsolatedSourceControlDatabase,
 ) -> None:

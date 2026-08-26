@@ -22,7 +22,7 @@
 - Webhook 只接受 Standard Webhooks HMAC-SHA256 signing token；必须验证 `webhook-id`、`webhook-timestamp`、`webhook-signature`，禁止 `X-Gitlab-Token` fallback。
 - Secret 只保存 Reference；PAT、signing token、签名、原始外部 error body 与源码不得进入 DB、日志、Audit、测试快照或 Git。
 - 未收到 `【同步进度】`，不得修改 `docs/superpowers/progress/current.md`。
-- 不手改 `openapi.json`；本批 Connector route 不挂主业务 app，最终用 exporter `--check` 证明公开 OpenAPI 未漂移。
+- `openapi.json` 只允许通过 exporter 更新本批已批准的 Requirement blocked reason 枚举；Connector route 不挂主业务 app，并由专门测试证明未进入公开 OpenAPI。
 - 每个任务严格执行 RED → GREEN → REFACTOR；不得用 skip、xfail、弱断言、测试专用业务分支或降低门禁通过。
 
 ---
@@ -975,17 +975,20 @@ uv run pytest tests/source_control/test_e2e.py tests/requirement/test_e2e.py -q
 
 Expected: both Source Control and existing Requirement E2E pass.
 
-- [ ] **Step 5: Verify public OpenAPI remains unchanged**
+- [ ] **Step 5: Verify the approved public OpenAPI change is bounded**
 
 Run:
 
 ```powershell
 uv run python scripts/export_openapi.py --check
 uv run pytest tests/test_openapi_export.py -q
-git diff --exit-code -- openapi.json
+git diff 631979b759944b7a95bc3cd380a573fbfc4b6aab -- openapi.json
 ```
 
-Expected: exporter and test pass; `openapi.json` has no diff because Connector Webhook ingress is a separate app.
+Expected: exporter and test pass; the only `openapi.json` diff is the four approved
+Requirement blocked reason values (`OWNER_UNASSIGNED`, `OWNER_INELIGIBLE`,
+`REPOSITORY_NOT_AUTHORIZED`, `RECONCILIATION_PENDING`), while Connector Webhook ingress
+remains absent because it is a separate app.
 
 - [ ] **Step 6: Run the complete CI-equivalent gate**
 

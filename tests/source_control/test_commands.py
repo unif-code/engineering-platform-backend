@@ -8,6 +8,7 @@ from sqlalchemy import Engine
 from control_plane.app.modules.source_control import (
     BindingRequestEnvelope,
     EffectState,
+    InvalidRepositorySecretReference,
     RepositoryAuthorizationState,
     RepositoryRemoved,
     RepositoryWorkspaceConflict,
@@ -190,6 +191,47 @@ def test_register_repository_stores_only_secret_references(
     assert len(audit.events) == 1
 
 
+@pytest.mark.parametrize(
+    ("credential_ref", "webhook_ref"),
+    [
+        ("custom-gitlab-token-value", None),
+        ("secret-ref:credential", "custom-webhook-token-value"),
+        ("https://vault.example/secrets/gitlab", None),
+    ],
+)
+def test_repository_registration_accepts_only_allowlisted_opaque_secret_references(
+    isolated_source_control_rw_engine: Engine,
+    credential_ref: str,
+    webhook_ref: str | None,
+) -> None:
+    dependencies = SourceControlDependencies(
+        repository_factory=SqlAlchemySourceControlRepository,
+        engine=isolated_source_control_rw_engine,
+        requirement=None,
+        eligibility=None,
+        audit=FakeAudit(),
+        clock=FixedClock(),
+        random=FixedRandom(),
+    )
+
+    with (
+        isolated_source_control_rw_engine.begin() as db,
+        pytest.raises(InvalidRepositorySecretReference),
+    ):
+        register_workspace_repository(
+            SqlAlchemySourceControlRepository(db),
+            repository_id=REPOSITORY_ID,
+            workspace_id=WORKSPACE_ID,
+            project_id="101",
+            project_path="platform/backend",
+            connection_ref="gitlab-dev",
+            credential_secret_ref=credential_ref,
+            webhook_signing_secret_ref=webhook_ref,
+            actor="SYSTEM",
+            dependencies=dependencies,
+        )
+
+
 def test_repository_cannot_move_workspace_and_removal_is_terminal(
     isolated_source_control_rw_engine: Engine,
 ) -> None:
@@ -368,6 +410,28 @@ def test_timeout_never_creates_binding(
     assert result.binding is None
     assert binding_count == 0
     assert requirement.blocked[0].reason_code == "RECONCILIATION_PENDING"
+
+
+def test_unexpected_process_crash_leaves_in_flight_effect_with_recovery_due_time(
+    isolated_source_control_rw_engine: Engine,
+) -> None:
+    dependencies, _requirement, gitlab = _saga_dependencies(isolated_source_control_rw_engine)
+    _seed_binding_request(isolated_source_control_rw_engine, dependencies)
+    gitlab.create_error = RuntimeError("simulated process crash")
+
+    with pytest.raises(RuntimeError, match="simulated process crash"):
+        process_binding_request(
+            message_id="30000000-0000-0000-0000-000000000501",
+            dependencies=dependencies,
+        )
+    with isolated_source_control_rw_engine.connect() as db:
+        row = db.exec_driver_sql(
+            "SELECT state, next_reconcile_at FROM source_control.source_control_effect"
+        ).one()
+
+    assert row.state == EffectState.IN_FLIGHT.value
+    assert row.next_reconcile_at is not None
+    assert row.next_reconcile_at > NOW
 
 
 def test_create_access_denial_blocks_without_creating_binding(

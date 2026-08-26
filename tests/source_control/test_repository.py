@@ -108,6 +108,62 @@ def test_repository_claims_inbox_and_unknown_effects_with_cas(
     assert reconciled[0]["state"] == "RECONCILIATION"
 
 
+def test_expired_inbox_and_effect_leases_are_recoverable(
+    isolated_source_control_rw_engine: Engine,
+) -> None:
+    with isolated_source_control_rw_engine.begin() as db:
+        repository = SqlAlchemySourceControlRepository(db)
+        _insert_repository(repository)
+        repository.accept_binding_request(
+            message_id=MESSAGE_ID,
+            payload_hash="sha256:request",
+            requirement_id=REQUIREMENT_ID,
+            requirement_version=1,
+            work_item_id=WORK_ITEM_ID,
+            repository_id=REPOSITORY_ID,
+            now=NOW,
+        )
+        repository.claim_binding_request(
+            MESSAGE_ID,
+            now=NOW,
+            lease_until=NOW,
+        )
+        repository.insert_effect(
+            id=EFFECT_ID,
+            effect_key=f"create:{WORK_ITEM_ID}",
+            operation="CREATE_TASK_BRANCH",
+            work_item_id=WORK_ITEM_ID,
+            requirement_id=REQUIREMENT_ID,
+            repository_id=REPOSITORY_ID,
+            work_item_number=401,
+            branch_name="feat/wi-401-source-control",
+            base_commit_sha="a" * 40,
+            request_fingerprint="sha256:fingerprint",
+            attempts=1,
+            state="IN_FLIGHT",
+            requirement_callback_state="PENDING",
+            next_reconcile_at=NOW,
+            now=NOW,
+        )
+
+        pending = repository.pending_binding_request_ids(limit=10, now=NOW)
+        first_recovery = repository.claim_unknown_effects(
+            limit=10,
+            now=NOW,
+            lease_until=NOW,
+        )
+        second_recovery = repository.claim_unknown_effects(
+            limit=10,
+            now=NOW,
+            lease_until=NOW + timedelta(minutes=2),
+        )
+
+    assert pending == [MESSAGE_ID]
+    assert [str(row["id"]) for row in first_recovery] == [EFFECT_ID]
+    assert [str(row["id"]) for row in second_recovery] == [EFFECT_ID]
+    assert second_recovery[0]["state"] == "RECONCILIATION"
+
+
 def test_repository_persists_immutable_binding_and_deduplicated_webhook(
     isolated_source_control_rw_engine: Engine,
 ) -> None:

@@ -3,6 +3,9 @@ import json
 from datetime import datetime, timedelta
 from typing import Any
 
+from control_plane.app.modules.source_control.application.audit import (
+    append_lifecycle_audit,
+)
 from control_plane.app.modules.source_control.application.dependencies import (
     SourceControlDependencies,
 )
@@ -103,11 +106,22 @@ def relay_binding_requests(
     for envelope in messages:
         try:
             with dependencies.engine.begin() as db:
-                accept_binding_request(
-                    dependencies.repository_factory(db),
+                repository = dependencies.repository_factory(db)
+                was_known = repository.binding_request(envelope.message_id) is not None
+                accepted_request = accept_binding_request(
+                    repository,
                     envelope,
                     now=now,
                 )
+                if not was_known:
+                    append_lifecycle_audit(
+                        repository,
+                        action="source_control.binding_request.accepted",
+                        target_type="binding_request_inbox",
+                        target_id=accepted_request.message_id,
+                        dependencies=dependencies,
+                        correlation_id=f"source-control:work-item:{envelope.work_item_id}",
+                    )
         except BindingRequestMessageConflict:
             requirement.release_request(
                 envelope.message_id,

@@ -63,9 +63,11 @@ _EFFECT_TRANSITIONS = {
         EffectState.SUCCEEDED,
         EffectState.BLOCKED,
         EffectState.UNKNOWN,
+        EffectState.RECONCILIATION,
     },
     EffectState.UNKNOWN: {EffectState.RECONCILIATION},
     EffectState.RECONCILIATION: {
+        EffectState.RECONCILIATION,
         EffectState.SUCCEEDED,
         EffectState.BLOCKED,
         EffectState.UNKNOWN,

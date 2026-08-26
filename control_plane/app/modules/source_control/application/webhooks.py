@@ -8,6 +8,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from control_plane.app.modules.audit import AuditEnvelope
+from control_plane.app.modules.source_control.application.audit import (
+    append_lifecycle_audit,
+)
 from control_plane.app.modules.source_control.application.dependencies import (
     SourceControlDependencies,
 )
@@ -189,6 +192,19 @@ def ingest_signed_gitlab_webhook(
                 conflict = True
             else:
                 inserted = existing
+        else:
+            append_lifecycle_audit(
+                repository,
+                action=(
+                    "source_control.webhook.accepted"
+                    if state is WebhookInboxState.RECEIVED
+                    else "source_control.webhook.ignored"
+                ),
+                target_type="webhook_inbox",
+                target_id=str(inserted["id"]),
+                dependencies=dependencies,
+                correlation_id=f"source-control:webhook:{repository_id}",
+            )
     if conflict:
         raise WebhookIdConflict("Webhook ID conflicts with a prior payload")
     return _webhook_dto(inserted)
