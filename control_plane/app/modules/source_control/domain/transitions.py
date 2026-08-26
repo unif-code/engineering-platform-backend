@@ -9,6 +9,34 @@ class InvalidEffectTransition(SourceControlError):
     pass
 
 
+class RepositoryNotFound(SourceControlError):
+    pass
+
+
+class RepositoryRemoved(SourceControlError):
+    pass
+
+
+class RepositoryWorkspaceConflict(SourceControlError):
+    pass
+
+
+class StaleRepositoryRevision(SourceControlError):
+    pass
+
+
+class InvalidRepositorySecretReference(SourceControlError):
+    pass
+
+
+class BindingRequestMessageConflict(SourceControlError):
+    pass
+
+
+class RequirementCallbackUnavailable(SourceControlError):
+    pass
+
+
 _EFFECT_TRANSITIONS = {
     EffectState.PLANNED: {EffectState.IN_FLIGHT, EffectState.BLOCKED},
     EffectState.IN_FLIGHT: {

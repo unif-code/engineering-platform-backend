@@ -73,6 +73,32 @@ class BindingRequestEnvelope(BaseModel):
     attempts: PositiveInt
 
 
+class BindingRequestInboxDto(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    message_id: NonEmptyStr
+    payload_hash: NonEmptyStr
+    requirement_id: NonEmptyStr
+    requirement_version: PositiveInt
+    work_item_id: NonEmptyStr
+    repository_id: NonEmptyStr
+    state: InboxState
+    attempts: NonNegativeInt
+    available_at: AwareDatetime
+    last_error_code: NonEmptyStr | None
+    received_at: AwareDatetime
+    updated_at: AwareDatetime
+    processed_at: AwareDatetime | None
+
+
+class RelayBindingRequestsResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    claimed: NonNegativeInt
+    accepted: NonNegativeInt
+    released: NonNegativeInt
+
+
 class SourceControlEffectDto(BaseModel):
     model_config = ConfigDict(frozen=True)
 
