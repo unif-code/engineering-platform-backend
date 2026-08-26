@@ -29,6 +29,7 @@ from control_plane.app.modules.source_control.ports import (
     GitLabRepositoryProfile,
     GitLabResultUnknown,
     RequirementBindingContext,
+    SourceControlRepository,
     create_and_verify_branch,
 )
 
@@ -79,6 +80,21 @@ def _repository_profile(row: Any) -> GitLabRepositoryProfile:
         connection_ref=row["connection_ref"],
         default_branch=row["default_branch"],
         credential_secret_ref=row["credential_secret_ref"],
+    )
+
+
+def _existing_effect_result(
+    repository: SourceControlRepository,
+    effect_id: str,
+) -> ProcessBindingRequestResult:
+    effect_row = repository.effect_by_id(effect_id)
+    if effect_row is None:
+        raise RequirementCallbackUnavailable("Source Control effect is unavailable")
+    binding_row = repository.binding_by_work_item(str(effect_row["work_item_id"]))
+    return ProcessBindingRequestResult(
+        effect=_effect_dto(effect_row),
+        binding=None if binding_row is None else _binding_dto(binding_row),
+        blocked_reason=effect_row["last_error_code"],
     )
 
 
@@ -195,6 +211,7 @@ def _complete_effect_block(
         blocked_row = repository.transition_effect(
             effect.id,
             expected_state=EffectState.IN_FLIGHT.value,
+            expected_attempts=effect.attempts,
             values={
                 "state": EffectState.BLOCKED.value,
                 "last_error_code": reason_code,
@@ -203,18 +220,19 @@ def _complete_effect_block(
                 "updated_at": completed_at,
             },
         )
+        if blocked_row is None:
+            return _existing_effect_result(repository, effect.id)
         repository.complete_binding_request(message_id, now=completed_at)
-        if blocked_row is not None:
-            append_lifecycle_audit(
-                repository,
-                action="source_control.effect.blocked",
-                target_type="source_control_effect",
-                target_id=effect.id,
-                dependencies=dependencies,
-                result="DENIED",
-                reason=reason_code,
-                correlation_id=f"source-control:effect:{effect.id}",
-            )
+        append_lifecycle_audit(
+            repository,
+            action="source_control.effect.blocked",
+            target_type="source_control_effect",
+            target_id=effect.id,
+            dependencies=dependencies,
+            result="DENIED",
+            reason=reason_code,
+            correlation_id=f"source-control:effect:{effect.id}",
+        )
     try:
         _record_blocked(
             context,
@@ -483,9 +501,11 @@ def process_binding_request(
         )
     except GitLabResultUnknown:
         with dependencies.engine.begin() as db:
-            unknown_row = dependencies.repository_factory(db).transition_effect(
+            repository = dependencies.repository_factory(db)
+            unknown_row = repository.transition_effect(
                 effect.id,
                 expected_state=EffectState.IN_FLIGHT.value,
+                expected_attempts=effect.attempts,
                 values={
                     "state": EffectState.UNKNOWN.value,
                     "last_error_code": "EXTERNAL_RESULT_UNKNOWN",
@@ -496,21 +516,22 @@ def process_binding_request(
                     "updated_at": dependencies.clock.now(),
                 },
             )
-            dependencies.repository_factory(db).complete_binding_request(
+            if unknown_row is None:
+                return _existing_effect_result(repository, effect.id)
+            repository.complete_binding_request(
                 message_id,
                 now=dependencies.clock.now(),
             )
-            if unknown_row is not None:
-                append_lifecycle_audit(
-                    dependencies.repository_factory(db),
-                    action="source_control.effect.unknown",
-                    target_type="source_control_effect",
-                    target_id=effect.id,
-                    dependencies=dependencies,
-                    result="UNKNOWN",
-                    reason="EXTERNAL_RESULT_UNKNOWN",
-                    correlation_id=f"source-control:effect:{effect.id}",
-                )
+            append_lifecycle_audit(
+                repository,
+                action="source_control.effect.unknown",
+                target_type="source_control_effect",
+                target_id=effect.id,
+                dependencies=dependencies,
+                result="UNKNOWN",
+                reason="EXTERNAL_RESULT_UNKNOWN",
+                correlation_id=f"source-control:effect:{effect.id}",
+            )
         effect = _effect_dto(unknown_row)
         try:
             _record_blocked(
@@ -567,6 +588,7 @@ def process_binding_request(
         succeeded_row = repository.transition_effect(
             effect.id,
             expected_state=EffectState.IN_FLIGHT.value,
+            expected_attempts=effect.attempts,
             values={
                 "state": EffectState.SUCCEEDED.value,
                 "next_reconcile_at": None,
@@ -574,6 +596,8 @@ def process_binding_request(
                 "updated_at": completed_at,
             },
         )
+        if succeeded_row is None:
+            return _existing_effect_result(repository, effect.id)
         binding_row = repository.insert_binding(
             id=str(dependencies.random.uuid4()),
             work_item_id=context.work_item_id,
@@ -595,15 +619,14 @@ def process_binding_request(
             dependencies=dependencies,
             correlation_id=f"source-control:effect:{effect.id}",
         )
-        if succeeded_row is not None:
-            append_lifecycle_audit(
-                repository,
-                action="source_control.effect.succeeded",
-                target_type="source_control_effect",
-                target_id=effect.id,
-                dependencies=dependencies,
-                correlation_id=f"source-control:effect:{effect.id}",
-            )
+        append_lifecycle_audit(
+            repository,
+            action="source_control.effect.succeeded",
+            target_type="source_control_effect",
+            target_id=effect.id,
+            dependencies=dependencies,
+            correlation_id=f"source-control:effect:{effect.id}",
+        )
     return _replay_existing_binding(
         _binding_dto(binding_row),
         _effect_dto(succeeded_row),
