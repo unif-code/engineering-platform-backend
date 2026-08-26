@@ -60,13 +60,13 @@ def test_fresh_upgrade_heads_installs_workspace_and_independent_graph(
             "0001_organization_base",
             "0001_workspace_base",
             "0006_auth_v03_routes",
-            "0002_req_binding_blocked",
+            "0003_req_sc_relay",
         }
         assert installed_heads == {
             "0008_audit_requirement_grant",
             "0010_identity_policy_reauth",
             "0006_auth_v03_routes",
-            "0002_req_binding_blocked",
+            "0003_req_sc_relay",
         }
         assert set(inspect(engine).get_table_names(schema="workspace")) == {
             "idempotency_record",
