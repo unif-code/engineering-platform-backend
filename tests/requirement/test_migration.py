@@ -128,6 +128,31 @@ def test_repository_binding_blocked_state_requires_a_structured_reason_and_times
     assert "repository_blocked_at" in constraint
 
 
+def test_requirement_integration_delivery_columns_and_checks_exist(
+    requirement_owner_engine: Engine,
+) -> None:
+    columns = {
+        column["name"]: column
+        for column in inspect(requirement_owner_engine).get_columns(
+            "work_item", schema="requirement"
+        )
+    }
+    with requirement_owner_engine.connect() as db:
+        state_constraint = db.execute(
+            text(
+                "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                "WHERE conname='ck_requirement_work_item_state'"
+            )
+        ).scalar_one()
+
+    assert columns["integration_delivery_state"]["nullable"] is False
+    assert columns["integration_merge_request_binding_id"]["nullable"] is True
+    assert columns["integration_blocked_reason_code"]["nullable"] is True
+    assert columns["integration_updated_at"]["nullable"] is True
+    assert "IN_PROGRESS" in state_constraint
+    assert "VERIFYING" in state_constraint
+
+
 @pytest.mark.parametrize(
     "reason",
     [

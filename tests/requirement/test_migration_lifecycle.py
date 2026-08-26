@@ -56,14 +56,14 @@ def test_fresh_upgrade_installs_requirement_and_all_visible_heads(
             "0001_organization_base",
             "0001_workspace_base",
             "0006_auth_v03_routes",
-            "0003_req_sc_relay",
+            "0004_req_int_delivery",
             "0004_sc_secret_reference",
         }
         assert installed_heads == {
             "0008_audit_requirement_grant",
             "0010_identity_policy_reauth",
             "0006_auth_v03_routes",
-            "0003_req_sc_relay",
+            "0004_req_int_delivery",
             "0004_sc_secret_reference",
         }
         assert set(inspect(engine).get_table_names(schema="requirement")) == {
@@ -152,5 +152,47 @@ def test_all_migrations_round_trip_with_requirement_schema(
             "sdd_baseline",
             "work_item",
         }
+    finally:
+        engine.dispose()
+
+
+def test_requirement_delivery_facts_prevent_requirement_downgrade(
+    fresh_requirement_database_url: str,
+) -> None:
+    config = _config(fresh_requirement_database_url)
+    command.upgrade(config, "heads")
+    engine = create_engine(fresh_requirement_database_url)
+    try:
+        with engine.begin() as db:
+            db.execute(
+                text(
+                    "INSERT INTO requirement.requirement "
+                    "(id, workspace_id, type, title, description, acceptance_criteria, "
+                    "created_by, initial_repository_id, route_snapshot_version, "
+                    "route_snapshot_hash, state, record_state, requirement_version, "
+                    "required_work_item_set_version, required_work_item_set_hash, revision) VALUES "
+                    "('10000000-0000-0000-0000-000000000301', "
+                    "'20000000-0000-0000-0000-000000000301', 'feat', 'Title', 'Description', "
+                    "'[\"accepted\"]', 'employee-1', 'repository-1', 1, 'sha256:route', "
+                    "'IN_PROGRESS', 'ACTIVE', 1, 1, 'sha256:set', 1)"
+                )
+            )
+            db.execute(
+                text(
+                    "INSERT INTO requirement.work_item "
+                    "(id, requirement_id, created_by, human_owner_id, executor_type, "
+                    "executor_id, required_capabilities, assignment_state, repository_state, "
+                    "state, repository_id, "
+                    "base_commit_sha, task_branch, integration_delivery_state, revision) VALUES "
+                    "('10000000-0000-0000-0000-000000000302', "
+                    "'10000000-0000-0000-0000-000000000301', 'employee-1', 'employee-1', "
+                    "'HUMAN', 'employee-1', '[\"code.change\"]', 'ASSIGNED', 'BOUND', "
+                    "'IN_PROGRESS', 'repository-1', 'sha256:base', 'task-branch', "
+                    "'IMPLEMENTING', 1)"
+                )
+            )
+
+        with pytest.raises(Exception, match="integration delivery facts"):
+            command.downgrade(config, "requirement@0003_req_sc_relay")
     finally:
         engine.dispose()

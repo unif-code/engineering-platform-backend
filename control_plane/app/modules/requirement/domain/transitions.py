@@ -93,7 +93,9 @@ _FIRST_BATCH_TRANSITIONS = {
         RequirementState.PREPARING,
         RequirementState.CANCELED,
     },
-    RequirementState.READY: {RequirementState.CANCELED},
+    RequirementState.READY: {RequirementState.IN_PROGRESS, RequirementState.CANCELED},
+    RequirementState.IN_PROGRESS: {RequirementState.VERIFYING, RequirementState.CANCELED},
+    RequirementState.VERIFYING: {RequirementState.CANCELED},
     RequirementState.CANCELED: set(),
 }
 

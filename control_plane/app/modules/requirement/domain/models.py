@@ -16,6 +16,8 @@ class RequirementState(StrEnum):
     PREPARING = "PREPARING"
     AWAITING_CONFIRMATION = "AWAITING_CONFIRMATION"
     READY = "READY"
+    IN_PROGRESS = "IN_PROGRESS"
+    VERIFYING = "VERIFYING"
     CANCELED = "CANCELED"
 
 
@@ -49,7 +51,46 @@ class RepositoryBindingBlockedReason(StrEnum):
 class WorkItemState(StrEnum):
     DRAFT = "DRAFT"
     READY = "READY"
+    IN_PROGRESS = "IN_PROGRESS"
+    VERIFYING = "VERIFYING"
     CANCELED = "CANCELED"
+
+
+class IntegrationDeliveryState(StrEnum):
+    NOT_STARTED = "NOT_STARTED"
+    IMPLEMENTING = "IMPLEMENTING"
+    MR_PENDING = "MR_PENDING"
+    MR_OPEN = "MR_OPEN"
+    MERGE_PENDING = "MERGE_PENDING"
+    INTEGRATED = "INTEGRATED"
+    BLOCKED = "BLOCKED"
+    RECONCILIATION_PENDING = "RECONCILIATION_PENDING"
+
+
+class IntegrationDeliveryRequestKind(StrEnum):
+    CREATE_MR = "CREATE_MR"
+    MERGE_MR = "MERGE_MR"
+
+
+class IntegrationDeliveryBlockedReason(StrEnum):
+    OWNER_MISMATCH = "OWNER_MISMATCH"
+    OWNER_INELIGIBLE = "OWNER_INELIGIBLE"
+    MERGE_ACTOR_INELIGIBLE = "MERGE_ACTOR_INELIGIBLE"
+    REPOSITORY_NOT_AUTHORIZED = "REPOSITORY_NOT_AUTHORIZED"
+    BRANCH_BINDING_MISSING = "BRANCH_BINDING_MISSING"
+    TARGET_BRANCH_NOT_FOUND = "TARGET_BRANCH_NOT_FOUND"
+    TARGET_BRANCH_NOT_PROTECTED = "TARGET_BRANCH_NOT_PROTECTED"
+    NO_DELIVERY_COMMIT = "NO_DELIVERY_COMMIT"
+    HEAD_SHA_CHANGED = "HEAD_SHA_CHANGED"
+    MR_CONFLICT = "MR_CONFLICT"
+    MR_CLOSED = "MR_CLOSED"
+    MR_CHECKS_BLOCKED = "MR_CHECKS_BLOCKED"
+    MERGE_CONFLICT = "MERGE_CONFLICT"
+    PROJECT_PROFILE_UNSUPPORTED = "PROJECT_PROFILE_UNSUPPORTED"
+    SOURCE_BRANCH_MISSING_AFTER_INTEGRATION = "SOURCE_BRANCH_MISSING_AFTER_INTEGRATION"
+    EXTERNAL_MERGE_DRIFT = "EXTERNAL_MERGE_DRIFT"
+    PROVIDER_UNAVAILABLE = "PROVIDER_UNAVAILABLE"
+    RECONCILIATION_PENDING = "RECONCILIATION_PENDING"
 
 
 class ExecutorType(StrEnum):
@@ -113,6 +154,10 @@ class WorkItemDto(BaseModel):
     task_branch: str | None
     repository_blocked_reason_code: RepositoryBindingBlockedReason | None
     repository_blocked_at: datetime | None
+    integration_delivery_state: IntegrationDeliveryState = IntegrationDeliveryState.NOT_STARTED
+    integration_merge_request_binding_id: str | None = None
+    integration_blocked_reason_code: IntegrationDeliveryBlockedReason | None = None
+    integration_updated_at: datetime | None = None
     revision: int
     created_at: datetime
     updated_at: datetime
@@ -142,6 +187,36 @@ class RepositoryBindingContext(BaseModel):
     assignment_state: AssignmentState
     human_owner_id: str | None
     required_capabilities: tuple[str, ...]
+
+
+class IntegrationDeliveryRequestMessage(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    message_id: str
+    requirement_id: str
+    requirement_version: int
+    work_item_id: str
+    repository_id: str
+    request_kind: IntegrationDeliveryRequestKind
+    attempts: int
+
+
+class IntegrationDeliveryContext(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    requirement_id: str
+    requirement_state: RequirementState
+    workspace_id: str
+    work_item_id: str
+    work_item_revision: int
+    repository_id: str
+    base_commit_sha: str | None
+    task_branch: str | None
+    human_owner_id: str | None
+    assignment_state: AssignmentState
+    repository_state: RepositoryState
+    integration_delivery_state: IntegrationDeliveryState
+    integration_merge_request_binding_id: str | None
 
 
 class CreateRequirementResult(BaseModel):
