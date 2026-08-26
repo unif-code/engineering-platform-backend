@@ -57,14 +57,14 @@ def test_fresh_upgrade_installs_requirement_and_all_visible_heads(
             "0001_workspace_base",
             "0006_auth_v03_routes",
             "0004_req_int_delivery",
-            "0004_sc_secret_reference",
+            "0005_sc_int_delivery",
         }
         assert installed_heads == {
             "0008_audit_requirement_grant",
             "0010_identity_policy_reauth",
             "0006_auth_v03_routes",
             "0004_req_int_delivery",
-            "0004_sc_secret_reference",
+            "0005_sc_int_delivery",
         }
         assert set(inspect(engine).get_table_names(schema="requirement")) == {
             "decision",

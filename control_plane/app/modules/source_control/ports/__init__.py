@@ -17,6 +17,10 @@ from control_plane.app.modules.source_control.ports.gitlab import (
     create_and_verify_branch,
     run_create_branch_saga,
 )
+from control_plane.app.modules.source_control.ports.integration_repository import (
+    SourceControlIntegrationRepository,
+    SourceControlIntegrationRepositoryFactory,
+)
 from control_plane.app.modules.source_control.ports.repository import (
     SourceControlRepository,
     SourceControlRepositoryFactory,
@@ -53,6 +57,8 @@ __all__ = [
     "RequirementBindingPort",
     "SecretReferencePort",
     "SourceControlPolicyPort",
+    "SourceControlIntegrationRepository",
+    "SourceControlIntegrationRepositoryFactory",
     "SourceControlRepository",
     "SourceControlRepositoryFactory",
     "create_and_verify_branch",

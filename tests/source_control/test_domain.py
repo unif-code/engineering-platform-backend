@@ -18,6 +18,7 @@ from control_plane.app.modules.source_control import (
     build_task_branch_name,
     transition_effect,
 )
+from control_plane.app.modules.source_control.domain import EffectOperation
 
 NOW = datetime(2026, 8, 26, 2, 0, tzinfo=UTC)
 
@@ -131,7 +132,7 @@ def test_domain_envelopes_validate_claims_effects_and_sanitized_webhooks() -> No
     effect = SourceControlEffectDto(
         id="effect-1",
         effect_key="source-control:create-task-branch:work-item-1",
-        operation="CREATE_TASK_BRANCH",
+        operation=EffectOperation.CREATE_TASK_BRANCH,
         work_item_id=request.work_item_id,
         requirement_id=request.requirement_id,
         repository_id=request.repository_id,
