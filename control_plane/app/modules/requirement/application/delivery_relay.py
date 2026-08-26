@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
+from cryptography.exceptions import InvalidTag
 from pydantic import ValidationError
 
 from control_plane.app.modules.requirement.application.common import (
@@ -40,15 +41,29 @@ from control_plane.app.modules.requirement.domain import (
 from control_plane.app.modules.requirement.ports import RequirementRepository
 from control_plane.app.shared.idempotency import (
     IdempotentResponse,
+    SealedIdempotentEnvelope,
     canonical_request_fingerprint,
     execute_idempotent,
 )
+from control_plane.app.shared.security import unseal
 
 _CREATE_TOPIC = "requirement.integration-merge-request.requested"
 _MERGE_TOPIC = "requirement.integration-merge.requested"
 _TOPIC_KINDS = {
     _CREATE_TOPIC: IntegrationDeliveryRequestKind.CREATE_MR,
     _MERGE_TOPIC: IntegrationDeliveryRequestKind.MERGE_MR,
+}
+_DELIVERY_COMMANDS = {
+    IntegrationDeliveryRequestKind.CREATE_MR: (
+        "requirement_request_integration_merge_request",
+        "requirement.request-integration-merge-request",
+        _CREATE_TOPIC,
+    ),
+    IntegrationDeliveryRequestKind.MERGE_MR: (
+        "requirement_request_integration_merge",
+        "requirement.request-integration-merge",
+        _MERGE_TOPIC,
+    ),
 }
 _DELIVERY_RELEASE_ERROR_CODES = frozenset(
     {
@@ -77,7 +92,98 @@ def _payload_hash(payload: dict[str, object]) -> str:
     return "sha256:" + hashlib.sha256(canonical).hexdigest()
 
 
-def _message(row: Any) -> IntegrationDeliveryRequestMessage:
+def _expected_payload(
+    result: WorkItemDeliveryResult,
+    *,
+    kind: IntegrationDeliveryRequestKind,
+    actor: str,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "kind": kind.value,
+        "requirementId": result.requirement.id,
+        "requirementRevision": result.requirement.revision,
+        "workItemId": result.work_item.id,
+        "workItemRevision": result.work_item.revision,
+    }
+    if kind is IntegrationDeliveryRequestKind.MERGE_MR:
+        payload["integrationMergeRequestBindingId"] = (
+            result.work_item.integration_merge_request_binding_id
+        )
+    payload.update(
+        {
+            "repositoryId": result.work_item.repository_id,
+            "actorId": actor,
+        }
+    )
+    return payload
+
+
+def _bound_payload_hash(
+    repository: RequirementRepository,
+    *,
+    row: Any,
+    payload: dict[str, object],
+    kind: IntegrationDeliveryRequestKind,
+    dependencies: RequirementDependencies,
+) -> str:
+    operation, path, topic = _DELIVERY_COMMANDS[kind]
+    requirement_revision = payload["requirementRevision"]
+    request_actor = payload["actorId"]
+    if type(requirement_revision) is not int or not isinstance(request_actor, str):
+        raise IntegrationDeliveryMessageInvalid(str(row["id"]))
+    prior_requirement_revision = requirement_revision - 1
+    if prior_requirement_revision < 1:
+        raise IntegrationDeliveryMessageInvalid(str(row["id"]))
+    material = dependencies.secret_manager.load()
+    request_fingerprint = canonical_request_fingerprint(
+        operation=operation,
+        method="COMMAND",
+        path=path,
+        body={
+            "requirementId": payload["requirementId"],
+            "workItemId": payload["workItemId"],
+            "expectedRevision": prior_requirement_revision,
+        },
+        idempotency_sealing_key=material.idempotency_sealing_key,
+    )
+    records = repository.completed_idempotency_by_fingerprint(
+        request_actor,
+        operation,
+        request_fingerprint,
+    )
+    current_hash = _payload_hash(payload)
+    for record in records:
+        try:
+            envelope = SealedIdempotentEnvelope.model_validate_json(
+                unseal(record["sealed_response"], material.idempotency_sealing_key)
+            )
+            result = WorkItemDeliveryResult.model_validate(envelope.response.body)
+        except (InvalidTag, TypeError, UnicodeError, ValueError, ValidationError):
+            continue
+        if (
+            record["result_metadata"] != {"kind": "http-response", "schemaVersion": 1}
+            or record["http_status"] != 202
+            or envelope.actor != record["actor"]
+            or envelope.operation != record["operation"]
+            or envelope.idempotency_key != record["idempotency_key"]
+            or envelope.request_fingerprint != record["request_fingerprint"]
+            or envelope.response.status_code != record["http_status"]
+            or result.outbox_topic != topic
+        ):
+            continue
+        original_payload = _expected_payload(result, kind=kind, actor=envelope.actor)
+        original_hash = _payload_hash(original_payload)
+        if original_hash == current_hash and original_payload == payload:
+            return original_hash
+    raise IntegrationDeliveryMessageInvalid(str(row["id"]))
+
+
+def _message(
+    repository: RequirementRepository,
+    row: Any,
+    *,
+    dependencies: RequirementDependencies,
+) -> IntegrationDeliveryRequestMessage:
     kind = _TOPIC_KINDS.get(row["topic"])
     payload = row["payload"]
     if kind is None or row["aggregate_type"] != "REQUIREMENT" or not isinstance(payload, dict):
@@ -106,16 +212,25 @@ def _message(row: Any) -> IntegrationDeliveryRequestMessage:
             not isinstance(payload.get(field), str) or not payload[field].strip()
             for field in string_fields
         )
-        or not isinstance(payload.get("requirementRevision"), int)
-        or not isinstance(payload.get("workItemRevision"), int)
+        or type(payload.get("requirementRevision")) is not int
+        or payload["requirementRevision"] < 1
+        or type(payload.get("workItemRevision")) is not int
+        or payload["workItemRevision"] < 1
         or payload["requirementRevision"] != row["aggregate_version"]
         or payload["requirementId"] != str(row["aggregate_id"])
     ):
         raise IntegrationDeliveryMessageInvalid(str(row["id"]))
+    bound_payload_hash = _bound_payload_hash(
+        repository,
+        row=row,
+        payload=payload,
+        kind=kind,
+        dependencies=dependencies,
+    )
     try:
         return IntegrationDeliveryRequestMessage(
             message_id=str(row["id"]),
-            payload_hash=_payload_hash(payload),
+            payload_hash=bound_payload_hash,
             requirement_id=payload["requirementId"],
             requirement_revision=payload["requirementRevision"],
             work_item_id=payload["workItemId"],
@@ -136,11 +251,12 @@ def claim_integration_delivery_requests(
     limit: int,
     available_before: datetime,
     lease_until: datetime,
+    dependencies: RequirementDependencies,
 ) -> tuple[IntegrationDeliveryRequestMessage, ...]:
     if not 1 <= limit <= 100 or lease_until <= available_before:
         raise InvalidRequirementInput("integration delivery lease is invalid")
     return tuple(
-        _message(row)
+        _message(repository, row, dependencies=dependencies)
         for row in repository.claim_delivery_requests(
             limit=limit,
             available_before=available_before,
@@ -161,7 +277,7 @@ def acknowledge_integration_delivery_request(
     message = repository.outbox_by_id(message_id, for_update=True)
     if message is None or message["topic"] not in _TOPIC_KINDS:
         raise IntegrationDeliveryRequestMissing(message_id)
-    _message(message)
+    _message(repository, message, dependencies=dependencies)
     if message["state"] == "PUBLISHED":
         return
     if repository.publish_outbox(message_id, now=dependencies.clock.now()) is None:
@@ -174,13 +290,14 @@ def release_integration_delivery_request(
     message_id: str,
     error_code: str,
     available_at: datetime,
+    dependencies: RequirementDependencies,
 ) -> None:
     if error_code not in _DELIVERY_RELEASE_ERROR_CODES:
         raise InvalidRequirementInput("integration delivery release error code is invalid")
     message = repository.outbox_by_id(message_id, for_update=True)
     if message is None or message["topic"] not in _TOPIC_KINDS:
         raise IntegrationDeliveryRequestMissing(message_id)
-    _message(message)
+    _message(repository, message, dependencies=dependencies)
     if message["state"] == "PUBLISHED":
         return
     released = repository.release_outbox(

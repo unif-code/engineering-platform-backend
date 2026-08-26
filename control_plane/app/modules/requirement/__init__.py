@@ -202,6 +202,7 @@ def claim_integration_delivery_requests(
         limit=limit,
         available_before=available_before,
         lease_until=lease_until,
+        dependencies=dependencies,
     )
 
 
@@ -233,6 +234,7 @@ def release_integration_delivery_request(
         message_id=message_id,
         error_code=error_code,
         available_at=available_at,
+        dependencies=dependencies,
     )
 
 

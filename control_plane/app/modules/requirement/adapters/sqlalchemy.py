@@ -49,6 +49,28 @@ class SqlAlchemyRequirementRepository:
             .one_or_none()
         )
 
+    def completed_idempotency_by_fingerprint(
+        self,
+        actor: str,
+        operation: str,
+        request_fingerprint: str,
+    ) -> list[Any]:
+        return list(
+            self.db.execute(
+                text(
+                    "SELECT * FROM requirement.idempotency_record "
+                    "WHERE actor=:actor AND operation=:operation "
+                    "AND request_fingerprint=:request_fingerprint "
+                    "AND state='COMPLETED' ORDER BY created_at, id"
+                ),
+                {
+                    "actor": actor,
+                    "operation": operation,
+                    "request_fingerprint": request_fingerprint,
+                },
+            ).mappings()
+        )
+
     def complete_idempotency(
         self,
         record_id: str,

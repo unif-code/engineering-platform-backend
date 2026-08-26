@@ -18,6 +18,13 @@ class RequirementRepository(Protocol):
         for_update: bool = False,
     ) -> Any: ...
 
+    def completed_idempotency_by_fingerprint(
+        self,
+        actor: str,
+        operation: str,
+        request_fingerprint: str,
+    ) -> list[Any]: ...
+
     def complete_idempotency(
         self,
         record_id: str,
