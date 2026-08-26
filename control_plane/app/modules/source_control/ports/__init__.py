@@ -21,6 +21,15 @@ from control_plane.app.modules.source_control.ports.integration_repository impor
     SourceControlIntegrationRepository,
     SourceControlIntegrationRepositoryFactory,
 )
+from control_plane.app.modules.source_control.ports.merge_requests import (
+    GitLabMergeRequestBlocked,
+    GitLabMergeRequestHeadChanged,
+    GitLabMergeRequestNotFound,
+    GitLabMergeRequestPort,
+    GitLabMergeRequestSnapshot,
+    GitLabProjectDeliveryProfile,
+    GitLabProjectNotFound,
+)
 from control_plane.app.modules.source_control.ports.repository import (
     SourceControlRepository,
     SourceControlRepositoryFactory,
@@ -44,8 +53,15 @@ __all__ = [
     "GitLabBranchNotFound",
     "GitLabDefaultBranchNotFound",
     "GitLabError",
+    "GitLabMergeRequestBlocked",
+    "GitLabMergeRequestHeadChanged",
+    "GitLabMergeRequestNotFound",
+    "GitLabMergeRequestPort",
+    "GitLabMergeRequestSnapshot",
     "GitLabPort",
     "GitLabProviderUnavailable",
+    "GitLabProjectDeliveryProfile",
+    "GitLabProjectNotFound",
     "GitLabRepositoryProfile",
     "GitLabResultUnknown",
     "BindingBlockedResult",
