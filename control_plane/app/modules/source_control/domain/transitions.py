@@ -37,6 +37,22 @@ class RequirementCallbackUnavailable(SourceControlError):
     pass
 
 
+class WebhookSignatureInvalid(SourceControlError):
+    pass
+
+
+class WebhookReplayRejected(SourceControlError):
+    pass
+
+
+class WebhookPayloadInvalid(SourceControlError):
+    pass
+
+
+class WebhookIdConflict(SourceControlError):
+    pass
+
+
 _EFFECT_TRANSITIONS = {
     EffectState.PLANNED: {EffectState.IN_FLIGHT, EffectState.BLOCKED},
     EffectState.IN_FLIGHT: {

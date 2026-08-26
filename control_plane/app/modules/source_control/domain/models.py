@@ -160,3 +160,33 @@ class GitLabWebhookEnvelope(BaseModel):
     before_sha: NonEmptyStr | None
     after_sha: NonEmptyStr | None
     checkout_sha: NonEmptyStr | None
+
+
+class VerifiedStandardWebhook(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    webhook_id: NonEmptyStr
+    timestamp: AwareDatetime
+
+
+class WebhookInboxDto(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: NonEmptyStr
+    repository_id: NonEmptyStr
+    webhook_id: NonEmptyStr
+    webhook_timestamp: AwareDatetime
+    payload_digest: NonEmptyStr
+    provider_event_uuid: NonEmptyStr | None
+    event_type: NonEmptyStr
+    object_kind: NonEmptyStr | None
+    project_id: NonEmptyStr
+    ref: NonEmptyStr | None
+    before_sha: NonEmptyStr | None
+    after_sha: NonEmptyStr | None
+    checkout_sha: NonEmptyStr | None
+    state: WebhookInboxState
+    last_error_code: NonEmptyStr | None
+    received_at: AwareDatetime
+    updated_at: AwareDatetime
+    processed_at: AwareDatetime | None
