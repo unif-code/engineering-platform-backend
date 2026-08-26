@@ -143,6 +143,9 @@ class FixedPolicy:
     def next_reconcile_at(self, *, now: datetime, attempts: int) -> datetime:
         return now + timedelta(seconds=30 * max(attempts, 1))
 
+    def webhook_replay_window(self) -> timedelta:
+        return timedelta(minutes=5)
+
 
 def test_register_repository_stores_only_secret_references(
     isolated_source_control_rw_engine: Engine,

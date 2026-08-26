@@ -303,20 +303,39 @@ class SqlAlchemySourceControlRepository:
         )
 
     def accept_webhook(self, **values: Any) -> Any:
+        parameters = {
+            "state": "RECEIVED",
+            "processed_at": None,
+            **values,
+        }
         return (
             self.db.execute(
                 text(
                     "INSERT INTO source_control.webhook_inbox "
                     "(id, repository_id, webhook_id, webhook_timestamp, payload_digest, "
                     "provider_event_uuid, event_type, object_kind, project_id, ref, "
-                    "before_sha, after_sha, checkout_sha, state, received_at, updated_at) "
+                    "before_sha, after_sha, checkout_sha, state, received_at, updated_at, "
+                    "processed_at) "
                     "VALUES (:id, :repository_id, :webhook_id, :webhook_timestamp, "
                     ":payload_digest, :provider_event_uuid, :event_type, :object_kind, "
                     ":project_id, :ref, :before_sha, :after_sha, :checkout_sha, "
-                    "'RECEIVED', :now, :now) "
+                    ":state, :now, :now, :processed_at) "
                     "ON CONFLICT (repository_id, webhook_id) DO NOTHING RETURNING *"
                 ),
-                values,
+                parameters,
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def webhook_by_message(self, repository_id: str, webhook_id: str) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "SELECT * FROM source_control.webhook_inbox "
+                    "WHERE repository_id=:repository_id AND webhook_id=:webhook_id"
+                ),
+                {"repository_id": repository_id, "webhook_id": webhook_id},
             )
             .mappings()
             .one_or_none()

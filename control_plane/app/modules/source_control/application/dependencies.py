@@ -9,6 +9,7 @@ from control_plane.app.modules.source_control.ports import (
     OwnerEligibilityPort,
     RandomPort,
     RequirementBindingPort,
+    SecretReferencePort,
     SourceControlPolicyPort,
     SourceControlRepositoryFactory,
 )
@@ -25,3 +26,4 @@ class SourceControlDependencies:
     random: RandomPort
     gitlab: GitLabPort | None = None
     policy: SourceControlPolicyPort | None = None
+    webhook_secrets: SecretReferencePort | None = None

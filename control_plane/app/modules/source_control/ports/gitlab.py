@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict
@@ -74,6 +74,8 @@ class GitLabPort(Protocol):
 
 class SourceControlPolicyPort(Protocol):
     def next_reconcile_at(self, *, now: datetime, attempts: int) -> datetime: ...
+
+    def webhook_replay_window(self) -> timedelta: ...
 
 
 def create_and_verify_branch(
