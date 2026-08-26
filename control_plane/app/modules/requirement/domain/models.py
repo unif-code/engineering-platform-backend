@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class RequirementType(StrEnum):
@@ -190,14 +190,14 @@ class RepositoryBindingContext(BaseModel):
 
 
 class IntegrationDeliveryRequestMessage(BaseModel):
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, strict=True)
 
     message_id: str
     payload_hash: str
     requirement_id: str
-    requirement_revision: int
+    requirement_revision: int = Field(ge=1)
     work_item_id: str
-    work_item_revision: int
+    work_item_revision: int = Field(ge=1)
     repository_id: str
     actor_id: str
     kind: IntegrationDeliveryRequestKind

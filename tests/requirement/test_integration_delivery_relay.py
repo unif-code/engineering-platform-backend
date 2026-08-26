@@ -1,3 +1,4 @@
+import json
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from datetime import UTC, datetime, timedelta
 
@@ -165,6 +166,72 @@ def test_claim_replay_is_stable_and_malformed_same_message_is_rejected(
                 available_before=lease_until + timedelta(minutes=1),
                 lease_until=lease_until + timedelta(minutes=2),
                 dependencies=dependencies,
+            )
+
+
+def test_claim_rejects_same_message_id_with_different_valid_payload(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    _requested_mr(isolated_requirement_database, key_suffix="payload-conflict")
+    dependencies = _gate_dependencies()
+    lease_until = NOW + timedelta(minutes=1)
+    with isolated_requirement_database.runtime.begin() as db:
+        first = claim_integration_delivery_requests(
+            db,
+            limit=1,
+            available_before=NOW,
+            lease_until=lease_until,
+            dependencies=dependencies,
+        )[0]
+    with isolated_requirement_database.owner.begin() as db:
+        db.execute(
+            text(
+                "UPDATE requirement.outbox_message "
+                "SET payload=jsonb_set(payload, '{actorId}', to_jsonb(CAST(:actor_id AS TEXT))) "
+                "WHERE id=:message_id"
+            ),
+            {"actor_id": "employee-2", "message_id": first.message_id},
+        )
+
+    with pytest.raises(IntegrationDeliveryMessageInvalid):
+        with isolated_requirement_database.runtime.begin() as db:
+            claim_integration_delivery_requests(
+                db,
+                limit=1,
+                available_before=lease_until,
+                lease_until=lease_until + timedelta(minutes=1),
+                dependencies=dependencies,
+            )
+
+
+@pytest.mark.parametrize("invalid_revision", [True, -1])
+def test_claim_rejects_boolean_or_negative_work_item_revision(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+    invalid_revision: object,
+) -> None:
+    requested = _requested_mr(isolated_requirement_database, key_suffix="strict-revision")
+    with isolated_requirement_database.owner.begin() as db:
+        db.execute(
+            text(
+                "UPDATE requirement.outbox_message "
+                "SET payload=jsonb_set(payload, '{workItemRevision}', CAST(:revision AS JSONB)) "
+                "WHERE aggregate_id=:requirement_id "
+                "AND topic='requirement.integration-merge-request.requested'"
+            ),
+            {
+                "revision": json.dumps(invalid_revision),
+                "requirement_id": requested.requirement.id,
+            },
+        )
+
+    with pytest.raises(IntegrationDeliveryMessageInvalid):
+        with isolated_requirement_database.runtime.begin() as db:
+            claim_integration_delivery_requests(
+                db,
+                limit=1,
+                available_before=NOW,
+                lease_until=NOW + timedelta(minutes=1),
+                dependencies=_gate_dependencies(),
             )
 
 
