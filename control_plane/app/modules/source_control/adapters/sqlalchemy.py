@@ -256,19 +256,26 @@ class SqlAlchemySourceControlRepository:
         effect_id: str,
         *,
         expected_state: str,
+        expected_attempts: int | None = None,
         values: Mapping[str, object],
     ) -> Any:
         unexpected = set(values) - _EFFECT_UPDATE_COLUMNS
         if not values or unexpected:
             raise ValueError(f"Invalid effect update columns: {sorted(unexpected)}")
         assignments = ", ".join(f"{column}=:{column}" for column in sorted(values))
+        attempt_guard = "" if expected_attempts is None else " AND attempts=:expected_attempts"
         return (
             self.db.execute(
                 text(
                     f"UPDATE source_control.source_control_effect SET {assignments} "
-                    "WHERE id=:effect_id AND state=:expected_state RETURNING *"
+                    f"WHERE id=:effect_id AND state=:expected_state{attempt_guard} RETURNING *"
                 ),
-                {"effect_id": effect_id, "expected_state": expected_state, **values},
+                {
+                    "effect_id": effect_id,
+                    "expected_state": expected_state,
+                    "expected_attempts": expected_attempts,
+                    **values,
+                },
             )
             .mappings()
             .one_or_none()

@@ -93,6 +93,25 @@ def _webhook_dto(row: Any) -> WebhookInboxDto:
     )
 
 
+def _audit_webhook_rejection(
+    *,
+    repository_id: str,
+    reason: str,
+    dependencies: SourceControlDependencies,
+) -> None:
+    with dependencies.engine.begin() as db:
+        append_lifecycle_audit(
+            dependencies.repository_factory(db),
+            action="source_control.webhook.rejected",
+            target_type="workspace_repository",
+            target_id=repository_id,
+            dependencies=dependencies,
+            result="DENIED",
+            reason=reason,
+            correlation_id=f"source-control:webhook:{repository_id}",
+        )
+
+
 def ingest_signed_gitlab_webhook(
     *,
     repository_id: str,
@@ -112,6 +131,11 @@ def ingest_signed_gitlab_webhook(
         or policy is None
         or secrets is None
     ):
+        _audit_webhook_rejection(
+            repository_id=repository_id,
+            reason="WEBHOOK_VERIFICATION_UNAVAILABLE",
+            dependencies=dependencies,
+        )
         raise WebhookSignatureInvalid("Standard Webhook verification is unavailable")
     try:
         signing_token = secrets.resolve(repository_row["webhook_signing_secret_ref"])
@@ -125,19 +149,56 @@ def ingest_signed_gitlab_webhook(
             replay_window=policy.webhook_replay_window(),
         )
     except SourceControlDependencyUnavailable:
+        _audit_webhook_rejection(
+            repository_id=repository_id,
+            reason="WEBHOOK_VERIFICATION_UNAVAILABLE",
+            dependencies=dependencies,
+        )
         raise
-    except (WebhookReplayRejected, WebhookSignatureInvalid):
+    except WebhookReplayRejected:
+        _audit_webhook_rejection(
+            repository_id=repository_id,
+            reason="WEBHOOK_REPLAY_REJECTED",
+            dependencies=dependencies,
+        )
+        raise
+    except WebhookSignatureInvalid:
+        _audit_webhook_rejection(
+            repository_id=repository_id,
+            reason="WEBHOOK_SIGNATURE_INVALID",
+            dependencies=dependencies,
+        )
         raise
     except Exception as error:
+        _audit_webhook_rejection(
+            repository_id=repository_id,
+            reason="WEBHOOK_VERIFICATION_UNAVAILABLE",
+            dependencies=dependencies,
+        )
         raise WebhookSignatureInvalid("Standard Webhook verification is unavailable") from error
     try:
         payload = json.loads(raw_body)
     except (UnicodeDecodeError, json.JSONDecodeError):
+        _audit_webhook_rejection(
+            repository_id=repository_id,
+            reason="WEBHOOK_PAYLOAD_INVALID",
+            dependencies=dependencies,
+        )
         raise WebhookPayloadInvalid("Webhook payload is invalid") from None
     if not isinstance(payload, dict) or not isinstance(payload.get("project"), dict):
+        _audit_webhook_rejection(
+            repository_id=repository_id,
+            reason="WEBHOOK_PAYLOAD_INVALID",
+            dependencies=dependencies,
+        )
         raise WebhookPayloadInvalid("Webhook payload is invalid")
     project_id = payload["project"].get("id")
     if not isinstance(project_id, (str, int)) or str(project_id) != repository_row["project_id"]:
+        _audit_webhook_rejection(
+            repository_id=repository_id,
+            reason="WEBHOOK_PROJECT_MISMATCH",
+            dependencies=dependencies,
+        )
         raise WebhookPayloadInvalid("Webhook project does not match the repository")
     event_type = normalized_headers.get("x-gitlab-event", "Unknown")
     object_kind = _optional_text(payload, "object_kind")

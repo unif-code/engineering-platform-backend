@@ -30,6 +30,27 @@ class HttpxGitLabAdapter:
             raise GitLabAccessDenied("GitLab connection is not authorized for the repository")
         return {"PRIVATE-TOKEN": self.secrets.resolve(repository.credential_secret_ref)}
 
+    def validate_repository(self, repository: GitLabRepositoryProfile) -> None:
+        project = quote(repository.project_id, safe="")
+        try:
+            response = self.client.get(
+                f"/projects/{project}",
+                headers=self._headers(repository),
+            )
+        except httpx.HTTPError as error:
+            raise GitLabProviderUnavailable("GitLab project validation is unavailable") from error
+        if response.status_code in {401, 403, 404}:
+            raise GitLabAccessDenied("GitLab project is not authorized")
+        if response.status_code != 200:
+            raise GitLabProviderUnavailable("GitLab project validation is unavailable")
+        try:
+            payload = response.json()
+            observed_path = payload["path_with_namespace"]
+        except (KeyError, TypeError, ValueError):
+            raise GitLabProviderUnavailable("GitLab returned an invalid project response") from None
+        if not isinstance(observed_path, str) or observed_path != repository.project_path:
+            raise GitLabAccessDenied("GitLab project path does not match the authorization")
+
     @staticmethod
     def _decode_branch(response: httpx.Response) -> BranchSnapshot:
         try:

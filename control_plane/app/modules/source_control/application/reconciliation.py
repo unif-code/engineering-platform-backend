@@ -106,10 +106,35 @@ def _complete_success(
     context: RequirementBindingContext,
     *,
     dependencies: SourceControlDependencies,
-) -> tuple[SourceControlEffectDto, RepositoryBranchBindingDto]:
+) -> tuple[
+    SourceControlEffectDto,
+    RepositoryBranchBindingDto | None,
+    bool,
+]:
     now = dependencies.clock.now()
     with dependencies.engine.begin() as db:
         repository = dependencies.repository_factory(db)
+        effect_row = repository.transition_effect(
+            effect.id,
+            expected_state=EffectState.RECONCILIATION.value,
+            expected_attempts=effect.attempts,
+            values={
+                "state": EffectState.SUCCEEDED.value,
+                "last_error_code": None,
+                "next_reconcile_at": None,
+                "requirement_callback_state": RequirementCallbackState.PENDING.value,
+                "completed_at": now,
+                "updated_at": now,
+            },
+        )
+        if effect_row is None:
+            current_row = repository.effect_by_id(effect.id)
+            binding_row = repository.binding_by_work_item(effect.work_item_id)
+            return (
+                _effect_dto(current_row),
+                None if binding_row is None else _binding_dto(binding_row),
+                False,
+            )
         binding_row = repository.binding_by_work_item(effect.work_item_id)
         binding_created = binding_row is None
         if binding_row is None:
@@ -125,18 +150,6 @@ def _complete_success(
                 effect_id=effect.id,
                 now=now,
             )
-        effect_row = repository.transition_effect(
-            effect.id,
-            expected_state=EffectState.RECONCILIATION.value,
-            values={
-                "state": EffectState.SUCCEEDED.value,
-                "last_error_code": None,
-                "next_reconcile_at": None,
-                "requirement_callback_state": RequirementCallbackState.PENDING.value,
-                "completed_at": now,
-                "updated_at": now,
-            },
-        )
         if binding_created:
             append_lifecycle_audit(
                 repository,
@@ -146,16 +159,15 @@ def _complete_success(
                 dependencies=dependencies,
                 correlation_id=f"source-control:effect:{effect.id}",
             )
-        if effect_row is not None:
-            append_lifecycle_audit(
-                repository,
-                action="source_control.effect.succeeded",
-                target_type="source_control_effect",
-                target_id=effect.id,
-                dependencies=dependencies,
-                correlation_id=f"source-control:effect:{effect.id}",
-            )
-    return _effect_dto(effect_row), _binding_dto(binding_row)
+        append_lifecycle_audit(
+            repository,
+            action="source_control.effect.succeeded",
+            target_type="source_control_effect",
+            target_id=effect.id,
+            dependencies=dependencies,
+            correlation_id=f"source-control:effect:{effect.id}",
+        )
+    return _effect_dto(effect_row), _binding_dto(binding_row), True
 
 
 def _complete_block(
@@ -163,13 +175,14 @@ def _complete_block(
     *,
     reason_code: str,
     dependencies: SourceControlDependencies,
-) -> SourceControlEffectDto:
+) -> tuple[SourceControlEffectDto, bool]:
     now = dependencies.clock.now()
     with dependencies.engine.begin() as db:
         repository = dependencies.repository_factory(db)
         row = repository.transition_effect(
             effect.id,
             expected_state=EffectState.RECONCILIATION.value,
+            expected_attempts=effect.attempts,
             values={
                 "state": EffectState.BLOCKED.value,
                 "last_error_code": reason_code,
@@ -179,18 +192,19 @@ def _complete_block(
                 "updated_at": now,
             },
         )
-        if row is not None:
-            append_lifecycle_audit(
-                repository,
-                action="source_control.effect.blocked",
-                target_type="source_control_effect",
-                target_id=effect.id,
-                dependencies=dependencies,
-                result="DENIED",
-                reason=reason_code,
-                correlation_id=f"source-control:effect:{effect.id}",
-            )
-    return _effect_dto(row)
+        if row is None:
+            return _effect_dto(repository.effect_by_id(effect.id)), False
+        append_lifecycle_audit(
+            repository,
+            action="source_control.effect.blocked",
+            target_type="source_control_effect",
+            target_id=effect.id,
+            dependencies=dependencies,
+            result="DENIED",
+            reason=reason_code,
+            correlation_id=f"source-control:effect:{effect.id}",
+        )
+    return _effect_dto(row), True
 
 
 def _return_unknown(
@@ -207,6 +221,7 @@ def _return_unknown(
         row = repository.transition_effect(
             effect.id,
             expected_state=EffectState.RECONCILIATION.value,
+            expected_attempts=effect.attempts,
             values={
                 "state": EffectState.UNKNOWN.value,
                 "last_error_code": "EXTERNAL_RESULT_UNKNOWN",
@@ -217,17 +232,18 @@ def _return_unknown(
                 "updated_at": now,
             },
         )
-        if row is not None:
-            append_lifecycle_audit(
-                repository,
-                action="source_control.effect.unknown",
-                target_type="source_control_effect",
-                target_id=effect.id,
-                dependencies=dependencies,
-                result="UNKNOWN",
-                reason="EXTERNAL_RESULT_UNKNOWN",
-                correlation_id=f"source-control:effect:{effect.id}",
-            )
+        if row is None:
+            return _effect_dto(repository.effect_by_id(effect.id))
+        append_lifecycle_audit(
+            repository,
+            action="source_control.effect.unknown",
+            target_type="source_control_effect",
+            target_id=effect.id,
+            dependencies=dependencies,
+            result="UNKNOWN",
+            reason="EXTERNAL_RESULT_UNKNOWN",
+            correlation_id=f"source-control:effect:{effect.id}",
+        )
     return _effect_dto(row)
 
 
@@ -243,11 +259,13 @@ def _reconcile_effect(
         return _return_unknown(effect, dependencies=dependencies)
     context = requirement.binding_context(effect.work_item_id)
     if context.assignment_state != "ASSIGNED" or context.human_owner_id is None:
-        blocked = _complete_block(
+        blocked, completed = _complete_block(
             effect,
             reason_code="OWNER_UNASSIGNED",
             dependencies=dependencies,
         )
+        if not completed:
+            return blocked
         return _deliver_terminal_callback(
             blocked,
             context,
@@ -256,11 +274,13 @@ def _reconcile_effect(
         )
     owner = eligibility.evaluate(context)
     if not owner.eligible:
-        blocked = _complete_block(
+        blocked, completed = _complete_block(
             effect,
             reason_code=owner.reason_code or "OWNER_INELIGIBLE",
             dependencies=dependencies,
         )
+        if not completed:
+            return blocked
         return _deliver_terminal_callback(
             blocked,
             context,
@@ -277,11 +297,13 @@ def _reconcile_effect(
         or str(repository_row["workspace_id"]) != context.workspace_id
         or context.repository_id != effect.repository_id
     ):
-        blocked = _complete_block(
+        blocked, completed = _complete_block(
             effect,
             reason_code="REPOSITORY_REMOVED",
             dependencies=dependencies,
         )
+        if not completed:
+            return blocked
         return _deliver_terminal_callback(
             blocked,
             context,
@@ -290,6 +312,7 @@ def _reconcile_effect(
         )
     profile = _repository_profile(repository_row)
     try:
+        gitlab.validate_repository(profile)
         observed = gitlab.get_branch(profile, effect.branch_name)
     except GitLabBranchNotFound:
         try:
@@ -302,11 +325,13 @@ def _reconcile_effect(
         except (GitLabProviderUnavailable, GitLabResultUnknown):
             return _return_unknown(effect, dependencies=dependencies)
         except GitLabAccessDenied:
-            blocked = _complete_block(
+            blocked, completed = _complete_block(
                 effect,
                 reason_code="ACCESS_DENIED",
                 dependencies=dependencies,
             )
+            if not completed:
+                return blocked
             return _deliver_terminal_callback(
                 blocked,
                 context,
@@ -318,11 +343,13 @@ def _reconcile_effect(
     except (GitLabProviderUnavailable, GitLabResultUnknown):
         return _return_unknown(effect, dependencies=dependencies)
     except GitLabAccessDenied:
-        blocked = _complete_block(
+        blocked, completed = _complete_block(
             effect,
             reason_code="ACCESS_DENIED",
             dependencies=dependencies,
         )
+        if not completed:
+            return blocked
         return _deliver_terminal_callback(
             blocked,
             context,
@@ -330,22 +357,26 @@ def _reconcile_effect(
             dependencies=dependencies,
         )
     if observed is not None and observed.commit_sha == effect.base_commit_sha:
-        succeeded, binding = _complete_success(
+        succeeded, binding, completed = _complete_success(
             effect,
             context,
             dependencies=dependencies,
         )
+        if not completed:
+            return succeeded
         return _deliver_terminal_callback(
             succeeded,
             context,
             binding=binding,
             dependencies=dependencies,
         )
-    blocked = _complete_block(
+    blocked, completed = _complete_block(
         effect,
         reason_code="BINDING_CONFLICT",
         dependencies=dependencies,
     )
+    if not completed:
+        return blocked
     return _deliver_terminal_callback(
         blocked,
         context,

@@ -198,6 +198,7 @@ def _complete_effect_block(
             values={
                 "state": EffectState.BLOCKED.value,
                 "last_error_code": reason_code,
+                "next_reconcile_at": None,
                 "completed_at": completed_at,
                 "updated_at": completed_at,
             },
@@ -313,6 +314,16 @@ def process_binding_request(
         repository = dependencies.repository_factory(db)
         binding_row = repository.binding_by_work_item(context.work_item_id)
         effect_row = repository.effect_by_work_item(context.work_item_id)
+    if (
+        claimed is not None
+        and effect_row is not None
+        and effect_row["state"] != EffectState.PLANNED.value
+    ):
+        with dependencies.engine.begin() as db:
+            dependencies.repository_factory(db).complete_binding_request(
+                message_id,
+                now=dependencies.clock.now(),
+            )
     if binding_row is not None and effect_row is not None:
         return _replay_existing_binding(
             _binding_dto(binding_row),
@@ -362,6 +373,7 @@ def process_binding_request(
         )
     profile = _repository_profile(repository_row)
     try:
+        gitlab.validate_repository(profile)
         base = gitlab.get_branch(profile, profile.default_branch)
     except GitLabAccessDenied:
         return _complete_preflight_block(
@@ -557,6 +569,7 @@ def process_binding_request(
             expected_state=EffectState.IN_FLIGHT.value,
             values={
                 "state": EffectState.SUCCEEDED.value,
+                "next_reconcile_at": None,
                 "completed_at": completed_at,
                 "updated_at": completed_at,
             },
