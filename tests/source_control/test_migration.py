@@ -159,6 +159,20 @@ def test_source_control_rw_has_minimum_privileges(
         requirement_schema = db.execute(
             text("SELECT has_schema_privilege('source_control_rw','requirement','USAGE')")
         ).scalar_one()
+        audit_schema = db.execute(
+            text("SELECT has_schema_privilege('source_control_rw','audit','USAGE')")
+        ).scalar_one()
+        audit_table_write = db.execute(
+            text("SELECT has_table_privilege('source_control_rw','audit.audit_event','INSERT')")
+        ).scalar_one()
+        audit_append = db.execute(
+            text(
+                "SELECT has_function_privilege('source_control_rw', "
+                "'audit.append_event(text,timestamptz,text,text,text,text,text,text,"
+                "text,text,integer)', "
+                "'EXECUTE')"
+            )
+        ).scalar_one()
         sequence_usage = db.execute(
             text(
                 "SELECT has_sequence_privilege('source_control_rw', "
@@ -169,6 +183,9 @@ def test_source_control_rw_has_minimum_privileges(
     assert actual == expected
     assert own_schema is True
     assert requirement_schema is False
+    assert audit_schema is True
+    assert audit_table_write is False
+    assert audit_append is True
     assert sequence_usage is True
 
 

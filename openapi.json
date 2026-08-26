@@ -1927,7 +1927,11 @@
           "REPOSITORY_NOT_FOUND",
           "ACCESS_DENIED",
           "POLICY_DENIED",
-          "BINDING_CONFLICT"
+          "BINDING_CONFLICT",
+          "OWNER_UNASSIGNED",
+          "OWNER_INELIGIBLE",
+          "REPOSITORY_NOT_AUTHORIZED",
+          "RECONCILIATION_PENDING"
         ],
         "title": "RepositoryBindingBlockedReason",
         "type": "string"

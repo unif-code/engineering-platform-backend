@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 
 from control_plane.app.modules.source_control import (
     SourceControlDependencies,
+    SourceControlDependencyUnavailable,
     WebhookIdConflict,
     WebhookPayloadInvalid,
     WebhookReplayRejected,
@@ -25,14 +26,19 @@ def create_webhook_router(
 
     @router.post("/{repository_id}", status_code=status.HTTP_202_ACCEPTED)
     async def receive_gitlab_webhook(repository_id: str, request: Request) -> dict[str, str]:
-        runtime = runtime_provider()
         try:
+            runtime = runtime_provider()
             inbox = ingest_signed_gitlab_webhook(
                 repository_id=repository_id,
                 raw_body=await request.body(),
                 headers=dict(request.headers),
                 dependencies=runtime.dependencies,
             )
+        except SourceControlDependencyUnavailable as error:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Source Control connector is unavailable",
+            ) from error
         except (WebhookReplayRejected, WebhookSignatureInvalid) as error:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

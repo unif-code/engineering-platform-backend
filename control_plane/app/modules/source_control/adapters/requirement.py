@@ -18,11 +18,16 @@ from control_plane.app.modules.source_control.ports import (
 
 
 @dataclass(frozen=True, slots=True)
+class SourceControlSystemActor:
+    account_id: str = "source-control-worker"
+
+
+@dataclass(frozen=True, slots=True)
 class RequirementFacadeBindingAdapter:
     engine: Engine
     dependencies: Any
     clock: ClockPort
-    actor: object = "SYSTEM"
+    actor: object = SourceControlSystemActor()
 
     def claim_requests(
         self,
@@ -60,7 +65,7 @@ class RequirementFacadeBindingAdapter:
                 requirement.acknowledge_repository_binding_request(
                     db,
                     message_id=message_id,
-                    consumer="source_control",
+                    consumer="SOURCE_CONTROL",
                     dependencies=self.dependencies,
                 )
         except Exception as error:

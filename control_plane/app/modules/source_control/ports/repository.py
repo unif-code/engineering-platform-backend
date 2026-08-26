@@ -37,6 +37,8 @@ class SourceControlRepository(Protocol):
         lease_until: datetime,
     ) -> list[Any]: ...
 
+    def pending_binding_request_ids(self, *, limit: int, now: datetime) -> list[str]: ...
+
     def claim_binding_request(
         self,
         message_id: str,
@@ -87,6 +89,8 @@ class SourceControlRepository(Protocol):
     def webhook_by_message(self, repository_id: str, webhook_id: str) -> Any: ...
 
     def webhook_by_id(self, inbox_id: str, *, for_update: bool = False) -> Any: ...
+
+    def pending_webhook_ids(self, *, limit: int) -> list[str]: ...
 
     def make_unknown_effect_due(
         self,

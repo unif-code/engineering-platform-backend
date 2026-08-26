@@ -13,6 +13,7 @@ from control_plane.app.modules.source_control.application.dependencies import (
 )
 from control_plane.app.modules.source_control.domain import (
     RepositoryAuthorizationState,
+    SourceControlDependencyUnavailable,
     VerifiedStandardWebhook,
     WebhookIdConflict,
     WebhookInboxDto,
@@ -120,6 +121,8 @@ def ingest_signed_gitlab_webhook(
             now=dependencies.clock.now(),
             replay_window=policy.webhook_replay_window(),
         )
+    except SourceControlDependencyUnavailable:
+        raise
     except (WebhookReplayRejected, WebhookSignatureInvalid):
         raise
     except Exception as error:
