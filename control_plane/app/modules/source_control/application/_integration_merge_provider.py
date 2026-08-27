@@ -4,6 +4,9 @@ from typing import Protocol
 from control_plane.app.modules.source_control.application._integration_common import (
     TARGET_BRANCH as _TARGET_BRANCH,
 )
+from control_plane.app.modules.source_control.application._integration_snapshot import (
+    has_valid_merge_fact_shape,
+)
 from control_plane.app.modules.source_control.application.dependencies import (
     SourceControlDependencies,
 )
@@ -124,9 +127,7 @@ def _read_merge_provider_proof(
         or merge_request.target_branch != _TARGET_BRANCH
     ):
         raise _MergePreflightBlocked(SourceControlReason.MR_CONFLICT)
-    if merge_request.state == "merged" and (
-        merge_request.merge_commit_sha is None or merge_request.merged_at is None
-    ):
+    if not has_valid_merge_fact_shape(merge_request):
         raise _MergePreflightTransient
     try:
         source: BranchSnapshot | None = gitlab.get_branch(
@@ -144,7 +145,7 @@ def _read_merge_provider_proof(
     if source is not None:
         if source.name != admission.binding.source_branch:
             raise _MergePreflightBlocked(SourceControlReason.BRANCH_BINDING_MISSING)
-        if merge_request.head_sha != source.commit_sha:
+        if merge_request.state == "opened" and merge_request.head_sha != source.commit_sha:
             raise _MergePreflightBlocked(SourceControlReason.HEAD_SHA_CHANGED)
     return _MergeProviderProof(
         project=project,

@@ -115,14 +115,6 @@ def reconcile_merge_effect(
                 reason=SourceControlReason.SOURCE_BRANCH_MISSING_AFTER_INTEGRATION,
                 dependencies=dependencies,
             )
-        if proof.source.commit_sha != requested_head:
-            return _complete_fact(
-                local,
-                snapshot=proof.merge_request,
-                state=EffectState.BLOCKED,
-                reason=SourceControlReason.HEAD_SHA_CHANGED,
-                dependencies=dependencies,
-            )
         return _complete_fact(
             local,
             snapshot=proof.merge_request,

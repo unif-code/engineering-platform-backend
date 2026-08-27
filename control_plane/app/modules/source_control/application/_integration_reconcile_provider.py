@@ -7,6 +7,9 @@ from control_plane.app.modules.source_control.application._integration_common im
 from control_plane.app.modules.source_control.application._integration_reconcile_context import (
     CreateReconciliationContext,
 )
+from control_plane.app.modules.source_control.application._integration_snapshot import (
+    has_valid_merge_fact_shape,
+)
 from control_plane.app.modules.source_control.application.dependencies import (
     SourceControlDependencies,
 )
@@ -158,20 +161,9 @@ def prove_create_merge_request(
         or snapshot.target_branch != TARGET_BRANCH
     ):
         raise ReconciliationProviderBlocked(SourceControlReason.MR_CONFLICT)
-    if snapshot.state != "merged" and any(
-        value is not None
-        for value in (
-            snapshot.merge_commit_sha,
-            snapshot.merge_user_id,
-            snapshot.merged_at,
-        )
-    ):
+    if not has_valid_merge_fact_shape(snapshot):
         raise ReconciliationProviderUnknown
     if snapshot.state == "locked":
-        raise ReconciliationProviderUnknown
-    if snapshot.state == "merged" and (
-        snapshot.merge_commit_sha is None or snapshot.merged_at is None
-    ):
         raise ReconciliationProviderUnknown
     if snapshot.state == "opened":
         try:
