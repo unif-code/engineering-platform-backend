@@ -17,6 +17,7 @@ from control_plane.app.modules.source_control.ports.gitlab import (
 from control_plane.app.modules.source_control.ports.merge_requests import (
     GitLabMergeRequestBlocked,
     GitLabMergeRequestHeadChanged,
+    GitLabMergeRequestLocator,
     GitLabMergeRequestNotFound,
     GitLabMergeRequestSnapshot,
     GitLabProjectDeliveryProfile,
@@ -29,6 +30,13 @@ _FULL_COMMIT_SHA = re.compile(r"^[0-9a-fA-F]{40,64}$")
 _MERGEABLE_PIPELINE_STATUS = "success"
 _MR_LIST_PAGE_SIZE = 100
 _MR_LIST_MAX_PAGES = 1000
+_INTEGRATION_TARGET_BRANCH = "dev"
+
+
+@dataclass(frozen=True, slots=True)
+class _BranchProfile:
+    snapshot: BranchSnapshot
+    protected: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,23 +84,41 @@ class HttpxGitLabMergeRequestAdapter:
             raise GitLabProviderUnavailable("GitLab project read is unavailable")
         try:
             payload = cast(dict[str, Any], response.json())
+            provider_project_id = payload["id"]
             project_path = payload["path_with_namespace"]
             default_branch = payload["default_branch"]
             merge_method = payload["merge_method"]
         except (KeyError, TypeError, ValueError):
             raise GitLabProviderUnavailable("GitLab returned an invalid project response") from None
         if (
-            not isinstance(project_path, str)
+            not isinstance(provider_project_id, int)
+            or provider_project_id <= 0
+            or not isinstance(project_path, str)
             or not isinstance(default_branch, str)
             or merge_method not in {"merge", "rebase_merge", "ff"}
         ):
             raise GitLabProviderUnavailable("GitLab returned an invalid project response")
         if (
             project_path != repository.project_path
+            or (
+                repository.project_id.isdecimal()
+                and int(repository.project_id) != provider_project_id
+            )
             or default_branch != repository.default_branch
             or merge_method != "merge"
         ):
             raise GitLabProjectPolicyUnsupported("GitLab project delivery policy is unsupported")
+        try:
+            main = self._read_branch_profile(repository, default_branch)
+        except GitLabBranchNotFound:
+            raise GitLabProjectPolicyUnsupported(
+                "GitLab project delivery policy is unsupported"
+            ) from None
+        if not main.protected:
+            raise GitLabProjectPolicyUnsupported("GitLab project delivery policy is unsupported")
+        target = self._read_branch_profile(repository, _INTEGRATION_TARGET_BRANCH)
+        if not target.protected:
+            raise GitLabTargetBranchNotProtected("GitLab target branch is not protected")
         return GitLabProjectDeliveryProfile(
             project_id=repository.project_id,
             project_path=project_path,
@@ -105,6 +131,16 @@ class HttpxGitLabMergeRequestAdapter:
         repository: GitLabRepositoryProfile,
         name: str,
     ) -> BranchSnapshot:
+        profile = self._read_branch_profile(repository, name)
+        if name == _INTEGRATION_TARGET_BRANCH and not profile.protected:
+            raise GitLabTargetBranchNotProtected("GitLab target branch is not protected")
+        return profile.snapshot
+
+    def _read_branch_profile(
+        self,
+        repository: GitLabRepositoryProfile,
+        name: str,
+    ) -> _BranchProfile:
         branch = quote(name, safe="")
         try:
             response = self.client.get(
@@ -128,10 +164,11 @@ class HttpxGitLabMergeRequestAdapter:
             raise GitLabProviderUnavailable("GitLab returned an invalid branch response") from None
         if observed_name != name or not isinstance(protected, bool):
             raise GitLabProviderUnavailable("GitLab returned an invalid branch response")
-        if name == "dev" and not protected:
-            raise GitLabTargetBranchNotProtected("GitLab target branch is not protected")
         try:
-            return BranchSnapshot(name=observed_name, commit_sha=self._sha(commit_sha))
+            return _BranchProfile(
+                snapshot=BranchSnapshot(name=observed_name, commit_sha=self._sha(commit_sha)),
+                protected=protected,
+            )
         except GitLabProviderUnavailable:
             raise GitLabProviderUnavailable("GitLab returned an invalid branch response") from None
 
@@ -212,8 +249,8 @@ class HttpxGitLabMergeRequestAdapter:
         expected_head_sha: str,
         title: str,
         description: str,
-    ) -> GitLabMergeRequestSnapshot:
-        expected_head_sha = self._write_sha(expected_head_sha)
+    ) -> GitLabMergeRequestLocator:
+        self._write_sha(expected_head_sha)
         try:
             response = self.client.post(
                 f"/projects/{self._project(repository)}/merge_requests",
@@ -224,6 +261,7 @@ class HttpxGitLabMergeRequestAdapter:
                     "description": description,
                     "squash": False,
                     "remove_source_branch": False,
+                    "allow_collaboration": False,
                 },
                 headers=self._headers(repository),
             )
@@ -236,7 +274,7 @@ class HttpxGitLabMergeRequestAdapter:
         if response.status_code != 201:
             raise GitLabResultUnknown("GitLab merge request creation result is unknown")
         try:
-            snapshot = self._decode_merge_request(
+            locator = self._decode_merge_request_locator(
                 response.json(),
                 repository=repository,
                 source_branch=source_branch,
@@ -244,9 +282,7 @@ class HttpxGitLabMergeRequestAdapter:
             )
         except (GitLabProviderUnavailable, ValueError):
             raise GitLabResultUnknown("GitLab merge request creation result is unknown") from None
-        if snapshot.head_sha != expected_head_sha:
-            raise GitLabResultUnknown("GitLab merge request creation result is unknown")
-        return snapshot
+        return locator
 
     def get_merge_request(
         self,
@@ -359,6 +395,7 @@ class HttpxGitLabMergeRequestAdapter:
             raise GitLabProviderUnavailable(
                 "GitLab returned an invalid merge request response"
             ) from None
+
         if (
             not isinstance(iid, int)
             or iid <= 0
@@ -410,6 +447,38 @@ class HttpxGitLabMergeRequestAdapter:
             raise GitLabProviderUnavailable(
                 "GitLab returned an invalid merge request response"
             ) from None
+
+    def _decode_merge_request_locator(
+        self,
+        payload: object,
+        *,
+        repository: GitLabRepositoryProfile,
+        source_branch: str,
+        target_branch: str,
+    ) -> GitLabMergeRequestLocator:
+        if not isinstance(payload, dict):
+            raise GitLabProviderUnavailable("GitLab returned an invalid merge request response")
+        try:
+            iid = payload["iid"]
+            observed_source = payload["source_branch"]
+            observed_target = payload["target_branch"]
+        except (KeyError, TypeError):
+            raise GitLabProviderUnavailable(
+                "GitLab returned an invalid merge request response"
+            ) from None
+        if (
+            not isinstance(iid, int)
+            or iid <= 0
+            or observed_source != source_branch
+            or observed_target != target_branch
+        ):
+            raise GitLabProviderUnavailable("GitLab returned an invalid merge request response")
+        return GitLabMergeRequestLocator(
+            project_id=repository.project_id,
+            iid=iid,
+            source_branch=observed_source,
+            target_branch=observed_target,
+        )
 
     @staticmethod
     def _pipeline_status(payload: object) -> str | None:

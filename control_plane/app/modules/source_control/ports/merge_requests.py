@@ -43,6 +43,17 @@ class GitLabProjectDeliveryProfile(BaseModel):
     merge_method: Literal["merge", "rebase_merge", "ff"]
 
 
+class GitLabMergeRequestLocator(BaseModel):
+    """Stable coordinates returned by create; provider diff data is not proof."""
+
+    model_config = ConfigDict(frozen=True)
+
+    project_id: str
+    iid: int
+    source_branch: str
+    target_branch: str
+
+
 class GitLabMergeRequestSnapshot(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -91,7 +102,7 @@ class GitLabMergeRequestPort(Protocol):
         expected_head_sha: str,
         title: str,
         description: str,
-    ) -> GitLabMergeRequestSnapshot: ...
+    ) -> GitLabMergeRequestLocator: ...
 
     def get_merge_request(
         self,
