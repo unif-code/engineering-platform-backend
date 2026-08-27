@@ -357,9 +357,11 @@ class FakeGitLabMergeRequests:
         self.list_error: Exception | None = None
         self.profile_error: Exception | None = None
         self.branch_errors: dict[str, Exception] = {}
+        self.after_list: Callable[[], None] | None = None
         self.before_readback: Callable[[], None] | None = None
         self.expected_title = f"feat: integrate {WORK_ITEM_ID}"
         self.expected_effect_head = HEAD_SHA
+        self.expected_effect_state = EffectState.IN_FLIGHT
         self.expected_source_branch = TASK_BRANCH
 
     def get_project_delivery_profile(self, _repository: object) -> GitLabProjectDeliveryProfile:
@@ -408,6 +410,8 @@ class FakeGitLabMergeRequests:
         assert state == "all"
         if self.list_error is not None:
             raise self.list_error
+        if self.after_list is not None:
+            self.after_list()
         return self.candidates
 
     def create_merge_request(
@@ -427,7 +431,7 @@ class FakeGitLabMergeRequests:
                 f"work-item:{WORK_ITEM_ID}",
             )
         assert effect is not None
-        assert effect["state"] == EffectState.IN_FLIGHT.value
+        assert effect["state"] == self.expected_effect_state.value
         assert dict(effect["payload"]) == {
             "branchBindingId": BRANCH_BINDING_ID,
             "headSha": HEAD_SHA,

@@ -101,6 +101,17 @@ class SourceControlRepository(Protocol):
         now: datetime,
     ) -> int: ...
 
+    def make_integration_effect_due(
+        self,
+        *,
+        repository_id: str,
+        project_id: str,
+        mr_iid: int,
+        source_branch: str,
+        target_branch: str,
+        now: datetime,
+    ) -> int: ...
+
     def complete_webhook(self, inbox_id: str, *, now: datetime) -> Any: ...
 
 

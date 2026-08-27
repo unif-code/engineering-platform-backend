@@ -96,14 +96,14 @@ def test_fresh_upgrade_installs_independent_heads_and_deterministic_seed(
             "0001_workspace_base",
             "0006_auth_v03_routes",
             "0004_req_int_delivery",
-            "0005_sc_int_delivery",
+            "0006_sc_mr_reconcile",
         }
         assert installed_heads == {
             "0008_audit_requirement_grant",
             "0010_identity_policy_reauth",
             "0006_auth_v03_routes",
             "0004_req_int_delivery",
-            "0005_sc_int_delivery",
+            "0006_sc_mr_reconcile",
         }
         assert counts == (7, 1, 1, 1)
     finally:

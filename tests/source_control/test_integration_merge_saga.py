@@ -226,6 +226,7 @@ class FakeMergeGitLab:
         self.expected_effect_head = HEAD_SHA
         self._merged = False
         self.before_merge: Callable[[], None] | None = None
+        self.after_preflight_read: Callable[[], None] | None = None
         self.before_readback: Callable[[], None] | None = None
         self.profile_error: Exception | None = None
         self.preflight_snapshot: GitLabMergeRequestSnapshot | None = None
@@ -235,6 +236,7 @@ class FakeMergeGitLab:
         self.get_after_merge_error: Exception | None = None
         self.source_after_merge_error: Exception | None = None
         self.provider_default_branch = "main"
+        self.expected_effect_state = EffectState.IN_FLIGHT
 
     def get_project_delivery_profile(self, _repository: object) -> Any:
         from control_plane.app.modules.source_control.ports import (
@@ -284,6 +286,10 @@ class FakeMergeGitLab:
             callback()
         if self._merged and self.get_after_merge_error is not None:
             raise self.get_after_merge_error
+        if not self._merged and self.after_preflight_read is not None:
+            callback = self.after_preflight_read
+            self.after_preflight_read = None
+            callback()
         if self._merged and self.post_merge_snapshot is not None:
             return self.post_merge_snapshot
         if not self._merged and self.preflight_snapshot is not None:
@@ -310,7 +316,7 @@ class FakeMergeGitLab:
                 f"mr:{self.binding_id}:{self.expected_effect_head}",
             )
         assert effect is not None
-        assert effect["state"] == EffectState.IN_FLIGHT.value
+        assert effect["state"] == self.expected_effect_state.value
         assert dict(effect["payload"]) == {
             "bindingId": self.binding_id,
             "requestedHeadSha": self.expected_effect_head,
@@ -367,6 +373,7 @@ def _seed_merge_request(
     *,
     historical_head: str = HEAD_SHA,
     default_branch: str = "main",
+    external_project_id: str = "101",
 ) -> None:
     _seed_source_control(engine, default_branch=default_branch)
     with engine.begin() as db:
@@ -396,7 +403,7 @@ def _seed_merge_request(
             workspace_id=WORKSPACE_ID,
             repository_id=REPOSITORY_ID,
             branch_binding_id=BRANCH_BINDING_ID,
-            external_project_id="101",
+            external_project_id=external_project_id,
             merge_request_iid=17,
             source_branch=TASK_BRANCH,
             target_branch="dev",

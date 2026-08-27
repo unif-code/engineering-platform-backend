@@ -258,6 +258,12 @@ class ReconcileDueEffectsResult(BaseModel):
     effects: tuple[SourceControlEffectDto, ...]
 
 
+class ReconcileDueIntegrationEffectsResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    effects: tuple[SourceControlEffectDto, ...]
+
+
 class GitLabWebhookEnvelope(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -273,6 +279,13 @@ class GitLabWebhookEnvelope(BaseModel):
     before_sha: NonEmptyStr | None
     after_sha: NonEmptyStr | None
     checkout_sha: NonEmptyStr | None
+    mr_iid: PositiveInt | None = None
+    mr_action: Literal["open", "update", "merge", "close", "reopen"] | None = None
+    source_branch: NonEmptyStr | None = None
+    target_branch: NonEmptyStr | None = None
+    mr_state: Literal["opened", "merged", "closed", "locked"] | None = None
+    old_head_sha: ExactHeadSha | None = None
+    head_sha: ExactHeadSha | None = None
 
 
 class VerifiedStandardWebhook(BaseModel):
@@ -298,6 +311,13 @@ class WebhookInboxDto(BaseModel):
     before_sha: NonEmptyStr | None
     after_sha: NonEmptyStr | None
     checkout_sha: NonEmptyStr | None
+    mr_iid: PositiveInt | None = None
+    mr_action: Literal["open", "update", "merge", "close", "reopen"] | None = None
+    source_branch: NonEmptyStr | None = None
+    target_branch: NonEmptyStr | None = None
+    mr_state: Literal["opened", "merged", "closed", "locked"] | None = None
+    old_head_sha: ExactHeadSha | None = None
+    head_sha: ExactHeadSha | None = None
     state: WebhookInboxState
     last_error_code: NonEmptyStr | None
     received_at: AwareDatetime

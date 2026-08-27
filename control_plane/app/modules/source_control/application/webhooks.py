@@ -8,6 +8,9 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from control_plane.app.modules.audit import AuditEnvelope
+from control_plane.app.modules.source_control.application._webhook_summary import (
+    parse_safe_webhook_summary,
+)
 from control_plane.app.modules.source_control.application.audit import (
     append_lifecycle_audit,
 )
@@ -65,11 +68,6 @@ def verify_gitlab_standard_webhook(
     return VerifiedStandardWebhook(webhook_id=webhook_id, timestamp=occurred_at)
 
 
-def _optional_text(payload: Mapping[str, Any], key: str) -> str | None:
-    value = payload.get(key)
-    return value if isinstance(value, str) and value.strip() else None
-
-
 def _webhook_dto(row: Any) -> WebhookInboxDto:
     return WebhookInboxDto(
         id=str(row["id"]),
@@ -85,6 +83,13 @@ def _webhook_dto(row: Any) -> WebhookInboxDto:
         before_sha=row["before_sha"],
         after_sha=row["after_sha"],
         checkout_sha=row["checkout_sha"],
+        mr_iid=row["mr_iid"],
+        mr_action=row["mr_action"],
+        source_branch=row["source_branch"],
+        target_branch=row["target_branch"],
+        mr_state=row["mr_state"],
+        old_head_sha=row["old_head_sha"],
+        head_sha=row["head_sha"],
         state=WebhookInboxState(row["state"]),
         last_error_code=row["last_error_code"],
         received_at=row["received_at"],
@@ -193,18 +198,33 @@ def ingest_signed_gitlab_webhook(
         )
         raise WebhookPayloadInvalid("Webhook payload is invalid")
     project_id = payload["project"].get("id")
-    if not isinstance(project_id, (str, int)) or str(project_id) != repository_row["project_id"]:
+    if (
+        isinstance(project_id, bool)
+        or not isinstance(project_id, (str, int))
+        or str(project_id) != repository_row["project_id"]
+    ):
         _audit_webhook_rejection(
             repository_id=repository_id,
             reason="WEBHOOK_PROJECT_MISMATCH",
             dependencies=dependencies,
         )
         raise WebhookPayloadInvalid("Webhook project does not match the repository")
-    event_type = normalized_headers.get("x-gitlab-event", "Unknown")
-    object_kind = _optional_text(payload, "object_kind")
+    try:
+        summary = parse_safe_webhook_summary(
+            payload,
+            project_id=str(project_id),
+            event_header=normalized_headers.get("x-gitlab-event"),
+        )
+    except WebhookPayloadInvalid:
+        _audit_webhook_rejection(
+            repository_id=repository_id,
+            reason="WEBHOOK_PAYLOAD_INVALID",
+            dependencies=dependencies,
+        )
+        raise
     state = (
         WebhookInboxState.RECEIVED
-        if event_type == "Push Hook" and object_kind == "push"
+        if summary.object_kind in {"push", "merge_request"}
         else WebhookInboxState.IGNORED
     )
     now = dependencies.clock.now()
@@ -219,13 +239,20 @@ def ingest_signed_gitlab_webhook(
             webhook_timestamp=verified.timestamp,
             payload_digest=payload_digest,
             provider_event_uuid=normalized_headers.get("x-gitlab-event-uuid"),
-            event_type=event_type,
-            object_kind=object_kind,
-            project_id=str(project_id),
-            ref=_optional_text(payload, "ref"),
-            before_sha=_optional_text(payload, "before"),
-            after_sha=_optional_text(payload, "after"),
-            checkout_sha=_optional_text(payload, "checkout_sha"),
+            event_type=summary.event_type,
+            object_kind=summary.object_kind,
+            project_id=summary.project_id,
+            ref=summary.ref,
+            before_sha=summary.before_sha,
+            after_sha=summary.after_sha,
+            checkout_sha=summary.checkout_sha,
+            mr_iid=summary.mr_iid,
+            mr_action=summary.mr_action,
+            source_branch=summary.source_branch,
+            target_branch=summary.target_branch,
+            mr_state=summary.mr_state,
+            old_head_sha=summary.old_head_sha,
+            head_sha=summary.head_sha,
             state=state.value,
             processed_at=now if state is WebhookInboxState.IGNORED else None,
             now=now,
