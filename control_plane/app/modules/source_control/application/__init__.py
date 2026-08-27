@@ -10,6 +10,10 @@ from control_plane.app.modules.source_control.application.delivery_relay import 
 from control_plane.app.modules.source_control.application.dependencies import (
     SourceControlDependencies,
 )
+from control_plane.app.modules.source_control.application.integration import (
+    ProcessIntegrationRequestResult,
+    process_integration_mr_request,
+)
 from control_plane.app.modules.source_control.application.reconciliation import (
     process_webhook_inbox,
     reconcile_due_effects,
@@ -30,11 +34,13 @@ from control_plane.app.modules.source_control.application.webhooks import (
 
 __all__ = [
     "SourceControlDependencies",
+    "ProcessIntegrationRequestResult",
     "accept_binding_request",
     "binding_request_payload_hash",
     "get_repository_branch_binding",
     "ingest_signed_gitlab_webhook",
     "process_binding_request",
+    "process_integration_mr_request",
     "process_webhook_inbox",
     "reconcile_due_effects",
     "register_workspace_repository",

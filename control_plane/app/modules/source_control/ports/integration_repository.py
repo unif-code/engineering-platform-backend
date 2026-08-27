@@ -25,6 +25,14 @@ class SourceControlIntegrationRepository(Protocol):
         lease_until: datetime,
     ) -> list[Any]: ...
 
+    def claim_delivery_request(
+        self,
+        message_id: str,
+        *,
+        now: datetime,
+        lease_until: datetime,
+    ) -> Any: ...
+
     def complete_delivery_request(
         self,
         message_id: str,
