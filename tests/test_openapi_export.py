@@ -36,6 +36,118 @@ def test_render_contains_the_typed_requirement_contract() -> None:
     }
 
 
+def test_render_contains_the_human_integration_delivery_contract() -> None:
+    schema = json.loads(render())
+    path_contracts = {
+        "/api/v1/requirements/{requirementId}/work-items/{workItemId}:start": (
+            "requirements_start_work_item",
+            "200",
+        ),
+        "/api/v1/requirements/{requirementId}/work-items/{workItemId}:request-integration-mr": (
+            "requirements_request_integration_merge_request",
+            "202",
+        ),
+        "/api/v1/requirements/{requirementId}/work-items/{workItemId}:request-integration-merge": (
+            "requirements_request_integration_merge",
+            "202",
+        ),
+    }
+
+    for path, (operation_id, success_status) in path_contracts.items():
+        operation = schema["paths"][path]["post"]
+        parameters = {
+            (parameter["in"], parameter["name"]): parameter for parameter in operation["parameters"]
+        }
+
+        assert operation["operationId"] == operation_id
+        assert operation["security"] == [{"EpSessionCookie": []}]
+        assert parameters[("header", "Idempotency-Key")]["required"] is True
+        assert parameters[("header", "If-Match")]["required"] is True
+        assert success_status in operation["responses"]
+        assert operation["responses"][success_status]["headers"]["ETag"]["schema"] == {
+            "pattern": '^"v[1-9][0-9]*"$',
+            "type": "string",
+        }
+        assert operation["responses"][success_status]["content"]["application/json"]["schema"] == {
+            "$ref": "#/components/schemas/WorkItemDeliveryResponseDto"
+        }
+        assert "application/problem+json" in operation["responses"]["403"]["content"]
+
+    components = schema["components"]["schemas"]
+    assert components["RequirementState"]["enum"] == [
+        "CREATED",
+        "PREPARING",
+        "AWAITING_CONFIRMATION",
+        "READY",
+        "IN_PROGRESS",
+        "VERIFYING",
+        "CANCELED",
+    ]
+    assert components["WorkItemState"]["enum"] == [
+        "DRAFT",
+        "READY",
+        "IN_PROGRESS",
+        "VERIFYING",
+        "CANCELED",
+    ]
+    assert components["IntegrationDeliveryState"]["enum"] == [
+        "NOT_STARTED",
+        "IMPLEMENTING",
+        "MR_PENDING",
+        "MR_OPEN",
+        "MERGE_PENDING",
+        "INTEGRATED",
+        "BLOCKED",
+        "RECONCILIATION_PENDING",
+    ]
+    assert components["IntegrationDeliveryBlockedReason"]["enum"] == [
+        "OWNER_MISMATCH",
+        "OWNER_INELIGIBLE",
+        "MERGE_ACTOR_INELIGIBLE",
+        "REPOSITORY_NOT_AUTHORIZED",
+        "BRANCH_BINDING_MISSING",
+        "TARGET_BRANCH_NOT_FOUND",
+        "TARGET_BRANCH_NOT_PROTECTED",
+        "NO_DELIVERY_COMMIT",
+        "HEAD_SHA_CHANGED",
+        "MR_CONFLICT",
+        "MR_CLOSED",
+        "MR_CHECKS_BLOCKED",
+        "MERGE_CONFLICT",
+        "PROJECT_PROFILE_UNSUPPORTED",
+        "SOURCE_BRANCH_MISSING_AFTER_INTEGRATION",
+        "EXTERNAL_MERGE_DRIFT",
+        "PROVIDER_UNAVAILABLE",
+        "RECONCILIATION_PENDING",
+    ]
+
+    exposed_properties = set().union(
+        *(
+            set(components[name].get("properties", {}))
+            for name in (
+                "RequirementResponseDto",
+                "WorkItemDeliveryProjectionResponseDto",
+                "WorkItemDeliveryResponseDto",
+            )
+        )
+    )
+    assert exposed_properties.isdisjoint(
+        {
+            "branch",
+            "taskBranch",
+            "baseCommitSha",
+            "projectId",
+            "mrIid",
+            "headSha",
+            "gitlabProjectId",
+            "sourceBranch",
+            "targetBranch",
+            "mergeCommitSha",
+            "providerPayload",
+        }
+    )
+
+
 def test_source_control_webhook_is_connector_only() -> None:
     public_schema = create_app().openapi()
     public_paths = set(public_schema["paths"])

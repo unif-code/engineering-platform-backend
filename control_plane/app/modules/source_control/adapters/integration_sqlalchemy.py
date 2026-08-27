@@ -95,6 +95,25 @@ class SqlAlchemySourceControlIntegrationRepository:
             ).mappings()
         )
 
+    def pending_delivery_request_candidates(
+        self,
+        *,
+        limit: int,
+        now: datetime,
+    ) -> list[Any]:
+        return list(
+            self.db.execute(
+                text(
+                    "SELECT message_id, topic "
+                    "FROM source_control.delivery_request_inbox "
+                    "WHERE available_at <= :now "
+                    "AND state IN ('RECEIVED', 'FAILED', 'PROCESSING') "
+                    "ORDER BY available_at, message_id LIMIT :limit"
+                ),
+                {"limit": limit, "now": now},
+            ).mappings()
+        )
+
     def claim_delivery_request(
         self,
         message_id: str,

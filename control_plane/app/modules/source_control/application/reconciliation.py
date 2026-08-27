@@ -1,5 +1,6 @@
 from datetime import timedelta
 
+from control_plane.app.modules.source_control.application._batch_claim import InboxClaimLost
 from control_plane.app.modules.source_control.application._reasons import effect_reason
 from control_plane.app.modules.source_control.application.audit import (
     append_lifecycle_audit,
@@ -417,42 +418,53 @@ def reconcile_due_effects(
         _reconcile_effect(_effect_dto(row), dependencies=dependencies) for row in claimed_rows
     ]
     processed_ids = {effect.id for effect in effects}
-    with dependencies.engine.connect() as db:
-        pending_rows = dependencies.repository_factory(db).pending_callback_effects(limit=limit)
-    for row in pending_rows:
-        pending = _effect_dto(row)
-        if pending.id in processed_ids:
-            continue
-        requirement = dependencies.requirement
-        if requirement is None:
-            continue
-        context = requirement.binding_context(pending.work_item_id)
+    remaining = limit - len(effects)
+    if remaining > 0:
         with dependencies.engine.connect() as db:
-            binding_row = dependencies.repository_factory(db).binding_by_work_item(
-                pending.work_item_id
+            pending_rows = dependencies.repository_factory(db).pending_callback_effects(
+                limit=remaining + len(processed_ids)
             )
-        binding = None if binding_row is None else _binding_dto(binding_row)
-        effects.append(
-            _deliver_terminal_callback(
-                pending,
-                context,
-                binding=binding,
-                dependencies=dependencies,
+        replayed = 0
+        for row in pending_rows:
+            pending = _effect_dto(row)
+            if pending.id in processed_ids:
+                continue
+            requirement = dependencies.requirement
+            if requirement is None:
+                continue
+            context = requirement.binding_context(pending.work_item_id)
+            with dependencies.engine.connect() as db:
+                binding_row = dependencies.repository_factory(db).binding_by_work_item(
+                    pending.work_item_id
+                )
+            binding = None if binding_row is None else _binding_dto(binding_row)
+            effects.append(
+                _deliver_terminal_callback(
+                    pending,
+                    context,
+                    binding=binding,
+                    dependencies=dependencies,
+                )
             )
-        )
+            replayed += 1
+            if replayed >= remaining:
+                break
     return ReconcileDueEffectsResult(effects=tuple(effects))
 
 
-def process_webhook_inbox(
+def _process_webhook_inbox(
     inbox_id: str,
     *,
     dependencies: SourceControlDependencies,
+    claim_required: bool,
 ) -> int:
     now = dependencies.clock.now()
     with dependencies.engine.begin() as db:
         repository = dependencies.repository_factory(db)
         inbox = repository.webhook_by_id(inbox_id, for_update=True)
         if inbox is None or inbox["state"] != "RECEIVED":
+            if claim_required:
+                raise InboxClaimLost(inbox_id)
             return 0
         if inbox["object_kind"] == "merge_request":
             scheduled = repository.make_integration_effect_due(
@@ -485,3 +497,27 @@ def process_webhook_inbox(
             correlation_id=f"source-control:webhook:{inbox['repository_id']}",
         )
     return scheduled
+
+
+def process_webhook_inbox(
+    inbox_id: str,
+    *,
+    dependencies: SourceControlDependencies,
+) -> int:
+    return _process_webhook_inbox(
+        inbox_id,
+        dependencies=dependencies,
+        claim_required=False,
+    )
+
+
+def process_webhook_candidate(
+    inbox_id: str,
+    *,
+    dependencies: SourceControlDependencies,
+) -> int:
+    return _process_webhook_inbox(
+        inbox_id,
+        dependencies=dependencies,
+        claim_required=True,
+    )

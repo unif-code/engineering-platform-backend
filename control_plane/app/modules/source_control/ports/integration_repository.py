@@ -25,6 +25,13 @@ class SourceControlIntegrationRepository(Protocol):
         lease_until: datetime,
     ) -> list[Any]: ...
 
+    def pending_delivery_request_candidates(
+        self,
+        *,
+        limit: int,
+        now: datetime,
+    ) -> list[Any]: ...
+
     def claim_delivery_request(
         self,
         message_id: str,

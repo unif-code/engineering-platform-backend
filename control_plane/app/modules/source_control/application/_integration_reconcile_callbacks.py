@@ -28,6 +28,8 @@ def replay_pending_integration_callbacks(
     excluded_effect_ids: frozenset[str],
     dependencies: SourceControlDependencies,
 ) -> tuple[SourceControlEffectDto, ...]:
+    if limit < 1:
+        return ()
     repository_factory = dependencies.delivery_repository_factory
     requirement = dependencies.requirement_delivery
     if repository_factory is None:
@@ -35,7 +37,9 @@ def replay_pending_integration_callbacks(
     if requirement is None:
         return ()
     with dependencies.engine.connect() as db:
-        rows = repository_factory(db).pending_callback_effects(limit=limit)
+        rows = repository_factory(db).pending_callback_effects(
+            limit=limit + len(excluded_effect_ids)
+        )
     replayed: list[SourceControlEffectDto] = []
     for row in rows:
         effect = effect_dto(row)
@@ -93,6 +97,8 @@ def replay_pending_integration_callbacks(
                 dependencies=dependencies,
             )
         )
+        if len(replayed) >= limit:
+            break
     return tuple(replayed)
 
 

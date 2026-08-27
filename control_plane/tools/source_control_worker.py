@@ -10,11 +10,12 @@ from control_plane.app.modules.source_control import (
     RequirementCallbackUnavailable,
     SourceControlDependencies,
     SourceControlDependencyUnavailable,
-    process_binding_request,
-    process_webhook_inbox,
-    reconcile_due_effects,
-    relay_binding_requests,
+    process_due_source_control_inboxes,
+    reconcile_due_source_control_effects,
+    relay_due_source_control_requests,
 )
+
+_COMMAND_MINIMUM_LIMITS = {"relay": 2, "process": 3, "reconcile": 2}
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,66 +35,30 @@ def source_control_worker_dependencies() -> SourceControlDependencies:
     raise SourceControlDependencyUnavailable("Source Control worker dependencies are unavailable")
 
 
-def _run_process(*, limit: int, dependencies: SourceControlDependencies) -> WorkerRunReport:
-    now = dependencies.clock.now()
-    with dependencies.engine.connect() as db:
-        repository = dependencies.repository_factory(db)
-        message_ids = repository.pending_binding_request_ids(limit=limit, now=now)
-        webhook_ids = repository.pending_webhook_ids(limit=max(limit - len(message_ids), 0))
-    effect_ids: list[str] = []
-    error_codes: list[str] = []
-    processed = 0
-    for message_id in message_ids:
-        result = process_binding_request(message_id=message_id, dependencies=dependencies)
-        processed += 1
-        if result.effect is not None:
-            effect_ids.append(result.effect.id)
-        if result.blocked_reason is not None:
-            error_codes.append(result.blocked_reason)
-    for inbox_id in webhook_ids:
-        process_webhook_inbox(inbox_id=inbox_id, dependencies=dependencies)
-        processed += 1
-    return WorkerRunReport(
-        command="process",
-        claimed=len(message_ids) + len(webhook_ids),
-        processed=processed,
-        effect_ids=tuple(effect_ids),
-        error_codes=tuple(error_codes),
-    )
-
-
 def run_worker_once(
     command: str,
     *,
     limit: int,
     dependencies: SourceControlDependencies,
 ) -> WorkerRunReport:
-    if limit < 1:
-        raise ValueError("limit must be positive")
-    if command == "relay":
-        relay_result = relay_binding_requests(limit=limit, dependencies=dependencies)
-        return WorkerRunReport(
-            command=command,
-            claimed=relay_result.claimed,
-            processed=relay_result.accepted,
-            released=relay_result.released,
-        )
-    if command == "process":
-        return _run_process(limit=limit, dependencies=dependencies)
-    if command == "reconcile":
-        reconciliation = reconcile_due_effects(limit=limit, dependencies=dependencies)
-        return WorkerRunReport(
-            command=command,
-            claimed=len(reconciliation.effects),
-            processed=len(reconciliation.effects),
-            effect_ids=tuple(effect.id for effect in reconciliation.effects),
-            error_codes=tuple(
-                effect.last_error_code
-                for effect in reconciliation.effects
-                if effect.last_error_code is not None
-            ),
-        )
-    raise ValueError("unsupported worker command")
+    facades = {
+        "relay": relay_due_source_control_requests,
+        "process": process_due_source_control_inboxes,
+        "reconcile": reconcile_due_source_control_effects,
+    }
+    try:
+        facade = facades[command]
+    except KeyError:
+        raise ValueError("unsupported worker command") from None
+    result = facade(limit=limit, dependencies=dependencies)
+    return WorkerRunReport(
+        command=command,
+        claimed=result.claimed,
+        processed=result.processed,
+        released=result.released,
+        effect_ids=result.effect_ids,
+        error_codes=result.error_codes,
+    )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -111,6 +76,9 @@ def main(
     ] = source_control_worker_dependencies,
 ) -> int:
     args = _parser().parse_args(argv)
+    if args.limit < _COMMAND_MINIMUM_LIMITS[args.command]:
+        print(json.dumps({"command": args.command, "errorCodes": ["INVALID_ARGUMENT"]}))
+        return 2
     try:
         report = run_worker_once(
             args.command,

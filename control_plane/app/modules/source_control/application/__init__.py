@@ -1,5 +1,10 @@
 """Source Control use cases."""
 
+from control_plane.app.modules.source_control.application.batches import (
+    process_due_source_control_inboxes,
+    reconcile_due_source_control_effects,
+    relay_due_source_control_requests,
+)
 from control_plane.app.modules.source_control.application.commands import (
     register_workspace_repository,
     remove_workspace_repository,
@@ -39,6 +44,7 @@ from control_plane.app.modules.source_control.application.webhooks import (
 __all__ = [
     "SourceControlDependencies",
     "ProcessIntegrationRequestResult",
+    "process_due_source_control_inboxes",
     "accept_binding_request",
     "binding_request_payload_hash",
     "get_repository_branch_binding",
@@ -47,10 +53,12 @@ __all__ = [
     "process_integration_merge_request",
     "process_integration_mr_request",
     "reconcile_due_integration_effects",
+    "reconcile_due_source_control_effects",
     "process_webhook_inbox",
     "reconcile_due_effects",
     "register_workspace_repository",
     "relay_binding_requests",
+    "relay_due_source_control_requests",
     "relay_integration_delivery_requests",
     "remove_workspace_repository",
     "verify_gitlab_standard_webhook",

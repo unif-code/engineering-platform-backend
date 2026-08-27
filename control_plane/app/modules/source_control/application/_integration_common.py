@@ -7,6 +7,7 @@ from typing import Any, Literal, Protocol
 from pydantic import BaseModel, ConfigDict
 
 from control_plane.app.modules.audit import AuditEnvelope
+from control_plane.app.modules.source_control.application._batch_claim import InboxClaimLost
 from control_plane.app.modules.source_control.application._reasons import stored_reason
 from control_plane.app.modules.source_control.application.dependencies import (
     SourceControlDependencies,
@@ -116,6 +117,7 @@ def claim_exact_delivery_request(
         "requirement.integration-merge.requested",
     ],
     dependencies: SourceControlDependencies,
+    claim_required: bool = False,
 ) -> tuple[Any | None, Any]:
     repository_factory = dependencies.delivery_repository_factory
     if repository_factory is None:
@@ -134,6 +136,8 @@ def claim_exact_delivery_request(
         raise RequirementCallbackUnavailable("Delivery request is unavailable")
     if inbox["topic"] != expected_topic:
         raise SourceControlDependencyUnavailable("Delivery request operation is invalid")
+    if claimed is None and claim_required:
+        raise InboxClaimLost(message_id)
     return claimed, inbox
 
 
