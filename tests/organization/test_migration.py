@@ -7,9 +7,10 @@ from uuid import uuid4
 import pytest
 from alembic import op
 from sqlalchemy import Connection, Engine, inspect, text
-from sqlalchemy.exc import ArgumentError, IntegrityError, ProgrammingError
+from sqlalchemy.exc import IntegrityError, ProgrammingError
 
 from control_plane.app.shared.db.settings import DbSettings
+from tests.integration_database import parse_database_url
 from tests.organization.conftest import _temporary_organization_role_engine
 
 pytestmark = pytest.mark.integration
@@ -86,7 +87,10 @@ def test_runtime_fixture_uses_disposable_login_without_rewriting_shared_role(
 
     with _temporary_organization_role_engine(
         organization_owner_engine,
-        DbSettings().organization_database_url,
+        parse_database_url(
+            DbSettings().organization_database_url,
+            setting_name="ORGANIZATION_DATABASE_URL",
+        ),
     ) as (runtime_engine, login_role):
         with runtime_engine.connect() as db:
             current_role, session_role = db.execute(text("SELECT current_user, session_user")).one()
@@ -125,12 +129,14 @@ def test_runtime_fixture_invalid_url_does_not_leak_temporary_login(
 
     leaked_roles: set[str] = set()
     try:
-        with pytest.raises(ArgumentError):
-            with _temporary_organization_role_engine(
-                organization_owner_engine,
-                "not-a-sqlalchemy-database-url",
-            ):
-                pass
+        with pytest.raises(
+            pytest.fail.Exception,
+            match="TEST_ORGANIZATION_DATABASE_URL must be a valid SQLAlchemy database URL",
+        ):
+            parse_database_url(
+                "test-only-malformed-organization-database-url",
+                setting_name="TEST_ORGANIZATION_DATABASE_URL",
+            )
         with organization_owner_engine.connect() as db:
             after = set(
                 db.execute(

@@ -34,6 +34,7 @@ from tests.authorization.conftest import temporary_authorization_role_engine
 from tests.authorization.helpers import authorization_dependencies
 from tests.identity.task5_helpers import dependencies as identity_dependencies
 from tests.identity.test_auth_flow import VALID_PASSWORD, _initialize_account
+from tests.integration_database import parse_database_url
 
 pytestmark = pytest.mark.integration
 
@@ -89,7 +90,10 @@ def clean_admin_convergence(identity_owner_engine: Engine) -> Iterator[None]:
 def admin_authorization_engine(identity_owner_engine: Engine) -> Iterator[Engine]:
     with temporary_authorization_role_engine(
         identity_owner_engine,
-        DbSettings().authorization_database_url,
+        parse_database_url(
+            DbSettings().authorization_database_url,
+            setting_name="AUTHORIZATION_DATABASE_URL",
+        ),
     ) as runtime:
         yield runtime[0]
 

@@ -32,6 +32,7 @@ from control_plane.app.shared.db.settings import DbSettings
 from tests.authorization.helpers import authorization_dependencies
 from tests.identity.task5_helpers import dependencies as identity_dependencies
 from tests.identity.test_auth_flow import VALID_PASSWORD, _initialize_account
+from tests.integration_database import parse_database_url
 from tests.organization.conftest import _temporary_organization_role_engine
 from tests.organization.helpers import insert_account, organization_dependencies
 from tests.workspace.conftest import _temporary_workspace_role_engine
@@ -46,7 +47,10 @@ def replay_workspace_engine(
 ) -> Iterator[Engine]:
     with _temporary_workspace_role_engine(
         authorization_owner_engine,
-        DbSettings().workspace_database_url,
+        parse_database_url(
+            DbSettings().workspace_database_url,
+            setting_name="WORKSPACE_DATABASE_URL",
+        ),
     ) as runtime:
         yield runtime[0]
 
@@ -57,7 +61,10 @@ def replay_organization_engine(
 ) -> Iterator[Engine]:
     with _temporary_organization_role_engine(
         authorization_owner_engine,
-        DbSettings().organization_database_url,
+        parse_database_url(
+            DbSettings().organization_database_url,
+            setting_name="ORGANIZATION_DATABASE_URL",
+        ),
     ) as runtime:
         yield runtime[0]
 

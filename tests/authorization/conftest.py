@@ -1,32 +1,25 @@
-import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import Engine, create_engine, event, text
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL
 
 from control_plane.app.shared.db.settings import DbSettings
-
-
-def _required_engine(url: str, *, role: str) -> Engine:
-    engine = create_engine(url, pool_pre_ping=True)
-    try:
-        with engine.connect() as db:
-            actual_role = db.execute(text("SELECT current_user")).scalar_one()
-    except Exception:
-        engine.dispose()
-        if os.getenv("REQUIRE_INTEGRATION_DB") == "1":
-            pytest.fail(f"Required PostgreSQL integration database unavailable for {role}")
-        pytest.skip(f"PostgreSQL integration database unavailable for {role}")
-    assert actual_role == role
-    return engine
+from tests.integration_database import parse_database_url
+from tests.integration_database import required_engine as _required_engine
 
 
 @pytest.fixture(scope="session")
 def authorization_owner_engine() -> Iterator[Engine]:
-    engine = _required_engine(DbSettings().migration_database_url, role="platform_owner")
+    engine = _required_engine(
+        parse_database_url(
+            DbSettings().migration_database_url,
+            setting_name="MIGRATION_DATABASE_URL",
+        ),
+        role="platform_owner",
+    )
     yield engine
     engine.dispose()
 
@@ -34,13 +27,13 @@ def authorization_owner_engine() -> Iterator[Engine]:
 @contextmanager
 def temporary_authorization_role_engine(
     owner_engine: Engine,
-    runtime_url: str,
+    runtime_url: URL,
 ) -> Iterator[tuple[Engine, str]]:
     login_role = f"test_authorization_login_{uuid4().hex}"
     quoted_login_role = f'"{login_role}"'
     test_password = "test-only-authorization-password"
     engine = create_engine(
-        make_url(runtime_url).set(username=login_role, password=test_password),
+        runtime_url.set(username=login_role, password=test_password),
         pool_pre_ping=True,
     )
 
@@ -80,14 +73,23 @@ def temporary_authorization_role_engine(
 def authorization_rw_engine(authorization_owner_engine: Engine) -> Iterator[Engine]:
     with temporary_authorization_role_engine(
         authorization_owner_engine,
-        DbSettings().authorization_database_url,
+        parse_database_url(
+            DbSettings().authorization_database_url,
+            setting_name="AUTHORIZATION_DATABASE_URL",
+        ),
     ) as runtime:
         yield runtime[0]
 
 
 @pytest.fixture(scope="session")
 def authorization_identity_engine() -> Iterator[Engine]:
-    engine = _required_engine(DbSettings().identity_database_url, role="identity_rw")
+    engine = _required_engine(
+        parse_database_url(
+            DbSettings().identity_database_url,
+            setting_name="IDENTITY_DATABASE_URL",
+        ),
+        role="identity_rw",
+    )
     yield engine
     engine.dispose()
 

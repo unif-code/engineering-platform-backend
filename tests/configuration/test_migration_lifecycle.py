@@ -7,8 +7,10 @@ from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL
 from sqlalchemy.exc import SQLAlchemyError
+
+from tests.integration_database import migration_database_url
 
 pytestmark = pytest.mark.integration
 
@@ -16,8 +18,8 @@ pytestmark = pytest.mark.integration
 @pytest.fixture
 def fresh_configuration_database_url(
     monkeypatch: pytest.MonkeyPatch,
-) -> Iterator[str]:
-    owner_url = make_url(os.environ["MIGRATION_DATABASE_URL"])
+) -> Iterator[URL]:
+    owner_url = migration_database_url()
     database_name = f"task12_configuration_{uuid4().hex}"
     maintenance = create_engine(
         owner_url.set(database="postgres"),
@@ -31,8 +33,11 @@ def fresh_configuration_database_url(
         if os.getenv("REQUIRE_INTEGRATION_DB") == "1":
             pytest.fail("Required PostgreSQL unavailable for fresh configuration migration")
         pytest.skip("PostgreSQL unavailable for fresh configuration migration")
-    target_url = owner_url.set(database=database_name).render_as_string(hide_password=False)
-    monkeypatch.setenv("MIGRATION_DATABASE_URL", target_url)
+    target_url = owner_url.set(database=database_name)
+    monkeypatch.setenv(
+        "MIGRATION_DATABASE_URL",
+        target_url.render_as_string(hide_password=False),
+    )
     try:
         yield target_url
     finally:
@@ -53,14 +58,17 @@ def fresh_configuration_database_url(
         maintenance.dispose()
 
 
-def _config(database_url: str) -> Config:
+def _config(database_url: URL) -> Config:
     config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
+    config.set_main_option(
+        "sqlalchemy.url",
+        database_url.render_as_string(hide_password=False).replace("%", "%%"),
+    )
     return config
 
 
 def test_fresh_upgrade_installs_independent_heads_and_deterministic_seed(
-    fresh_configuration_database_url: str,
+    fresh_configuration_database_url: URL,
 ) -> None:
     config = _config(fresh_configuration_database_url)
     command.upgrade(config, "heads")
@@ -103,7 +111,7 @@ def test_fresh_upgrade_installs_independent_heads_and_deterministic_seed(
 
 
 def test_configuration_upgrade_preserves_preexisting_identity_and_audit_facts(
-    fresh_configuration_database_url: str,
+    fresh_configuration_database_url: URL,
 ) -> None:
     config = _config(fresh_configuration_database_url)
     command.upgrade(config, "0002_audit_transactional_append")
@@ -150,7 +158,7 @@ def test_configuration_upgrade_preserves_preexisting_identity_and_audit_facts(
 
 
 def test_all_migrations_downgrade_and_fresh_reupgrade_cleanly(
-    fresh_configuration_database_url: str,
+    fresh_configuration_database_url: URL,
 ) -> None:
     config = _config(fresh_configuration_database_url)
     command.upgrade(config, "heads")
@@ -173,7 +181,7 @@ def test_all_migrations_downgrade_and_fresh_reupgrade_cleanly(
 
 
 def test_identity_0010_downgrade_restores_0009_configuration_publish_privileges(
-    fresh_configuration_database_url: str,
+    fresh_configuration_database_url: URL,
 ) -> None:
     config = _config(fresh_configuration_database_url)
     command.upgrade(config, "0010_identity_policy_reauth")

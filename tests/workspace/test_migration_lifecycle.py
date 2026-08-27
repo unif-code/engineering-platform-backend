@@ -7,15 +7,17 @@ from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL
 from sqlalchemy.exc import SQLAlchemyError
+
+from tests.integration_database import migration_database_url
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def fresh_workspace_database_url(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
-    owner_url = make_url(os.environ["MIGRATION_DATABASE_URL"])
+def fresh_workspace_database_url(monkeypatch: pytest.MonkeyPatch) -> Iterator[URL]:
+    owner_url = migration_database_url()
     database_name = f"task8_workspace_{uuid4().hex}"
     maintenance = create_engine(owner_url.set(database="postgres"), isolation_level="AUTOCOMMIT")
     try:
@@ -26,8 +28,11 @@ def fresh_workspace_database_url(monkeypatch: pytest.MonkeyPatch) -> Iterator[st
         if os.getenv("REQUIRE_INTEGRATION_DB") == "1":
             pytest.fail("Required PostgreSQL unavailable for fresh workspace migration test")
         pytest.skip("PostgreSQL unavailable for fresh workspace migration test")
-    target_url = owner_url.set(database=database_name).render_as_string(hide_password=False)
-    monkeypatch.setenv("MIGRATION_DATABASE_URL", target_url)
+    target_url = owner_url.set(database=database_name)
+    monkeypatch.setenv(
+        "MIGRATION_DATABASE_URL",
+        target_url.render_as_string(hide_password=False),
+    )
     try:
         yield target_url
     finally:
@@ -36,14 +41,17 @@ def fresh_workspace_database_url(monkeypatch: pytest.MonkeyPatch) -> Iterator[st
         maintenance.dispose()
 
 
-def _config(database_url: str) -> Config:
+def _config(database_url: URL) -> Config:
     config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
+    config.set_main_option(
+        "sqlalchemy.url",
+        database_url.render_as_string(hide_password=False).replace("%", "%%"),
+    )
     return config
 
 
 def test_fresh_upgrade_heads_installs_workspace_and_independent_graph(
-    fresh_workspace_database_url: str,
+    fresh_workspace_database_url: URL,
 ) -> None:
     config = _config(fresh_workspace_database_url)
     command.upgrade(config, "heads")
@@ -81,7 +89,7 @@ def test_fresh_upgrade_heads_installs_workspace_and_independent_graph(
 
 
 def test_workspace_upgrade_preserves_existing_identity_audit_and_organization_data(
-    fresh_workspace_database_url: str,
+    fresh_workspace_database_url: URL,
 ) -> None:
     config = _config(fresh_workspace_database_url)
     command.upgrade(config, "0003_audit_org_append_grant")
@@ -132,7 +140,7 @@ def test_workspace_upgrade_preserves_existing_identity_audit_and_organization_da
 
 
 def test_all_module_migrations_round_trip_on_exact_random_database(
-    fresh_workspace_database_url: str,
+    fresh_workspace_database_url: URL,
 ) -> None:
     config = _config(fresh_workspace_database_url)
     command.upgrade(config, "heads")
