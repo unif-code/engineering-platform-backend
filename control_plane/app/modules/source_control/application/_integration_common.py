@@ -1,6 +1,7 @@
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict
@@ -15,6 +16,8 @@ from control_plane.app.modules.source_control.domain import (
     MergeRequestBindingDto,
     MergeRequestObservationDto,
     MergeRequestState,
+    RequirementCallbackUnavailable,
+    SourceControlDependencyUnavailable,
     SourceControlEffectDto,
 )
 from control_plane.app.modules.source_control.ports import (
@@ -28,7 +31,12 @@ from control_plane.app.modules.source_control.ports import (
 
 TARGET_BRANCH = "dev"
 CREATE_OPERATION = EffectOperation.CREATE_INTEGRATION_MR
-CREATE_TOPIC = "requirement.integration-merge-request.requested"
+CREATE_TOPIC: Literal["requirement.integration-merge-request.requested"] = (
+    "requirement.integration-merge-request.requested"
+)
+MERGE_TOPIC: Literal["requirement.integration-merge.requested"] = (
+    "requirement.integration-merge.requested"
+)
 REQUIREMENT_TYPE_PREFIXES = frozenset({"feat", "fix", "refactor", "chore"})
 PREFLIGHT_OUTCOME_REASONS = frozenset(
     {
@@ -119,6 +127,35 @@ class ProcessIntegrationRequestResult(BaseModel):
     binding: MergeRequestBindingDto | None
     observation: MergeRequestObservationDto | None
     blocked_reason: str | None
+
+
+def claim_exact_delivery_request(
+    message_id: str,
+    *,
+    expected_topic: Literal[
+        "requirement.integration-merge-request.requested",
+        "requirement.integration-merge.requested",
+    ],
+    dependencies: SourceControlDependencies,
+) -> tuple[Any | None, Any]:
+    repository_factory = dependencies.delivery_repository_factory
+    if repository_factory is None:
+        raise SourceControlDependencyUnavailable("Integration repository unavailable")
+    now = dependencies.clock.now()
+    with dependencies.engine.begin() as db:
+        repository = repository_factory(db)
+        claimed = repository.claim_delivery_request(
+            message_id,
+            expected_topic=expected_topic,
+            now=now,
+            lease_until=now + timedelta(minutes=2),
+        )
+        inbox = claimed or repository.delivery_request(message_id)
+    if inbox is None:
+        raise RequirementCallbackUnavailable("Delivery request is unavailable")
+    if inbox["topic"] != expected_topic:
+        raise SourceControlDependencyUnavailable("Delivery request operation is invalid")
+    return claimed, inbox
 
 
 def effect_dto(row: Any) -> SourceControlEffectDto:

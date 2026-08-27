@@ -427,6 +427,10 @@ class HttpxGitLabMergeRequestAdapter:
         merge_user_id = self._merge_user_id(payload.get("merge_user"))
         merge_commit_sha = self._optional_sha(payload.get("merge_commit_sha"))
         merged_at = payload.get("merged_at")
+        if state == "merged" and (merge_commit_sha is None or merged_at is None):
+            raise GitLabProviderUnavailable(
+                "GitLab returned an incomplete merged merge request response"
+            )
         try:
             return GitLabMergeRequestSnapshot(
                 project_id=repository.project_id,

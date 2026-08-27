@@ -191,6 +191,7 @@ def test_exact_claim_preserves_fenced_allowlisted_preflight_outcome(
         )
         first = integration.claim_delivery_request(
             MESSAGE_ID,
+            expected_topic="requirement.integration-merge-request.requested",
             now=NOW,
             lease_until=NOW + timedelta(minutes=2),
         )
@@ -208,6 +209,7 @@ def test_exact_claim_preserves_fenced_allowlisted_preflight_outcome(
         )
         replay = integration.claim_delivery_request(
             MESSAGE_ID,
+            expected_topic="requirement.integration-merge-request.requested",
             now=NOW + timedelta(minutes=3),
             lease_until=NOW + timedelta(minutes=5),
         )
@@ -239,6 +241,7 @@ def test_preflight_outcome_and_transient_release_reject_unsafe_or_stale_updates(
         )
         claimed = integration.claim_delivery_request(
             MESSAGE_ID,
+            expected_topic="requirement.integration-merge-request.requested",
             now=NOW,
             lease_until=NOW + timedelta(minutes=2),
         )

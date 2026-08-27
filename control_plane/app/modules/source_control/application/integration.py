@@ -1,4 +1,3 @@
-from datetime import timedelta
 from typing import Literal
 
 from control_plane.app.modules.source_control.application._integration_callbacks import (
@@ -34,6 +33,9 @@ from control_plane.app.modules.source_control.application._integration_common im
 )
 from control_plane.app.modules.source_control.application._integration_common import (
     ProviderPreflightTransient as _ProviderPreflightTransient,
+)
+from control_plane.app.modules.source_control.application._integration_common import (
+    claim_exact_delivery_request as _claim_exact_delivery_request,
 )
 from control_plane.app.modules.source_control.application._integration_common import (
     effect_dto as _effect_dto,
@@ -84,19 +86,11 @@ def process_integration_mr_request(
     ):
         raise SourceControlDependencyUnavailable("Integration MR dependency unavailable")
 
-    now = dependencies.clock.now()
-    with dependencies.engine.begin() as db:
-        repository = repository_factory(db)
-        claimed = repository.claim_delivery_request(
-            message_id,
-            now=now,
-            lease_until=now + timedelta(minutes=2),
-        )
-        inbox = claimed or repository.delivery_request(message_id)
-    if inbox is None:
-        raise RequirementCallbackUnavailable("Delivery request is unavailable")
-    if inbox["topic"] != _CREATE_TOPIC:
-        raise SourceControlDependencyUnavailable("Delivery request operation is invalid")
+    claimed, inbox = _claim_exact_delivery_request(
+        message_id,
+        expected_topic=_CREATE_TOPIC,
+        dependencies=dependencies,
+    )
 
     callback_subject = _OriginatingCallbackSubject(
         work_item_id=str(inbox["work_item_id"]),

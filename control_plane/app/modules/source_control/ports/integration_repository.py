@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 from datetime import datetime
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from sqlalchemy import Connection
 
@@ -29,6 +29,10 @@ class SourceControlIntegrationRepository(Protocol):
         self,
         message_id: str,
         *,
+        expected_topic: Literal[
+            "requirement.integration-merge-request.requested",
+            "requirement.integration-merge.requested",
+        ],
         now: datetime,
         lease_until: datetime,
     ) -> Any: ...
@@ -68,14 +72,14 @@ class SourceControlIntegrationRepository(Protocol):
         for_update: bool = False,
     ) -> Any: ...
 
-    def effect_by_operation_work_item_fingerprint(
+    def effects_by_operation_work_item_fingerprint(
         self,
         operation: str,
         work_item_id: str,
         request_fingerprint: str,
         *,
         for_update: bool = False,
-    ) -> Any: ...
+    ) -> list[Any]: ...
 
     def insert_effect(self, **values: Any) -> Any: ...
 

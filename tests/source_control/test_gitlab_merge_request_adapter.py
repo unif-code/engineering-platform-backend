@@ -68,6 +68,8 @@ def _merge_request(
     has_conflicts: bool = False,
     blocking_discussions_resolved: bool = True,
     pipeline_status: str | None = "success",
+    merge_commit_sha: str | None = None,
+    merged_at: str | None = None,
 ) -> dict[str, object]:
     return {
         "iid": iid,
@@ -79,9 +81,9 @@ def _merge_request(
         "has_conflicts": has_conflicts,
         "blocking_discussions_resolved": blocking_discussions_resolved,
         "head_pipeline": None if pipeline_status is None else {"status": pipeline_status},
-        "merge_commit_sha": None,
+        "merge_commit_sha": merge_commit_sha,
         "merge_user": None,
-        "merged_at": None,
+        "merged_at": merged_at,
         "diff_refs": {"head_sha": sha},
     }
 
@@ -204,7 +206,14 @@ def test_adapter_merges_with_exact_sha_without_squash_or_source_removal() -> Non
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
-        return httpx.Response(200, json=_merge_request(state="merged"))
+        return httpx.Response(
+            200,
+            json=_merge_request(
+                state="merged",
+                merge_commit_sha="b" * 40,
+                merged_at="2026-08-26T09:00:00Z",
+            ),
+        )
 
     with _client(handler) as client:
         merged = _adapter(client).merge_merge_request(
@@ -220,6 +229,49 @@ def test_adapter_merges_with_exact_sha_without_squash_or_source_removal() -> Non
     assert merge_request.url.params["should_remove_source_branch"] == "false"
     assert "auto_merge" not in merge_request.url.params
     assert merged.state == "merged"
+
+
+@pytest.mark.parametrize(
+    ("operation", "error_type"),
+    [
+        ("get", GitLabProviderUnavailable),
+        ("merge", GitLabResultUnknown),
+    ],
+)
+@pytest.mark.parametrize(
+    "payload",
+    [
+        _merge_request(
+            state="merged",
+            merge_commit_sha=None,
+            merged_at="2026-08-26T09:00:00Z",
+        ),
+        _merge_request(
+            state="merged",
+            merge_commit_sha="b" * 40,
+            merged_at=None,
+        ),
+    ],
+    ids=("missing-commit", "missing-merged-at"),
+)
+def test_incomplete_merged_snapshot_is_never_returned_as_provider_fact(
+    operation: str,
+    error_type: type[Exception],
+    payload: dict[str, object],
+) -> None:
+    with (
+        _client(lambda _request: httpx.Response(200, json=payload)) as client,
+        pytest.raises(error_type),
+    ):
+        adapter = _adapter(client)
+        if operation == "get":
+            adapter.get_merge_request(_profile(), iid=17)
+        else:
+            adapter.merge_merge_request(
+                _profile(),
+                iid=17,
+                expected_head_sha=HEAD_SHA,
+            )
 
 
 @pytest.mark.parametrize(

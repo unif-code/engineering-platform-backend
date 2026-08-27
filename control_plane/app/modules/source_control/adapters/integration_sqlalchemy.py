@@ -112,6 +112,7 @@ class SqlAlchemySourceControlIntegrationRepository:
         self,
         message_id: str,
         *,
+        expected_topic: str,
         now: datetime,
         lease_until: datetime,
     ) -> Any:
@@ -121,11 +122,13 @@ class SqlAlchemySourceControlIntegrationRepository:
                     "UPDATE source_control.delivery_request_inbox "
                     "SET state='PROCESSING', attempts=attempts + 1, "
                     "available_at=:lease_until, updated_at=:now "
-                    "WHERE message_id=:message_id AND available_at <= :now "
+                    "WHERE message_id=:message_id AND topic=:expected_topic "
+                    "AND available_at <= :now "
                     "AND state IN ('RECEIVED', 'FAILED', 'PROCESSING') RETURNING *"
                 ),
                 {
                     "message_id": message_id,
+                    "expected_topic": expected_topic,
                     "now": now,
                     "lease_until": lease_until,
                 },
@@ -241,21 +244,22 @@ class SqlAlchemySourceControlIntegrationRepository:
             .one_or_none()
         )
 
-    def effect_by_operation_work_item_fingerprint(
+    def effects_by_operation_work_item_fingerprint(
         self,
         operation: str,
         work_item_id: str,
         request_fingerprint: str,
         *,
         for_update: bool = False,
-    ) -> Any:
+    ) -> list[Any]:
         suffix = " FOR UPDATE" if for_update else ""
-        return (
+        return list(
             self.db.execute(
                 text(
                     "SELECT * FROM source_control.source_control_effect "
                     "WHERE operation=:operation AND work_item_id=:work_item_id "
                     "AND request_fingerprint=:request_fingerprint"
+                    " ORDER BY created_at, id LIMIT 2"
                     f"{suffix}"
                 ),
                 {
@@ -265,7 +269,7 @@ class SqlAlchemySourceControlIntegrationRepository:
                 },
             )
             .mappings()
-            .one_or_none()
+            .all()
         )
 
     def insert_effect(self, **values: Any) -> Any:

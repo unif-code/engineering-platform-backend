@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from threading import Event, Lock
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 from uuid import UUID
 
 import pytest
@@ -67,6 +67,12 @@ TASK_BRANCH = "feat/wi-701-integration-mr"
 SECOND_MESSAGE_ID = "30000000-0000-0000-0000-000000000702"
 SECOND_REQUIREMENT_ID = "40000000-0000-0000-0000-000000000702"
 SECOND_WORK_ITEM_ID = "50000000-0000-0000-0000-000000000702"
+
+
+class _IntegrationEffectOverrides(TypedDict, total=False):
+    request_fingerprint: str
+    requirement_id: str
+    branch_binding_id: str
 
 
 class FixedClock:
@@ -684,6 +690,7 @@ def test_exact_delivery_claim_does_not_lease_an_earlier_due_message(
         )
         claimed = repository.claim_delivery_request(
             MESSAGE_ID,
+            expected_topic="requirement.integration-merge-request.requested",
             now=NOW,
             lease_until=NOW + timedelta(minutes=2),
         )
@@ -704,12 +711,14 @@ def test_exact_delivery_claim_fences_a_second_worker(
     with engine.begin() as db:
         first = SqlAlchemySourceControlIntegrationRepository(db).claim_delivery_request(
             MESSAGE_ID,
+            expected_topic="requirement.integration-merge-request.requested",
             now=NOW,
             lease_until=NOW + timedelta(minutes=2),
         )
     with engine.begin() as db:
         second = SqlAlchemySourceControlIntegrationRepository(db).claim_delivery_request(
             MESSAGE_ID,
+            expected_topic="requirement.integration-merge-request.requested",
             now=NOW,
             lease_until=NOW + timedelta(minutes=2),
         )
@@ -815,7 +824,7 @@ def test_mismatched_originating_requirement_revision_fails_closed_before_provide
 )
 def test_existing_planned_effect_local_collision_blocks_without_provider_calls(
     isolated_source_control_database: Any,
-    effect_values: dict[str, str],
+    effect_values: _IntegrationEffectOverrides,
 ) -> None:
     engine = isolated_source_control_database.runtime
     _seed_source_control(engine)
@@ -850,7 +859,10 @@ def test_existing_planned_effect_frozen_head_change_blocks_before_list_or_post(
     )
 
     assert result.effect is not None
-    assert result.effect.payload.head_sha == frozen_head
+    assert result.effect.payload.model_dump(by_alias=True) == {
+        "branchBindingId": BRANCH_BINDING_ID,
+        "headSha": frozen_head,
+    }
     assert result.effect.state is EffectState.BLOCKED
     assert result.blocked_reason == "HEAD_SHA_CHANGED"
     assert requirement.blocked[0].reason_code == "HEAD_SHA_CHANGED"
@@ -1049,7 +1061,7 @@ def test_pending_callback_failure_replays_without_repeating_provider_calls(
     requirement.fail_pending = True
     gitlab = FakeGitLabMergeRequests(engine)
     gitlab.create_error = GitLabResultUnknown("post timed out")
-    dependencies, requirement, gitlab = _dependencies(
+    dependencies, _returned_requirement, gitlab = _dependencies(
         engine,
         requirement=requirement,
         gitlab=gitlab,
@@ -1083,7 +1095,7 @@ def test_terminal_ready_replay_precedes_advanced_requirement_admission(
     engine = isolated_source_control_database.runtime
     _seed_source_control(engine)
     requirement = AdvancingRequirementDelivery()
-    dependencies, requirement, gitlab = _dependencies(
+    dependencies, _returned_requirement, gitlab = _dependencies(
         engine,
         requirement=requirement,
     )
@@ -1115,7 +1127,7 @@ def test_terminal_blocked_replay_precedes_advanced_requirement_admission(
     requirement = AdvancingRequirementDelivery()
     gitlab = FakeGitLabMergeRequests(engine)
     gitlab.candidates = [_mr_snapshot(), _mr_snapshot(iid=18)]
-    dependencies, requirement, gitlab = _dependencies(
+    dependencies, _returned_requirement, gitlab = _dependencies(
         engine,
         requirement=requirement,
         gitlab=gitlab,
@@ -1148,7 +1160,7 @@ def test_terminal_pending_replay_precedes_advanced_requirement_admission(
     requirement = AdvancingRequirementDelivery()
     gitlab = FakeGitLabMergeRequests(engine)
     gitlab.create_error = GitLabResultUnknown("post timed out")
-    dependencies, requirement, gitlab = _dependencies(
+    dependencies, _returned_requirement, gitlab = _dependencies(
         engine,
         requirement=requirement,
         gitlab=gitlab,
@@ -1272,6 +1284,7 @@ def test_terminal_success_replay_advances_real_requirement_once_without_provider
             )
             claimed = integration.claim_delivery_request(
                 envelope.message_id,
+                expected_topic="requirement.integration-merge-request.requested",
                 now=NOW,
                 lease_until=NOW + timedelta(minutes=1),
             )
@@ -1890,7 +1903,7 @@ def test_preflight_callback_keys_are_scoped_to_message_and_work_item(
     }
     requirement = MappedRequirementDelivery(delivery_contexts)
     gitlab = FakeGitLabMergeRequests(engine)
-    dependencies, requirement, gitlab = _dependencies(
+    dependencies, _returned_requirement, gitlab = _dependencies(
         engine,
         requirement=requirement,
         binding_requirement=MappedRequirementBinding(binding_contexts),
@@ -2314,7 +2327,7 @@ def test_final_provider_state_selects_exact_create_effect_and_requirement_outcom
     gitlab.candidates = [candidate]
     gitlab.readback = candidate
     requirement = AdvancingRequirementDelivery()
-    dependencies, requirement, _gitlab = _dependencies(
+    dependencies, _returned_requirement, _gitlab = _dependencies(
         engine,
         gitlab=gitlab,
         requirement=requirement,
@@ -2400,6 +2413,7 @@ def test_stale_worker_cannot_commit_facts_after_effect_and_inbox_leases_are_stol
             )
             stolen_inbox = repository.claim_delivery_request(
                 MESSAGE_ID,
+                expected_topic="requirement.integration-merge-request.requested",
                 now=NOW + timedelta(minutes=3),
                 lease_until=NOW + timedelta(minutes=5),
             )
@@ -2444,7 +2458,7 @@ def test_effect_callback_holds_fence_until_requirement_and_callback_state_commit
     engine = isolated_source_control_database.runtime
     _seed_source_control(engine)
     requirement = BlockingCallbackRequirementDelivery()
-    dependencies, requirement, _gitlab = _dependencies(
+    dependencies, _returned_requirement, _gitlab = _dependencies(
         engine,
         requirement=requirement,
     )
@@ -2483,7 +2497,7 @@ def test_preflight_callback_holds_inbox_fence_until_completion(
     gitlab = FakeGitLabMergeRequests(engine)
     gitlab.source_head = BASE_SHA
     clock = MutableClock()
-    dependencies, requirement, _gitlab = _dependencies(
+    dependencies, _returned_requirement, _gitlab = _dependencies(
         engine,
         requirement=requirement,
         gitlab=gitlab,
