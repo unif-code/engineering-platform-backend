@@ -21,6 +21,10 @@ _PREFLIGHT_OUTCOME_REASONS = frozenset(
     {
         "BRANCH_BINDING_MISSING",
         "HEAD_SHA_CHANGED",
+        "MERGE_ACTOR_INELIGIBLE",
+        "MERGE_CONFLICT",
+        "MR_CHECKS_BLOCKED",
+        "MR_CLOSED",
         "MR_CONFLICT",
         "NO_DELIVERY_COMMIT",
         "OWNER_INELIGIBLE",
@@ -29,6 +33,7 @@ _PREFLIGHT_OUTCOME_REASONS = frozenset(
         "REPOSITORY_NOT_AUTHORIZED",
         "TARGET_BRANCH_NOT_FOUND",
         "TARGET_BRANCH_NOT_PROTECTED",
+        "EXTERNAL_MERGE_DRIFT",
     }
 )
 _TRANSIENT_INBOX_ERRORS = frozenset({"PROVIDER_UNAVAILABLE"})
@@ -231,6 +236,33 @@ class SqlAlchemySourceControlIntegrationRepository:
                     f"{suffix}"
                 ),
                 {"operation": operation, "subject_key": subject_key},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def effect_by_operation_work_item_fingerprint(
+        self,
+        operation: str,
+        work_item_id: str,
+        request_fingerprint: str,
+        *,
+        for_update: bool = False,
+    ) -> Any:
+        suffix = " FOR UPDATE" if for_update else ""
+        return (
+            self.db.execute(
+                text(
+                    "SELECT * FROM source_control.source_control_effect "
+                    "WHERE operation=:operation AND work_item_id=:work_item_id "
+                    "AND request_fingerprint=:request_fingerprint"
+                    f"{suffix}"
+                ),
+                {
+                    "operation": operation,
+                    "work_item_id": work_item_id,
+                    "request_fingerprint": request_fingerprint,
+                },
             )
             .mappings()
             .one_or_none()

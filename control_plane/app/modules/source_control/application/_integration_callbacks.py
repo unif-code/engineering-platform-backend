@@ -23,6 +23,7 @@ from control_plane.app.modules.source_control.application.dependencies import (
     SourceControlDependencies,
 )
 from control_plane.app.modules.source_control.domain import (
+    EffectOperation,
     EffectState,
     MergeRequestBindingDto,
     RequirementCallbackState,
@@ -33,6 +34,7 @@ from control_plane.app.modules.source_control.domain import (
 from control_plane.app.modules.source_control.ports import (
     ExternalMergeDriftResult,
     IntegrationDeliveryBlockedResult,
+    IntegrationMergedResult,
     IntegrationMrReadyResult,
     IntegrationReconciliationPendingResult,
 )
@@ -42,9 +44,10 @@ def _record_effect_callback(
     context: _CallbackSubject,
     effect: SourceControlEffectDto,
     *,
-    kind: Literal["ready", "blocked", "pending", "external_drift"],
+    kind: Literal["ready", "merged", "blocked", "pending", "external_drift"],
     binding_id: str | None = None,
     reason_code: str | None = None,
+    operation: EffectOperation = _CREATE_OPERATION,
     dependencies: SourceControlDependencies,
 ) -> SourceControlEffectDto:
     requirement = dependencies.requirement_delivery
@@ -54,7 +57,7 @@ def _record_effect_callback(
     with dependencies.engine.begin() as db:
         repository = repository_factory(db)
         row = repository.effect_by_operation_subject(
-            _CREATE_OPERATION.value,
+            operation.value,
             effect.subject_key,
             for_update=True,
         )
@@ -69,8 +72,8 @@ def _record_effect_callback(
             raise RequirementCallbackUnavailable("Integration MR callback lease was lost")
         if locked.callback_state is RequirementCallbackState.ACKED:
             return locked
-        if kind == "ready" and binding_id is None:
-            raise SourceControlDependencyUnavailable("MR-ready binding is unavailable")
+        if kind in {"ready", "merged"} and binding_id is None:
+            raise SourceControlDependencyUnavailable("Integration binding is unavailable")
         if kind == "blocked" and reason_code is None:
             raise SourceControlDependencyUnavailable("Blocked reason is unavailable")
         if kind == "external_drift" and binding_id is None:
@@ -84,6 +87,16 @@ def _record_effect_callback(
                         binding_id=binding_id,
                         expected_revision=context.work_item_revision,
                         idempotency_key=f"source-control:mr-ready:{locked.id}",
+                    )
+                )
+            elif kind == "merged":
+                assert binding_id is not None
+                requirement.record_merged(
+                    IntegrationMergedResult(
+                        work_item_id=context.work_item_id,
+                        binding_id=binding_id,
+                        expected_revision=context.work_item_revision,
+                        idempotency_key=f"source-control:integration-merged:{locked.id}",
                     )
                 )
             elif kind == "blocked":

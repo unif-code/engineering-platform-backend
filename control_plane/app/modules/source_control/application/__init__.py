@@ -12,6 +12,7 @@ from control_plane.app.modules.source_control.application.dependencies import (
 )
 from control_plane.app.modules.source_control.application.integration import (
     ProcessIntegrationRequestResult,
+    process_integration_merge_request,
     process_integration_mr_request,
 )
 from control_plane.app.modules.source_control.application.reconciliation import (
@@ -40,6 +41,7 @@ __all__ = [
     "get_repository_branch_binding",
     "ingest_signed_gitlab_webhook",
     "process_binding_request",
+    "process_integration_merge_request",
     "process_integration_mr_request",
     "process_webhook_inbox",
     "reconcile_due_effects",
