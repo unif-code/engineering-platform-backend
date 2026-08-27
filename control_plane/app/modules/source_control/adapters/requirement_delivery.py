@@ -55,25 +55,27 @@ class RequirementFacadeDeliveryAdapter:
                     lease_until=lease_until,
                     dependencies=self.dependencies,
                 )
+            return tuple(
+                DeliveryRequestEnvelope(
+                    message_id=message.message_id,
+                    topic=_DELIVERY_TOPICS[DeliveryRequestKind(message.kind.value)],
+                    payload_hash=message.payload_hash,
+                    requirement_id=message.requirement_id,
+                    requirement_revision=message.requirement_revision,
+                    work_item_id=message.work_item_id,
+                    work_item_revision=message.work_item_revision,
+                    repository_id=message.repository_id,
+                    actor_id=message.actor_id,
+                    kind=DeliveryRequestKind(message.kind.value),
+                    integration_merge_request_binding_id=(
+                        message.integration_merge_request_binding_id
+                    ),
+                    attempts=message.attempts,
+                )
+                for message in messages
+            )
         except Exception:
             raise RequirementCallbackUnavailable("Requirement claim unavailable") from None
-        return tuple(
-            DeliveryRequestEnvelope(
-                message_id=message.message_id,
-                topic=_DELIVERY_TOPICS[DeliveryRequestKind(message.kind.value)],
-                payload_hash=message.payload_hash,
-                requirement_id=message.requirement_id,
-                requirement_revision=message.requirement_revision,
-                work_item_id=message.work_item_id,
-                work_item_revision=message.work_item_revision,
-                repository_id=message.repository_id,
-                actor_id=message.actor_id,
-                kind=DeliveryRequestKind(message.kind.value),
-                integration_merge_request_binding_id=(message.integration_merge_request_binding_id),
-                attempts=message.attempts,
-            )
-            for message in messages
-        )
 
     def acknowledge_request(self, message_id: str) -> None:
         try:
