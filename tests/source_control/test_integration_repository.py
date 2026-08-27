@@ -1,5 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from sqlalchemy import Engine
 
 from control_plane.app.modules.source_control.adapters import (
@@ -167,6 +168,105 @@ def test_delivery_inbox_completion_uses_claim_attempt_as_fence(
     assert second["attempts"] == 2
     assert stale is None
     assert completed["state"] == "PROCESSED"
+
+
+def test_exact_claim_preserves_fenced_allowlisted_preflight_outcome(
+    isolated_source_control_rw_engine: Engine,
+) -> None:
+    with isolated_source_control_rw_engine.begin() as db:
+        _insert_repository(SqlAlchemySourceControlRepository(db))
+        integration = SqlAlchemySourceControlIntegrationRepository(db)
+        integration.accept_delivery_request(
+            message_id=MESSAGE_ID,
+            topic="requirement.integration-merge-request.requested",
+            payload_hash="sha256:delivery",
+            requirement_id=REQUIREMENT_ID,
+            requirement_revision=3,
+            work_item_id=WORK_ITEM_ID,
+            work_item_revision=5,
+            repository_id=REPOSITORY_ID,
+            actor_id="employee-1",
+            integration_merge_request_binding_id=None,
+            now=NOW,
+        )
+        first = integration.claim_delivery_request(
+            MESSAGE_ID,
+            now=NOW,
+            lease_until=NOW + timedelta(minutes=2),
+        )
+        marked = integration.record_preflight_outcome(
+            MESSAGE_ID,
+            expected_attempts=first["attempts"],
+            reason_code="OWNER_MISMATCH",
+            now=NOW,
+        )
+        stale = integration.record_preflight_outcome(
+            MESSAGE_ID,
+            expected_attempts=0,
+            reason_code="OWNER_INELIGIBLE",
+            now=NOW,
+        )
+        replay = integration.claim_delivery_request(
+            MESSAGE_ID,
+            now=NOW + timedelta(minutes=3),
+            lease_until=NOW + timedelta(minutes=5),
+        )
+
+    assert marked["last_error_code"] == "OWNER_MISMATCH"
+    assert stale is None
+    assert replay["attempts"] == 2
+    assert replay["last_error_code"] == "OWNER_MISMATCH"
+
+
+def test_preflight_outcome_and_transient_release_reject_unsafe_or_stale_updates(
+    isolated_source_control_rw_engine: Engine,
+) -> None:
+    with isolated_source_control_rw_engine.begin() as db:
+        _insert_repository(SqlAlchemySourceControlRepository(db))
+        integration = SqlAlchemySourceControlIntegrationRepository(db)
+        integration.accept_delivery_request(
+            message_id=MESSAGE_ID,
+            topic="requirement.integration-merge-request.requested",
+            payload_hash="sha256:delivery",
+            requirement_id=REQUIREMENT_ID,
+            requirement_revision=3,
+            work_item_id=WORK_ITEM_ID,
+            work_item_revision=5,
+            repository_id=REPOSITORY_ID,
+            actor_id="employee-1",
+            integration_merge_request_binding_id=None,
+            now=NOW,
+        )
+        claimed = integration.claim_delivery_request(
+            MESSAGE_ID,
+            now=NOW,
+            lease_until=NOW + timedelta(minutes=2),
+        )
+        with pytest.raises(ValueError):
+            integration.record_preflight_outcome(
+                MESSAGE_ID,
+                expected_attempts=claimed["attempts"],
+                reason_code="provider body included secret",
+                now=NOW,
+            )
+        stale = integration.release_delivery_request(
+            MESSAGE_ID,
+            expected_attempts=0,
+            error_code="PROVIDER_UNAVAILABLE",
+            retry_at=NOW + timedelta(minutes=1),
+            now=NOW,
+        )
+        released = integration.release_delivery_request(
+            MESSAGE_ID,
+            expected_attempts=claimed["attempts"],
+            error_code="PROVIDER_UNAVAILABLE",
+            retry_at=NOW + timedelta(minutes=1),
+            now=NOW,
+        )
+
+    assert stale is None
+    assert released["state"] == "FAILED"
+    assert released["last_error_code"] == "PROVIDER_UNAVAILABLE"
 
 
 def test_effect_claims_and_callbacks_are_operation_scoped_and_attempt_fenced(

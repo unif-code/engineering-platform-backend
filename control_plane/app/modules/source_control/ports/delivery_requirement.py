@@ -10,6 +10,7 @@ class RequirementDeliveryContext(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     requirement_id: str
+    requirement_revision: int
     requirement_state: str
     workspace_id: str
     work_item_id: str

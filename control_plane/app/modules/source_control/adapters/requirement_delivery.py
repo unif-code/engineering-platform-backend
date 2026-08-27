@@ -122,6 +122,7 @@ class RequirementFacadeDeliveryAdapter:
             raise RequirementCallbackUnavailable("Requirement context unavailable") from None
         return RequirementDeliveryContext(
             requirement_id=context.requirement_id,
+            requirement_revision=context.requirement_revision,
             requirement_state=context.requirement_state.value,
             workspace_id=context.workspace_id,
             work_item_id=context.work_item_id,

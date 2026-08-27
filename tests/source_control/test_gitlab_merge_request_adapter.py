@@ -12,9 +12,11 @@ from control_plane.app.modules.source_control.ports import (
     GitLabMergeRequestNotFound,
     GitLabMergeRequestSnapshot,
     GitLabProjectNotFound,
+    GitLabProjectPolicyUnsupported,
     GitLabProviderUnavailable,
     GitLabRepositoryProfile,
     GitLabResultUnknown,
+    GitLabTargetBranchNotProtected,
 )
 
 HEAD_SHA = "a" * 40
@@ -100,6 +102,7 @@ def run_create_integration_mr(
             repository,
             source_branch=source_branch,
             target_branch="dev",
+            state="all",
         )
         == []
     )
@@ -138,7 +141,7 @@ def test_adapter_lists_then_creates_and_reads_exact_integration_mr() -> None:
             )
         if request.method == "GET" and request.url.path.endswith("/merge_requests"):
             assert dict(request.url.params) == {
-                "state": "opened",
+                "state": "all",
                 "source_branch": TASK_BRANCH,
                 "target_branch": "dev",
                 "per_page": "100",
@@ -300,17 +303,17 @@ def test_merge_rejects_provider_merge_checks_that_are_not_ready(payload: dict[st
         _adapter(client).merge_merge_request(_profile(), iid=17, expected_head_sha=HEAD_SHA)
 
 
-def test_list_merge_requests_rejects_multiple_exact_candidates() -> None:
+def test_list_merge_requests_returns_all_exact_candidates_for_saga_classification() -> None:
     payload = [_merge_request(iid=17), _merge_request(iid=18)]
-    with (
-        _client(lambda _request: httpx.Response(200, json=payload)) as client,
-        pytest.raises(GitLabResultUnknown),
-    ):
-        _adapter(client).list_merge_requests(
+    with _client(lambda _request: httpx.Response(200, json=payload)) as client:
+        candidates = _adapter(client).list_merge_requests(
             _profile(),
             source_branch=TASK_BRANCH,
             target_branch="dev",
+            state="all",
         )
+
+    assert [candidate.iid for candidate in candidates] == [17, 18]
 
 
 def test_target_branch_must_be_protected_and_project_must_use_merge_method() -> None:
@@ -334,9 +337,9 @@ def test_target_branch_must_be_protected_and_project_must_use_merge_method() -> 
 
     with _client(handler) as client:
         adapter = _adapter(client)
-        with pytest.raises(GitLabProviderUnavailable):
+        with pytest.raises(GitLabProjectPolicyUnsupported):
             adapter.get_project_delivery_profile(_profile())
-        with pytest.raises(GitLabProviderUnavailable):
+        with pytest.raises(GitLabTargetBranchNotProtected):
             adapter.get_branch(_profile(), "dev")
 
 
@@ -407,7 +410,7 @@ def test_http_error_normalization_does_not_preserve_sensitive_exception_cause(
     assert "test-only-token" not in rendered
 
 
-def test_list_merge_requests_rejects_candidates_spanning_pages() -> None:
+def test_list_merge_requests_returns_candidates_from_all_pages() -> None:
     page_calls: list[dict[str, str]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -416,23 +419,25 @@ def test_list_merge_requests_rejects_candidates_spanning_pages() -> None:
             return httpx.Response(200, headers={"X-Next-Page": "2"}, json=[_merge_request(iid=17)])
         return httpx.Response(200, headers={"X-Next-Page": ""}, json=[_merge_request(iid=18)])
 
-    with _client(handler) as client, pytest.raises(GitLabResultUnknown):
-        _adapter(client).list_merge_requests(
+    with _client(handler) as client:
+        candidates = _adapter(client).list_merge_requests(
             _profile(),
             source_branch=TASK_BRANCH,
             target_branch="dev",
+            state="all",
         )
 
+    assert [candidate.iid for candidate in candidates] == [17, 18]
     assert page_calls == [
         {
-            "state": "opened",
+            "state": "all",
             "source_branch": TASK_BRANCH,
             "target_branch": "dev",
             "per_page": "100",
             "page": "1",
         },
         {
-            "state": "opened",
+            "state": "all",
             "source_branch": TASK_BRANCH,
             "target_branch": "dev",
             "per_page": "100",

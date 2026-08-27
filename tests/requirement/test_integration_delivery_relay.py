@@ -341,6 +341,7 @@ def test_context_exposes_stable_requirement_facts_and_request_actor(
         )
 
     assert context.requirement_id == requested.requirement.id
+    assert context.requirement_revision == requested.requirement.revision
     assert context.requirement_state is requested.requirement.state
     assert context.work_item_revision == requested.work_item.revision
     assert context.work_item_state is WorkItemState.IN_PROGRESS
