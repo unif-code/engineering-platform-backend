@@ -7,6 +7,7 @@ import pytest
 from control_plane.app.modules.source_control.adapters import HttpxGitLabMergeRequestAdapter
 from control_plane.app.modules.source_control.ports import (
     GitLabAccessDenied,
+    GitLabBranchNotFound,
     GitLabMergeRequestBlocked,
     GitLabMergeRequestHeadChanged,
     GitLabMergeRequestNotFound,
@@ -85,6 +86,19 @@ def _merge_request(
     }
 
 
+def _project() -> dict[str, object]:
+    return {
+        "id": 101,
+        "path_with_namespace": "platform/backend",
+        "default_branch": "main",
+        "merge_method": "merge",
+    }
+
+
+def _branch(name: str, *, protected: bool = True) -> dict[str, object]:
+    return {"name": name, "commit": {"id": HEAD_SHA}, "protected": protected}
+
+
 def run_create_integration_mr(
     adapter: HttpxGitLabMergeRequestAdapter,
     *,
@@ -96,7 +110,6 @@ def run_create_integration_mr(
 ) -> GitLabMergeRequestSnapshot:
     profile = adapter.get_project_delivery_profile(repository)
     assert profile.default_branch == "main"
-    adapter.get_branch(repository, "dev")
     assert (
         adapter.list_merge_requests(
             repository,
@@ -126,19 +139,11 @@ def test_adapter_lists_then_creates_and_reads_exact_integration_mr() -> None:
         assert request.headers["PRIVATE-TOKEN"] == "test-only-token"
         assert "test-only-token" not in str(request.url)
         if request.method == "GET" and request.url.path.endswith("/projects/platform/backend"):
-            return httpx.Response(
-                200,
-                json={
-                    "path_with_namespace": "platform/backend",
-                    "default_branch": "main",
-                    "merge_method": "merge",
-                },
-            )
+            return httpx.Response(200, json=_project())
+        if request.method == "GET" and request.url.path.endswith("/branches/main"):
+            return httpx.Response(200, json=_branch("main"))
         if request.method == "GET" and request.url.path.endswith("/branches/dev"):
-            return httpx.Response(
-                200,
-                json={"name": "dev", "commit": {"id": HEAD_SHA}, "protected": True},
-            )
+            return httpx.Response(200, json=_branch("dev"))
         if request.method == "GET" and request.url.path.endswith("/merge_requests"):
             assert dict(request.url.params) == {
                 "state": "all",
@@ -156,8 +161,17 @@ def test_adapter_lists_then_creates_and_reads_exact_integration_mr() -> None:
                 "description": "Platform-Work-Item: 42",
                 "squash": "false",
                 "remove_source_branch": "false",
+                "allow_collaboration": "false",
             }
-            return httpx.Response(201, json=_merge_request())
+            return httpx.Response(
+                201,
+                json={
+                    "iid": 17,
+                    "source_branch": TASK_BRANCH,
+                    "target_branch": "dev",
+                    "diff_refs": {},
+                },
+            )
         if request.method == "GET" and request.url.path.endswith("/merge_requests/17"):
             return httpx.Response(200, json=_merge_request())
         raise AssertionError(f"unexpected GitLab request: {request.method} {request.url.path}")
@@ -177,6 +191,7 @@ def test_adapter_lists_then_creates_and_reads_exact_integration_mr() -> None:
     assert result.head_sha == HEAD_SHA
     assert calls == [
         ("GET", "/projects/platform%2Fbackend"),
+        ("GET", "/projects/platform%2Fbackend/repository/branches/main"),
         ("GET", "/projects/platform%2Fbackend/repository/branches/dev"),
         ("GET", "/projects/platform%2Fbackend/merge_requests"),
         ("POST", "/projects/platform%2Fbackend/merge_requests"),
@@ -263,10 +278,8 @@ def test_merge_request_reads_and_writes_normalize_provider_failures(
     "payload",
     [
         {},
-        _merge_request(sha="b" * 40),
         {**_merge_request(), "source_branch": "other-source"},
         {**_merge_request(), "target_branch": "main"},
-        {**_merge_request(), "diff_refs": {}},
     ],
 )
 def test_create_merge_request_treats_malformed_or_non_exact_write_result_as_unknown(
@@ -321,6 +334,7 @@ def test_target_branch_must_be_protected_and_project_must_use_merge_method() -> 
         httpx.Response(
             200,
             json={
+                "id": 101,
                 "path_with_namespace": "platform/backend",
                 "default_branch": "main",
                 "merge_method": "rebase_merge",
@@ -341,6 +355,51 @@ def test_target_branch_must_be_protected_and_project_must_use_merge_method() -> 
             adapter.get_project_delivery_profile(_profile())
         with pytest.raises(GitLabTargetBranchNotProtected):
             adapter.get_branch(_profile(), "dev")
+
+
+@pytest.mark.parametrize(
+    ("branch", "status", "protected", "error_type"),
+    [
+        ("main", 404, True, GitLabProjectPolicyUnsupported),
+        ("main", 200, False, GitLabProjectPolicyUnsupported),
+        ("dev", 404, True, GitLabBranchNotFound),
+        ("dev", 200, False, GitLabTargetBranchNotProtected),
+    ],
+)
+def test_project_profile_proves_main_and_dev_branch_protection(
+    branch: str,
+    status: int,
+    protected: bool,
+    error_type: type[Exception],
+) -> None:
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        if request.url.path.endswith("/projects/platform/backend"):
+            return httpx.Response(200, json=_project())
+        name = request.url.path.rsplit("/", maxsplit=1)[-1]
+        if name == branch:
+            return httpx.Response(status, json=_branch(name, protected=protected))
+        return httpx.Response(200, json=_branch(name))
+
+    with _client(handler) as client, pytest.raises(error_type):
+        _adapter(client).get_project_delivery_profile(_profile())
+
+    expected_last = f"/api/v4/projects/platform/backend/repository/branches/{branch}"
+    assert calls[-1] == expected_last
+
+
+def test_project_profile_rejects_numeric_project_identity_mismatch() -> None:
+    repository = _profile().model_copy(update={"project_id": "101"})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/projects/101"):
+            return httpx.Response(200, json={**_project(), "id": 202})
+        raise AssertionError("branch proof must not run for a mismatched project identity")
+
+    with _client(handler) as client, pytest.raises(GitLabProjectPolicyUnsupported):
+        _adapter(client).get_project_delivery_profile(repository)
 
 
 def test_write_timeout_is_unknown_and_never_leaks_credentials() -> None:

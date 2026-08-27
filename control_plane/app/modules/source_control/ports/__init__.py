@@ -34,6 +34,7 @@ from control_plane.app.modules.source_control.ports.integration_repository impor
 from control_plane.app.modules.source_control.ports.merge_requests import (
     GitLabMergeRequestBlocked,
     GitLabMergeRequestHeadChanged,
+    GitLabMergeRequestLocator,
     GitLabMergeRequestNotFound,
     GitLabMergeRequestPort,
     GitLabMergeRequestSnapshot,
@@ -68,6 +69,7 @@ __all__ = [
     "GitLabError",
     "GitLabMergeRequestBlocked",
     "GitLabMergeRequestHeadChanged",
+    "GitLabMergeRequestLocator",
     "GitLabMergeRequestNotFound",
     "GitLabMergeRequestPort",
     "GitLabMergeRequestSnapshot",
