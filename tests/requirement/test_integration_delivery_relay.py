@@ -570,6 +570,188 @@ def test_external_merge_drift_enters_blocked_without_provider_details(
     assert result.work_item.integration_merge_request_binding_id == BINDING_ID
 
 
+def test_mr_closed_from_mr_pending_installs_first_binding_once(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    requested = _requested_mr(isolated_requirement_database, key_suffix="create-closed")
+    dependencies = _gate_dependencies()
+    with isolated_requirement_database.runtime.begin() as db:
+        closed = record_integration_delivery_blocked(
+            db,
+            work_item_id=requested.work_item.id,
+            binding_id=BINDING_ID,
+            reason_code=IntegrationDeliveryBlockedReason.MR_CLOSED,
+            expected_revision=requested.work_item.revision,
+            actor=SYSTEM_ACTOR,
+            idempotency_key="effect:create:closed",
+            dependencies=dependencies,
+        )
+    with isolated_requirement_database.runtime.begin() as db:
+        replay = record_integration_delivery_blocked(
+            db,
+            work_item_id=requested.work_item.id,
+            binding_id=BINDING_ID,
+            reason_code=IntegrationDeliveryBlockedReason.MR_CLOSED,
+            expected_revision=requested.work_item.revision,
+            actor=SYSTEM_ACTOR,
+            idempotency_key="effect:create:closed",
+            dependencies=dependencies,
+        )
+
+    assert replay == closed
+    assert closed.work_item.revision == requested.work_item.revision + 1
+    assert closed.work_item.state is WorkItemState.IN_PROGRESS
+    assert closed.work_item.integration_delivery_state is IntegrationDeliveryState.BLOCKED
+    assert (
+        closed.work_item.integration_blocked_reason_code
+        is IntegrationDeliveryBlockedReason.MR_CLOSED
+    )
+    assert closed.work_item.integration_merge_request_binding_id == BINDING_ID
+    with pytest.raises(WorkItemDeliveryConflict):
+        with isolated_requirement_database.runtime.begin() as db:
+            record_integration_delivery_blocked(
+                db,
+                work_item_id=requested.work_item.id,
+                binding_id=OTHER_BINDING_ID,
+                reason_code=IntegrationDeliveryBlockedReason.MR_CLOSED,
+                expected_revision=closed.work_item.revision,
+                actor=SYSTEM_ACTOR,
+                idempotency_key="effect:create:closed:other-binding",
+                dependencies=dependencies,
+            )
+
+
+def test_external_merge_drift_from_mr_pending_installs_first_binding_once(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    requested = _requested_mr(isolated_requirement_database, key_suffix="create-merged")
+    dependencies = _gate_dependencies()
+    with isolated_requirement_database.runtime.begin() as db:
+        drift = record_external_merge_drift(
+            db,
+            work_item_id=requested.work_item.id,
+            binding_id=BINDING_ID,
+            expected_revision=requested.work_item.revision,
+            actor=SYSTEM_ACTOR,
+            idempotency_key="effect:create:external-drift",
+            dependencies=dependencies,
+        )
+    with isolated_requirement_database.runtime.begin() as db:
+        replay = record_external_merge_drift(
+            db,
+            work_item_id=requested.work_item.id,
+            binding_id=BINDING_ID,
+            expected_revision=requested.work_item.revision,
+            actor=SYSTEM_ACTOR,
+            idempotency_key="effect:create:external-drift",
+            dependencies=dependencies,
+        )
+
+    assert replay == drift
+    assert drift.work_item.revision == requested.work_item.revision + 1
+    assert drift.work_item.state is WorkItemState.VERIFYING
+    assert drift.work_item.integration_delivery_state is IntegrationDeliveryState.BLOCKED
+    assert (
+        drift.work_item.integration_blocked_reason_code
+        is IntegrationDeliveryBlockedReason.EXTERNAL_MERGE_DRIFT
+    )
+    assert drift.work_item.integration_merge_request_binding_id == BINDING_ID
+    with pytest.raises(WorkItemDeliveryConflict):
+        with isolated_requirement_database.runtime.begin() as db:
+            record_external_merge_drift(
+                db,
+                work_item_id=requested.work_item.id,
+                binding_id=OTHER_BINDING_ID,
+                expected_revision=drift.work_item.revision,
+                actor=SYSTEM_ACTOR,
+                idempotency_key="effect:create:external-drift:other-binding",
+                dependencies=dependencies,
+            )
+
+
+def test_first_terminal_binding_rejects_non_mr_pending_delivery(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    requested = _requested_mr(isolated_requirement_database, key_suffix="terminal-not-pending")
+    dependencies = _gate_dependencies()
+    with isolated_requirement_database.runtime.begin() as db:
+        pending = record_integration_reconciliation_pending(
+            db,
+            work_item_id=requested.work_item.id,
+            binding_id=None,
+            expected_revision=requested.work_item.revision,
+            actor=SYSTEM_ACTOR,
+            idempotency_key="effect:create:reconciliation-pending",
+            dependencies=dependencies,
+        )
+
+    with pytest.raises(WorkItemDeliveryConflict):
+        with isolated_requirement_database.runtime.begin() as db:
+            record_integration_delivery_blocked(
+                db,
+                work_item_id=requested.work_item.id,
+                binding_id=BINDING_ID,
+                reason_code=IntegrationDeliveryBlockedReason.MR_CLOSED,
+                expected_revision=pending.work_item.revision,
+                actor=SYSTEM_ACTOR,
+                idempotency_key="effect:create:late-closed",
+                dependencies=dependencies,
+            )
+    with pytest.raises(WorkItemDeliveryConflict):
+        with isolated_requirement_database.runtime.begin() as db:
+            record_external_merge_drift(
+                db,
+                work_item_id=requested.work_item.id,
+                binding_id=BINDING_ID,
+                expected_revision=pending.work_item.revision,
+                actor=SYSTEM_ACTOR,
+                idempotency_key="effect:create:late-external-drift",
+                dependencies=dependencies,
+            )
+
+
+def test_first_terminal_binding_rejects_old_revision_and_other_work_item(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    first = _requested_mr(isolated_requirement_database, key_suffix="terminal-first")
+    second = _requested_mr(isolated_requirement_database, key_suffix="terminal-second")
+    dependencies = _gate_dependencies()
+    with pytest.raises(StaleWorkItemRevision):
+        with isolated_requirement_database.runtime.begin() as db:
+            record_external_merge_drift(
+                db,
+                work_item_id=first.work_item.id,
+                binding_id=BINDING_ID,
+                expected_revision=first.work_item.revision - 1,
+                actor=SYSTEM_ACTOR,
+                idempotency_key="effect:create:terminal-stale",
+                dependencies=dependencies,
+            )
+    with isolated_requirement_database.runtime.begin() as db:
+        record_integration_delivery_blocked(
+            db,
+            work_item_id=first.work_item.id,
+            binding_id=BINDING_ID,
+            reason_code=IntegrationDeliveryBlockedReason.MR_CLOSED,
+            expected_revision=first.work_item.revision,
+            actor=SYSTEM_ACTOR,
+            idempotency_key="effect:create:terminal-work-item",
+            dependencies=dependencies,
+        )
+    with pytest.raises(IdempotencyConflict):
+        with isolated_requirement_database.runtime.begin() as db:
+            record_integration_delivery_blocked(
+                db,
+                work_item_id=second.work_item.id,
+                binding_id=BINDING_ID,
+                reason_code=IntegrationDeliveryBlockedReason.MR_CLOSED,
+                expected_revision=second.work_item.revision,
+                actor=SYSTEM_ACTOR,
+                idempotency_key="effect:create:terminal-work-item",
+                dependencies=dependencies,
+            )
+
+
 def test_callback_rejects_binding_mismatch_without_overwriting_projection(
     isolated_requirement_database: IsolatedRequirementDatabase,
 ) -> None:

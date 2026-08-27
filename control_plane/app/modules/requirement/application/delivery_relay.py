@@ -584,6 +584,13 @@ def _record_delivery_problem(
             if work_item["integration_merge_request_binding_id"] is None
             else str(work_item["integration_merge_request_binding_id"])
         )
+        first_closed_binding = (
+            current is IntegrationDeliveryState.MR_PENDING
+            and current_binding is None
+            and stable_binding is not None
+            and delivery_state is IntegrationDeliveryState.BLOCKED
+            and reason_code is IntegrationDeliveryBlockedReason.MR_CLOSED
+        )
         if (
             current
             not in {
@@ -594,11 +601,7 @@ def _record_delivery_problem(
                 IntegrationDeliveryState.RECONCILIATION_PENDING,
             }
             or (current_binding is not None and stable_binding != current_binding)
-            or (
-                current_binding is None
-                and stable_binding is not None
-                and current is IntegrationDeliveryState.MR_PENDING
-            )
+            or (current_binding is None and stable_binding is not None and not first_closed_binding)
         ):
             raise WorkItemDeliveryConflict("WorkItem cannot accept this delivery callback")
         return _update_projection(
@@ -705,17 +708,27 @@ def _record_bound_terminal(
             if work_item["integration_merge_request_binding_id"] is None
             else str(work_item["integration_merge_request_binding_id"])
         )
-        if (
-            stable_binding is None
-            or stable_binding != current_binding
-            or WorkItemState(work_item["state"]) is not WorkItemState.VERIFYING
-            or IntegrationDeliveryState(work_item["integration_delivery_state"])
-            not in {
+        current_state = WorkItemState(work_item["state"])
+        current_delivery = IntegrationDeliveryState(work_item["integration_delivery_state"])
+        first_external_drift_binding = (
+            operation == "external_merge_drift"
+            and stable_binding is not None
+            and current_binding is None
+            and current_state is WorkItemState.IN_PROGRESS
+            and current_delivery is IntegrationDeliveryState.MR_PENDING
+        )
+        existing_bound_terminal = (
+            stable_binding is not None
+            and stable_binding == current_binding
+            and current_state is WorkItemState.VERIFYING
+            and current_delivery
+            in {
                 IntegrationDeliveryState.MERGE_PENDING,
                 IntegrationDeliveryState.BLOCKED,
                 IntegrationDeliveryState.RECONCILIATION_PENDING,
             }
-        ):
+        )
+        if not first_external_drift_binding and not existing_bound_terminal:
             raise WorkItemDeliveryConflict("WorkItem cannot accept this terminal callback")
         drift = operation == "external_merge_drift"
         return _update_projection(
