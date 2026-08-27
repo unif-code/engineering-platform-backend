@@ -32,6 +32,7 @@ from control_plane.app.modules.source_control.domain import (
     SourceControlEffectDto,
     merge_effect_subject,
 )
+from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
 from control_plane.app.modules.source_control.ports import (
     GitLabRepositoryProfile,
     RequirementBindingContext,
@@ -50,7 +51,7 @@ class _MergeAdmission:
     branch_binding_id: str
     binding: MergeRequestBindingDto
     latest_observation: MergeRequestObservationDto
-    blocked_reason: str | None
+    blocked_reason: SourceControlReason | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,16 +171,16 @@ def _read_merge_admission(
         or binding_context.required_capabilities != context.required_capabilities
     ):
         raise SourceControlDependencyUnavailable("Integration merge context is invalid")
-    blocked_reason: str | None = None
+    blocked_reason: SourceControlReason | None = None
     if (
         context.human_owner_id != inbox["actor_id"]
         or binding_context.assignment_state != "ASSIGNED"
         or binding_context.human_owner_id != context.human_owner_id
         or binding_context.human_owner_id != inbox["actor_id"]
     ):
-        blocked_reason = "OWNER_MISMATCH"
+        blocked_reason = SourceControlReason.OWNER_MISMATCH
     elif context.repository_state != "BOUND":
-        blocked_reason = "REPOSITORY_NOT_AUTHORIZED"
+        blocked_reason = SourceControlReason.REPOSITORY_NOT_AUTHORIZED
     required_capabilities = tuple(
         dict.fromkeys((*binding_context.required_capabilities, _MERGE_CAPABILITY))
     )
@@ -187,7 +188,7 @@ def _read_merge_admission(
         update={"required_capabilities": required_capabilities}
     )
     if blocked_reason is None and not eligibility.evaluate(merge_context).eligible:
-        blocked_reason = "MERGE_ACTOR_INELIGIBLE"
+        blocked_reason = SourceControlReason.MERGE_ACTOR_INELIGIBLE
     binding_id = context.integration_merge_request_binding_id
     if binding_id is None:
         raise SourceControlDependencyUnavailable("Integration merge binding is unavailable")

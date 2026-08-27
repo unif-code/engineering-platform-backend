@@ -11,6 +11,7 @@ from control_plane.app.modules.source_control.domain import (
     MergeRequestBindingDto,
     SourceControlDependencyUnavailable,
 )
+from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
 from control_plane.app.modules.source_control.ports import (
     BranchSnapshot,
     GitLabAccessDenied,
@@ -50,7 +51,7 @@ class _CompletedMergeProof:
 
 @dataclass(frozen=True, slots=True)
 class _MergePreflightBlocked(Exception):
-    reason_code: str
+    reason_code: SourceControlReason
 
 
 class _MergePreflightTransient(Exception):
@@ -59,7 +60,7 @@ class _MergePreflightTransient(Exception):
 
 @dataclass(frozen=True, slots=True)
 class _MergeExecutionBlocked(Exception):
-    reason_code: str
+    reason_code: SourceControlReason
     readback: GitLabMergeRequestSnapshot | None = None
 
 
@@ -87,13 +88,13 @@ def _read_merge_provider_proof(
     try:
         project = gitlab.get_project_delivery_profile(profile)
     except GitLabProjectPolicyUnsupported:
-        raise _MergePreflightBlocked("PROJECT_PROFILE_UNSUPPORTED") from None
+        raise _MergePreflightBlocked(SourceControlReason.PROJECT_PROFILE_UNSUPPORTED) from None
     except GitLabTargetBranchNotProtected:
-        raise _MergePreflightBlocked("TARGET_BRANCH_NOT_PROTECTED") from None
+        raise _MergePreflightBlocked(SourceControlReason.TARGET_BRANCH_NOT_PROTECTED) from None
     except GitLabBranchNotFound:
-        raise _MergePreflightBlocked("TARGET_BRANCH_NOT_FOUND") from None
+        raise _MergePreflightBlocked(SourceControlReason.TARGET_BRANCH_NOT_FOUND) from None
     except (GitLabAccessDenied, GitLabProjectNotFound):
-        raise _MergePreflightBlocked("REPOSITORY_NOT_AUTHORIZED") from None
+        raise _MergePreflightBlocked(SourceControlReason.REPOSITORY_NOT_AUTHORIZED) from None
     except (GitLabProviderUnavailable, GitLabResultUnknown):
         raise _MergePreflightTransient from None
     if (
@@ -104,16 +105,16 @@ def _read_merge_provider_proof(
         or project.default_branch != profile.default_branch
         or project.merge_method != "merge"
     ):
-        raise _MergePreflightBlocked("PROJECT_PROFILE_UNSUPPORTED")
+        raise _MergePreflightBlocked(SourceControlReason.PROJECT_PROFILE_UNSUPPORTED)
     try:
         merge_request = gitlab.get_merge_request(
             profile,
             iid=admission.binding.merge_request_iid,
         )
     except GitLabMergeRequestNotFound:
-        raise _MergePreflightBlocked("MR_CLOSED") from None
+        raise _MergePreflightBlocked(SourceControlReason.MR_CLOSED) from None
     except (GitLabAccessDenied, GitLabProjectNotFound):
-        raise _MergePreflightBlocked("REPOSITORY_NOT_AUTHORIZED") from None
+        raise _MergePreflightBlocked(SourceControlReason.REPOSITORY_NOT_AUTHORIZED) from None
     except (GitLabProviderUnavailable, GitLabResultUnknown):
         raise _MergePreflightTransient from None
     if (
@@ -122,7 +123,7 @@ def _read_merge_provider_proof(
         or merge_request.source_branch != admission.binding.source_branch
         or merge_request.target_branch != _TARGET_BRANCH
     ):
-        raise _MergePreflightBlocked("MR_CONFLICT")
+        raise _MergePreflightBlocked(SourceControlReason.MR_CONFLICT)
     if merge_request.state == "merged" and (
         merge_request.merge_commit_sha is None or merge_request.merged_at is None
     ):
@@ -134,17 +135,17 @@ def _read_merge_provider_proof(
         )
     except GitLabBranchNotFound:
         if merge_request.state not in {"merged", "closed"}:
-            raise _MergePreflightBlocked("BRANCH_BINDING_MISSING") from None
+            raise _MergePreflightBlocked(SourceControlReason.BRANCH_BINDING_MISSING) from None
         source = None
     except (GitLabAccessDenied, GitLabProjectNotFound):
-        raise _MergePreflightBlocked("REPOSITORY_NOT_AUTHORIZED") from None
+        raise _MergePreflightBlocked(SourceControlReason.REPOSITORY_NOT_AUTHORIZED) from None
     except (GitLabProviderUnavailable, GitLabResultUnknown):
         raise _MergePreflightTransient from None
     if source is not None:
         if source.name != admission.binding.source_branch:
-            raise _MergePreflightBlocked("BRANCH_BINDING_MISSING")
+            raise _MergePreflightBlocked(SourceControlReason.BRANCH_BINDING_MISSING)
         if merge_request.head_sha != source.commit_sha:
-            raise _MergePreflightBlocked("HEAD_SHA_CHANGED")
+            raise _MergePreflightBlocked(SourceControlReason.HEAD_SHA_CHANGED)
     return _MergeProviderProof(
         project=project,
         source=source,
@@ -152,22 +153,22 @@ def _read_merge_provider_proof(
     )
 
 
-def _provider_block_reason(proof: _MergeProviderProof) -> str | None:
+def _provider_block_reason(proof: _MergeProviderProof) -> SourceControlReason | None:
     merge_request = proof.merge_request
     if merge_request.state == "merged":
-        return "EXTERNAL_MERGE_DRIFT"
+        return SourceControlReason.EXTERNAL_MERGE_DRIFT
     if merge_request.state == "closed":
-        return "MR_CLOSED"
+        return SourceControlReason.MR_CLOSED
     if merge_request.state == "locked":
-        return "MR_CHECKS_BLOCKED"
+        return SourceControlReason.MR_CHECKS_BLOCKED
     if merge_request.has_conflicts:
-        return "MERGE_CONFLICT"
+        return SourceControlReason.MERGE_CONFLICT
     if (
         merge_request.detailed_merge_status != "mergeable"
         or not merge_request.blocking_discussions_resolved
         or merge_request.head_pipeline_status != "success"
     ):
-        return "MR_CHECKS_BLOCKED"
+        return SourceControlReason.MR_CHECKS_BLOCKED
     return None
 
 
@@ -188,13 +189,13 @@ def _merge_exact_head(
             expected_head_sha=requested_head_sha,
         )
     except GitLabMergeRequestHeadChanged:
-        raise _MergeExecutionBlocked("HEAD_SHA_CHANGED") from None
+        raise _MergeExecutionBlocked(SourceControlReason.HEAD_SHA_CHANGED) from None
     except GitLabMergeRequestBlocked:
-        raise _MergeExecutionBlocked("MERGE_CONFLICT") from None
+        raise _MergeExecutionBlocked(SourceControlReason.MERGE_CONFLICT) from None
     except (GitLabAccessDenied, GitLabProjectNotFound):
-        raise _MergeExecutionBlocked("REPOSITORY_NOT_AUTHORIZED") from None
+        raise _MergeExecutionBlocked(SourceControlReason.REPOSITORY_NOT_AUTHORIZED) from None
     except GitLabMergeRequestNotFound:
-        raise _MergeExecutionBlocked("MR_CLOSED") from None
+        raise _MergeExecutionBlocked(SourceControlReason.MR_CLOSED) from None
     except (GitLabResultUnknown, GitLabProviderUnavailable):
         raise _MergeExecutionUnknown from None
     try:
@@ -222,9 +223,9 @@ def _merge_exact_head(
     )
     if not merged_coordinates_valid:
         if readback.head_sha != requested_head_sha:
-            raise _MergeExecutionBlocked("HEAD_SHA_CHANGED")
+            raise _MergeExecutionBlocked(SourceControlReason.HEAD_SHA_CHANGED)
         if readback.state == "closed":
-            raise _MergeExecutionBlocked("MR_CLOSED")
+            raise _MergeExecutionBlocked(SourceControlReason.MR_CLOSED)
         raise _MergeExecutionUnknown
     try:
         source = gitlab.get_branch(
@@ -233,7 +234,7 @@ def _merge_exact_head(
         )
     except GitLabBranchNotFound:
         raise _MergeExecutionBlocked(
-            "SOURCE_BRANCH_MISSING_AFTER_INTEGRATION",
+            SourceControlReason.SOURCE_BRANCH_MISSING_AFTER_INTEGRATION,
             readback=readback,
         ) from None
     except (
@@ -244,7 +245,7 @@ def _merge_exact_head(
     ):
         raise _MergeExecutionUnknown from None
     if source.name != admission.binding.source_branch or source.commit_sha != requested_head_sha:
-        raise _MergeExecutionBlocked("HEAD_SHA_CHANGED", readback=readback)
+        raise _MergeExecutionBlocked(SourceControlReason.HEAD_SHA_CHANGED, readback=readback)
     return _CompletedMergeProof(merge_request=readback, source=source)
 
 

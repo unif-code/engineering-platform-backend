@@ -96,7 +96,7 @@ def reconcile_merge_effect(
     except _MergePreflightBlocked as blocked:
         return _block_without_fact(
             local,
-            SourceControlReason(blocked.reason_code),
+            blocked.reason_code,
             dependencies=dependencies,
         )
     requested_head = local.payload.requested_head_sha
@@ -144,7 +144,7 @@ def reconcile_merge_effect(
             local,
             snapshot=proof.merge_request,
             state=EffectState.BLOCKED,
-            reason=SourceControlReason(stable_reason),
+            reason=stable_reason,
             dependencies=dependencies,
         )
     renewed = renew_reconciliation_lease(effect, dependencies=dependencies)
@@ -161,7 +161,7 @@ def reconcile_merge_effect(
     except _MergeExecutionUnknown:
         return return_reconciliation_unknown(local.effect, dependencies=dependencies)
     except _MergeExecutionBlocked as blocked:
-        reason = SourceControlReason(blocked.reason_code)
+        reason = blocked.reason_code
         if blocked.readback is not None:
             return _complete_fact(
                 local,

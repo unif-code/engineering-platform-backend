@@ -1,5 +1,6 @@
 from datetime import timedelta
 
+from control_plane.app.modules.source_control.application._reasons import effect_reason
 from control_plane.app.modules.source_control.application.audit import (
     append_lifecycle_audit,
 )
@@ -22,6 +23,7 @@ from control_plane.app.modules.source_control.domain import (
     SourceControlEffectDto,
     branch_effect_coordinates,
 )
+from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
 from control_plane.app.modules.source_control.ports import (
     BindingBlockedResult,
     BindingReadyResult,
@@ -35,18 +37,18 @@ from control_plane.app.modules.source_control.ports import (
 )
 
 
-def _safe_blocked_reason(internal_reason: str | None) -> str:
+def _safe_blocked_reason(internal_reason: SourceControlReason) -> SourceControlReason:
     if internal_reason in {
-        "ACCESS_DENIED",
-        "BINDING_CONFLICT",
-        "OWNER_UNASSIGNED",
-        "OWNER_INELIGIBLE",
-        "REPOSITORY_NOT_AUTHORIZED",
+        SourceControlReason.ACCESS_DENIED,
+        SourceControlReason.BINDING_CONFLICT,
+        SourceControlReason.OWNER_UNASSIGNED,
+        SourceControlReason.OWNER_INELIGIBLE,
+        SourceControlReason.REPOSITORY_NOT_AUTHORIZED,
     }:
         return internal_reason
-    if internal_reason == "REPOSITORY_REMOVED":
-        return "REPOSITORY_NOT_AUTHORIZED"
-    return "CONNECTOR_UNAVAILABLE"
+    if internal_reason is SourceControlReason.REPOSITORY_REMOVED:
+        return SourceControlReason.REPOSITORY_NOT_AUTHORIZED
+    return SourceControlReason.CONNECTOR_UNAVAILABLE
 
 
 def _deliver_terminal_callback(
@@ -77,15 +79,16 @@ def _deliver_terminal_callback(
                 )
             )
         elif effect.state is EffectState.BLOCKED:
+            reason = effect_reason(effect)
+            if reason is None:
+                raise RequirementCallbackUnavailable("Blocked effect reason is unavailable")
             requirement.record_blocked(
                 BindingBlockedResult(
                     work_item_id=effect.work_item_id,
                     repository_id=effect.repository_id,
-                    reason_code=_safe_blocked_reason(effect.last_error_code),
+                    reason_code=_safe_blocked_reason(reason),
                     expected_revision=context.work_item_revision,
-                    idempotency_key=(
-                        f"source-control:binding-blocked:{effect.id}:{effect.last_error_code}"
-                    ),
+                    idempotency_key=(f"source-control:binding-blocked:{effect.id}:{reason.value}"),
                 )
             )
         else:
@@ -175,7 +178,7 @@ def _complete_success(
 def _complete_block(
     effect: SourceControlEffectDto,
     *,
-    reason_code: str,
+    reason_code: SourceControlReason,
     dependencies: SourceControlDependencies,
 ) -> tuple[SourceControlEffectDto, bool]:
     now = dependencies.clock.now()
@@ -187,7 +190,7 @@ def _complete_block(
             expected_attempts=effect.attempts,
             values={
                 "state": EffectState.BLOCKED.value,
-                "last_error_code": reason_code,
+                "last_error_code": reason_code.value,
                 "next_reconcile_at": None,
                 "requirement_callback_state": RequirementCallbackState.PENDING.value,
                 "completed_at": now,
@@ -203,7 +206,7 @@ def _complete_block(
             target_id=effect.id,
             dependencies=dependencies,
             result="DENIED",
-            reason=reason_code,
+            reason=reason_code.value,
             correlation_id=f"source-control:effect:{effect.id}",
         )
     return _effect_dto(row), True
@@ -226,7 +229,7 @@ def _return_unknown(
             expected_attempts=effect.attempts,
             values={
                 "state": EffectState.UNKNOWN.value,
-                "last_error_code": "EXTERNAL_RESULT_UNKNOWN",
+                "last_error_code": SourceControlReason.EXTERNAL_RESULT_UNKNOWN.value,
                 "next_reconcile_at": policy.next_reconcile_at(
                     now=now,
                     attempts=effect.attempts,
@@ -243,7 +246,7 @@ def _return_unknown(
             target_id=effect.id,
             dependencies=dependencies,
             result="UNKNOWN",
-            reason="EXTERNAL_RESULT_UNKNOWN",
+            reason=SourceControlReason.EXTERNAL_RESULT_UNKNOWN.value,
             correlation_id=f"source-control:effect:{effect.id}",
         )
     return _effect_dto(row)
@@ -264,7 +267,7 @@ def _reconcile_effect(
     if context.assignment_state != "ASSIGNED" or context.human_owner_id is None:
         blocked, completed = _complete_block(
             effect,
-            reason_code="OWNER_UNASSIGNED",
+            reason_code=SourceControlReason.OWNER_UNASSIGNED,
             dependencies=dependencies,
         )
         if not completed:
@@ -279,7 +282,7 @@ def _reconcile_effect(
     if not owner.eligible:
         blocked, completed = _complete_block(
             effect,
-            reason_code=owner.reason_code or "OWNER_INELIGIBLE",
+            reason_code=owner.reason_code or SourceControlReason.OWNER_INELIGIBLE,
             dependencies=dependencies,
         )
         if not completed:
@@ -302,7 +305,7 @@ def _reconcile_effect(
     ):
         blocked, completed = _complete_block(
             effect,
-            reason_code="REPOSITORY_REMOVED",
+            reason_code=SourceControlReason.REPOSITORY_REMOVED,
             dependencies=dependencies,
         )
         if not completed:
@@ -330,7 +333,7 @@ def _reconcile_effect(
         except GitLabAccessDenied:
             blocked, completed = _complete_block(
                 effect,
-                reason_code="ACCESS_DENIED",
+                reason_code=SourceControlReason.ACCESS_DENIED,
                 dependencies=dependencies,
             )
             if not completed:
@@ -348,7 +351,7 @@ def _reconcile_effect(
     except GitLabAccessDenied:
         blocked, completed = _complete_block(
             effect,
-            reason_code="ACCESS_DENIED",
+            reason_code=SourceControlReason.ACCESS_DENIED,
             dependencies=dependencies,
         )
         if not completed:
@@ -375,7 +378,7 @@ def _reconcile_effect(
         )
     blocked, completed = _complete_block(
         effect,
-        reason_code="BINDING_CONFLICT",
+        reason_code=SourceControlReason.BINDING_CONFLICT,
         dependencies=dependencies,
     )
     if not completed:

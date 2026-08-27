@@ -41,6 +41,7 @@ from control_plane.app.modules.source_control.application._integration_merge_sta
     _classify_current_merge_effect,
     _validated_merge_effect,
 )
+from control_plane.app.modules.source_control.application._reasons import stored_reason
 from control_plane.app.modules.source_control.application.dependencies import (
     SourceControlDependencies,
 )
@@ -52,6 +53,7 @@ from control_plane.app.modules.source_control.domain import (
 )
 from control_plane.app.modules.source_control.domain.reasons import (
     MERGE_PREFLIGHT_REASONS,
+    SourceControlReason,
 )
 
 _MERGE_PREFLIGHT_OUTCOME_REASONS = MERGE_PREFLIGHT_REASONS
@@ -77,7 +79,7 @@ def _process_integration_merge_request(
         expected_topic=_MERGE_TOPIC,
         dependencies=dependencies,
     )
-    persisted_preflight_reason = inbox["last_error_code"]
+    persisted_preflight_reason = stored_reason(inbox["last_error_code"])
     if persisted_preflight_reason in _MERGE_PREFLIGHT_OUTCOME_REASONS:
         preflight_facts = _read_stored_merge_facts(
             inbox,
@@ -91,7 +93,7 @@ def _process_integration_merge_request(
                 effect=None,
                 binding=preflight_facts.binding,
                 observation=preflight_facts.observation,
-                blocked_reason=persisted_preflight_reason,
+                blocked_reason=persisted_preflight_reason.value,
             )
         return _replay_merge_preflight_callback(
             inbox,
@@ -128,7 +130,7 @@ def _process_integration_merge_request(
             admission,
             message_id=message_id,
             inbox_attempts=claimed["attempts"],
-            reason_code="MR_CONFLICT",
+            reason_code=SourceControlReason.MR_CONFLICT,
             dependencies=dependencies,
         )
     if stored_facts.effect is not None and stored_facts.effect.state is not EffectState.PLANNED:
@@ -146,7 +148,11 @@ def _process_integration_merge_request(
                 effect=None,
                 binding=stored_facts.binding,
                 observation=stored_facts.observation,
-                blocked_reason=inbox["last_error_code"],
+                blocked_reason=(
+                    None
+                    if (reason := stored_reason(inbox["last_error_code"])) is None
+                    else reason.value
+                ),
             )
         raise RequirementCallbackUnavailable("Delivery request is unavailable")
 
@@ -196,7 +202,7 @@ def _process_integration_merge_request(
             admission,
             message_id=message_id,
             inbox_attempts=claimed["attempts"],
-            reason_code="MR_CONFLICT",
+            reason_code=SourceControlReason.MR_CONFLICT,
             dependencies=dependencies,
         )
     if existing_effect is not None:
@@ -214,17 +220,17 @@ def _process_integration_merge_request(
                 existing_effect,
                 message_id=message_id,
                 inbox_attempts=claimed["attempts"],
-                reason_code="HEAD_SHA_CHANGED",
+                reason_code=SourceControlReason.HEAD_SHA_CHANGED,
                 readback=(proof.merge_request if proof.merge_request.state == "merged" else None),
                 dependencies=dependencies,
             )
     provider_reason = _provider_block_reason(proof)
     if (
-        provider_reason == "EXTERNAL_MERGE_DRIFT"
+        provider_reason is SourceControlReason.EXTERNAL_MERGE_DRIFT
         and proof.source is None
         and existing_effect is not None
     ):
-        provider_reason = "SOURCE_BRANCH_MISSING_AFTER_INTEGRATION"
+        provider_reason = SourceControlReason.SOURCE_BRANCH_MISSING_AFTER_INTEGRATION
     if provider_reason is not None:
         if existing_effect is not None:
             return _complete_merge_effect_block(
@@ -237,14 +243,14 @@ def _process_integration_merge_request(
                     proof.merge_request
                     if provider_reason
                     in {
-                        "EXTERNAL_MERGE_DRIFT",
-                        "SOURCE_BRANCH_MISSING_AFTER_INTEGRATION",
+                        SourceControlReason.EXTERNAL_MERGE_DRIFT,
+                        SourceControlReason.SOURCE_BRANCH_MISSING_AFTER_INTEGRATION,
                     }
                     else None
                 ),
                 dependencies=dependencies,
             )
-        if provider_reason == "EXTERNAL_MERGE_DRIFT":
+        if provider_reason is SourceControlReason.EXTERNAL_MERGE_DRIFT:
             return _commit_external_merge_drift(
                 admission,
                 proof.merge_request,
@@ -279,7 +285,7 @@ def _process_integration_merge_request(
             admission,
             message_id=message_id,
             inbox_attempts=claimed["attempts"],
-            reason_code="MR_CONFLICT",
+            reason_code=SourceControlReason.MR_CONFLICT,
             dependencies=dependencies,
         )
     payload = effect.payload

@@ -32,6 +32,7 @@ from control_plane.app.modules.source_control.adapters import (
     RequirementFacadeDeliveryAdapter,
 )
 from control_plane.app.modules.source_control.domain import DeliveryRequestKind
+from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
 from control_plane.app.modules.source_control.ports import (
     ExternalMergeDriftResult,
     IntegrationDeliveryBlockedResult,
@@ -354,7 +355,7 @@ def test_requirement_delivery_adapter_calls_public_callbacks_with_stable_results
             expected_revision=expected_revision,
             idempotency_key=idempotency_key,
             binding_id=None,
-            reason_code="MR_CONFLICT",
+            reason_code=SourceControlReason.MR_CONFLICT,
         )
     )
     adapter.record_pending(

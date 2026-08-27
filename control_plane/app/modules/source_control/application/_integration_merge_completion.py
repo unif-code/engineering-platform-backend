@@ -34,6 +34,7 @@ from control_plane.app.modules.source_control.application._integration_merge_con
     _read_stored_merge_facts,
     _StoredMergeFacts,
 )
+from control_plane.app.modules.source_control.application._reasons import effect_reason
 from control_plane.app.modules.source_control.application.dependencies import (
     SourceControlDependencies,
 )
@@ -45,6 +46,7 @@ from control_plane.app.modules.source_control.domain import (
     SourceControlDependencyUnavailable,
     SourceControlEffectDto,
 )
+from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
 from control_plane.app.modules.source_control.ports import (
     ExternalMergeDriftResult,
     GitLabMergeRequestSnapshot,
@@ -87,17 +89,22 @@ def _replay_merge_effect(
                 operation=_MERGE_OPERATION,
                 dependencies=dependencies,
             )
-        elif effect.state is EffectState.BLOCKED and effect.last_error_code is not None:
+        elif effect.state is EffectState.BLOCKED:
+            reason = effect_reason(effect)
+            if reason is None:
+                raise SourceControlDependencyUnavailable(
+                    "Blocked integration merge effect reason unavailable"
+                )
             effect = _record_effect_callback(
                 callback_subject,
                 effect,
                 kind=(
                     "external_drift"
-                    if effect.last_error_code == "EXTERNAL_MERGE_DRIFT"
+                    if reason is SourceControlReason.EXTERNAL_MERGE_DRIFT
                     else "blocked"
                 ),
                 binding_id=facts.binding.id,
-                reason_code=effect.last_error_code,
+                reason_code=reason,
                 operation=_MERGE_OPERATION,
                 dependencies=dependencies,
             )
@@ -114,20 +121,21 @@ def _replay_merge_effect(
                 operation=_MERGE_OPERATION,
                 dependencies=dependencies,
             )
-    blocked_reason = (
-        None
-        if effect.state is EffectState.SUCCEEDED
-        else (
-            "RECONCILIATION_PENDING"
-            if effect.state
-            in {
-                EffectState.IN_FLIGHT,
-                EffectState.UNKNOWN,
-                EffectState.RECONCILIATION,
-            }
-            else effect.last_error_code
-        )
-    )
+    if effect.state is EffectState.SUCCEEDED:
+        blocked_reason = None
+    elif effect.state in {
+        EffectState.IN_FLIGHT,
+        EffectState.UNKNOWN,
+        EffectState.RECONCILIATION,
+    }:
+        blocked_reason = SourceControlReason.RECONCILIATION_PENDING.value
+    else:
+        final_reason = effect_reason(effect)
+        if final_reason is None:
+            raise SourceControlDependencyUnavailable(
+                "Blocked integration merge effect reason unavailable"
+            )
+        blocked_reason = final_reason.value
     return ProcessIntegrationRequestResult(
         effect=effect,
         binding=facts.binding,
@@ -141,7 +149,7 @@ def _complete_merge_preflight_block(
     *,
     message_id: str,
     inbox_attempts: int,
-    reason_code: str,
+    reason_code: SourceControlReason,
     dependencies: SourceControlDependencies,
 ) -> ProcessIntegrationRequestResult:
     return _complete_preflight_block(
@@ -151,7 +159,9 @@ def _complete_merge_preflight_block(
         reason_code=reason_code,
         binding=admission.binding,
         observation=admission.latest_observation,
-        idempotency_key=(f"source-control:integration-merge-blocked:{message_id}:{reason_code}"),
+        idempotency_key=(
+            f"source-control:integration-merge-blocked:{message_id}:{reason_code.value}"
+        ),
         dependencies=dependencies,
     )
 
@@ -162,7 +172,7 @@ def _replay_merge_preflight_callback(
     *,
     message_id: str,
     inbox_attempts: int,
-    reason_code: str,
+    reason_code: SourceControlReason,
     dependencies: SourceControlDependencies,
 ) -> ProcessIntegrationRequestResult:
     _finish_preflight_callback(
@@ -174,11 +184,15 @@ def _replay_merge_preflight_callback(
         inbox_attempts=inbox_attempts,
         reason_code=reason_code,
         binding_id=facts.binding.id,
-        kind=("external_drift" if reason_code == "EXTERNAL_MERGE_DRIFT" else "blocked"),
+        kind=(
+            "external_drift"
+            if reason_code is SourceControlReason.EXTERNAL_MERGE_DRIFT
+            else "blocked"
+        ),
         idempotency_key=(
             f"source-control:external-merge-drift:{message_id}"
-            if reason_code == "EXTERNAL_MERGE_DRIFT"
-            else f"source-control:integration-merge-blocked:{message_id}:{reason_code}"
+            if reason_code is SourceControlReason.EXTERNAL_MERGE_DRIFT
+            else (f"source-control:integration-merge-blocked:{message_id}:{reason_code.value}")
         ),
         dependencies=dependencies,
     )
@@ -186,7 +200,7 @@ def _replay_merge_preflight_callback(
         effect=None,
         binding=facts.binding,
         observation=facts.observation,
-        blocked_reason=reason_code,
+        blocked_reason=reason_code.value,
     )
 
 
@@ -216,7 +230,7 @@ def _complete_merge_effect_block(
     *,
     message_id: str,
     inbox_attempts: int,
-    reason_code: str,
+    reason_code: SourceControlReason,
     readback: GitLabMergeRequestSnapshot | None = None,
     dependencies: SourceControlDependencies,
 ) -> ProcessIntegrationRequestResult:
@@ -264,7 +278,7 @@ def _commit_external_merge_drift(
         marked = repository.record_preflight_outcome(
             message_id,
             expected_attempts=inbox_attempts,
-            reason_code="EXTERNAL_MERGE_DRIFT",
+            reason_code=SourceControlReason.EXTERNAL_MERGE_DRIFT.value,
             now=now,
         )
         if observation_row is None or marked is None:
@@ -283,7 +297,7 @@ def _commit_external_merge_drift(
             locked is None
             or locked["state"] != "PROCESSING"
             or locked["attempts"] != inbox_attempts
-            or locked["last_error_code"] != "EXTERNAL_MERGE_DRIFT"
+            or locked["last_error_code"] != SourceControlReason.EXTERNAL_MERGE_DRIFT.value
         ):
             raise RequirementCallbackUnavailable("Integration merge drift lease was lost")
         try:
@@ -300,7 +314,7 @@ def _commit_external_merge_drift(
                 effect=None,
                 binding=admission.binding,
                 observation=_observation_dto(observation_row),
-                blocked_reason="EXTERNAL_MERGE_DRIFT",
+                blocked_reason=SourceControlReason.EXTERNAL_MERGE_DRIFT.value,
             )
         completed = repository.complete_delivery_request(
             message_id,
@@ -313,7 +327,7 @@ def _commit_external_merge_drift(
         effect=None,
         binding=admission.binding,
         observation=_observation_dto(observation_row),
-        blocked_reason="EXTERNAL_MERGE_DRIFT",
+        blocked_reason=SourceControlReason.EXTERNAL_MERGE_DRIFT.value,
     )
 
 
@@ -345,7 +359,7 @@ def _commit_proven_merge_conflict(
         marked = repository.record_preflight_outcome(
             message_id,
             expected_attempts=inbox_attempts,
-            reason_code="MR_CONFLICT",
+            reason_code=SourceControlReason.MR_CONFLICT.value,
             now=now,
         )
         if observation_row is None or marked is None:
@@ -361,7 +375,7 @@ def _commit_proven_merge_conflict(
         admission.context,
         message_id=message_id,
         inbox_attempts=inbox_attempts,
-        reason_code="MR_CONFLICT",
+        reason_code=SourceControlReason.MR_CONFLICT,
         binding_id=admission.binding.id,
         idempotency_key=f"source-control:integration-merge-blocked:{message_id}:MR_CONFLICT",
         dependencies=dependencies,
@@ -370,7 +384,7 @@ def _commit_proven_merge_conflict(
         effect=None,
         binding=admission.binding,
         observation=_observation_dto(observation_row),
-        blocked_reason="MR_CONFLICT",
+        blocked_reason=SourceControlReason.MR_CONFLICT.value,
     )
 
 

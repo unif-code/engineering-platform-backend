@@ -4,6 +4,7 @@ from typing import Protocol
 from pydantic import BaseModel, ConfigDict
 
 from control_plane.app.modules.source_control.domain import BindingRequestEnvelope
+from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
 
 
 class RequirementBindingContext(BaseModel):
@@ -25,7 +26,7 @@ class BindingEligibility(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     eligible: bool
-    reason_code: str | None = None
+    reason_code: SourceControlReason | None = None
 
 
 class BindingReadyResult(BaseModel):
@@ -44,7 +45,7 @@ class BindingBlockedResult(BaseModel):
 
     work_item_id: str
     repository_id: str
-    reason_code: str
+    reason_code: SourceControlReason
     expected_revision: int
     idempotency_key: str
 

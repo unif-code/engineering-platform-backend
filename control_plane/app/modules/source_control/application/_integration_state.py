@@ -22,9 +22,6 @@ from control_plane.app.modules.source_control.application._integration_common im
     EffectCollision as _EffectCollision,
 )
 from control_plane.app.modules.source_control.application._integration_common import (
-    PreflightReason as _PreflightReason,
-)
-from control_plane.app.modules.source_control.application._integration_common import (
     append_audit as _append_audit,
 )
 from control_plane.app.modules.source_control.application._integration_common import (
@@ -58,6 +55,7 @@ from control_plane.app.modules.source_control.domain import (
     SourceControlDependencyUnavailable,
     SourceControlEffectDto,
 )
+from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
 from control_plane.app.modules.source_control.ports import GitLabMergeRequestSnapshot
 
 
@@ -66,7 +64,7 @@ def _read_admission(
     branch_row: Any,
     *,
     dependencies: SourceControlDependencies,
-) -> _Admission | _PreflightReason:
+) -> _Admission | SourceControlReason:
     requirement_delivery = dependencies.requirement_delivery
     requirement_binding = dependencies.requirement
     eligibility = dependencies.eligibility
@@ -100,14 +98,14 @@ def _read_admission(
         or binding_context.human_owner_id != context.human_owner_id
         or binding_context.human_owner_id != inbox["actor_id"]
     ):
-        return "OWNER_MISMATCH"
+        return SourceControlReason.OWNER_MISMATCH
     if context.repository_state != "BOUND":
-        return "REPOSITORY_NOT_AUTHORIZED"
+        return SourceControlReason.REPOSITORY_NOT_AUTHORIZED
     if context.base_commit_sha is None or context.task_branch is None:
-        return "BRANCH_BINDING_MISSING"
+        return SourceControlReason.BRANCH_BINDING_MISSING
     owner = eligibility.evaluate(binding_context)
     if not owner.eligible:
-        return "OWNER_INELIGIBLE"
+        return SourceControlReason.OWNER_INELIGIBLE
     with dependencies.engine.connect() as db:
         repository_row = dependencies.repository_factory(db).workspace_repository(
             context.repository_id
@@ -117,7 +115,7 @@ def _read_admission(
         or repository_row["status"] != "AUTHORIZED"
         or str(repository_row["workspace_id"]) != context.workspace_id
     ):
-        return "REPOSITORY_NOT_AUTHORIZED"
+        return SourceControlReason.REPOSITORY_NOT_AUTHORIZED
     if (
         branch_row is None
         or str(branch_row["id"]) == ""
@@ -127,7 +125,7 @@ def _read_admission(
         or branch_row["branch_name"] != context.task_branch
         or branch_row["base_commit_sha"] != context.base_commit_sha
     ):
-        return "BRANCH_BINDING_MISSING"
+        return SourceControlReason.BRANCH_BINDING_MISSING
     return _Admission(
         context=context,
         binding_context=binding_context,
@@ -265,7 +263,7 @@ def _commit_final_facts(
     *,
     creation_origin: MergeRequestCreationOrigin,
     final_state: Literal[EffectState.SUCCEEDED, EffectState.BLOCKED],
-    error_code: str | None,
+    error_code: SourceControlReason | None,
     message_id: str,
     inbox_attempts: int,
     dependencies: SourceControlDependencies,
@@ -311,7 +309,7 @@ def _commit_final_facts(
             expected_attempts=effect.attempts,
             values={
                 "state": final_state.value,
-                "last_error_code": error_code,
+                "last_error_code": None if error_code is None else error_code.value,
                 "next_reconcile_at": None,
                 "completed_at": completed_at,
                 "updated_at": completed_at,

@@ -8,6 +8,7 @@ from control_plane.app.modules.source_control import (
     EffectState,
     ReconcileDueIntegrationEffectsResult,
     RequirementCallbackUnavailable,
+    SourceControlDependencyUnavailable,
     process_integration_mr_request,
     reconcile_due_integration_effects,
 )
@@ -39,6 +40,7 @@ from tests.source_control.test_integration_mr_saga import (
 from tests.source_control.test_integration_mr_saga import (
     MESSAGE_ID,
     NOW,
+    TASK_BRANCH,
     WORK_ITEM_ID,
     _dependencies,
     _mr_snapshot,
@@ -258,6 +260,32 @@ def test_create_callback_replay_performs_no_provider_write(
     assert requirement.ready_attempts == 2
 
 
+def test_callback_replay_fails_closed_for_unknown_persisted_reason(
+    isolated_source_control_rw_engine: Engine,
+) -> None:
+    _seed_source_control(isolated_source_control_rw_engine)
+    _seed_integration_effect(
+        isolated_source_control_rw_engine,
+        state=EffectState.UNKNOWN,
+    )
+    with isolated_source_control_rw_engine.begin() as db:
+        db.exec_driver_sql(
+            "UPDATE source_control.source_control_effect "
+            "SET state='BLOCKED', last_error_code='UNRECOGNIZED_PERSISTED_REASON', "
+            "requirement_callback_state='FAILED', next_reconcile_at=NULL, "
+            "completed_at=%s, updated_at=%s",
+            (NOW, NOW),
+        )
+    dependencies, requirement, gitlab = _dependencies(isolated_source_control_rw_engine)
+
+    with pytest.raises(SourceControlDependencyUnavailable, match="reason"):
+        reconcile_due_integration_effects(limit=10, dependencies=dependencies)
+
+    assert gitlab.calls == []
+    assert requirement.blocked == []
+    assert requirement.external_drift == []
+
+
 def test_unknown_create_provider_failure_returns_to_unknown_with_backoff(
     isolated_source_control_rw_engine: Engine,
 ) -> None:
@@ -336,6 +364,73 @@ def test_unknown_create_persists_terminal_provider_fact_before_blocking(
 
 
 @pytest.mark.parametrize(
+    ("provider_state", "source_outcome", "expected_reason"),
+    [
+        ("closed", "missing", "MR_CLOSED"),
+        ("merged", "missing", "EXTERNAL_MERGE_DRIFT"),
+        ("closed", "moved", "MR_CLOSED"),
+        ("merged", "moved", "EXTERNAL_MERGE_DRIFT"),
+    ],
+)
+def test_unknown_create_terminal_fact_does_not_require_current_source_branch(
+    isolated_source_control_rw_engine: Engine,
+    provider_state: Literal["closed", "merged"],
+    source_outcome: Literal["missing", "moved"],
+    expected_reason: str,
+) -> None:
+    _seed_source_control(isolated_source_control_rw_engine)
+    _seed_integration_effect(
+        isolated_source_control_rw_engine,
+        state=EffectState.UNKNOWN,
+    )
+    with isolated_source_control_rw_engine.begin() as db:
+        db.exec_driver_sql(
+            "UPDATE source_control.source_control_effect SET next_reconcile_at=%s",
+            (NOW,),
+        )
+    dependencies, requirement, gitlab = _dependencies(isolated_source_control_rw_engine)
+    snapshot = _mr_snapshot(state=provider_state)
+    if provider_state == "merged":
+        snapshot = snapshot.model_copy(
+            update={
+                "merge_commit_sha": "d" * 40,
+                "merge_user_id": "provider-user-17",
+                "merged_at": NOW,
+            }
+        )
+    gitlab.candidates = [snapshot]
+    gitlab.readback = snapshot
+    if source_outcome == "missing":
+        gitlab.branch_errors[TASK_BRANCH] = GitLabBranchNotFound("source missing")
+    else:
+        gitlab.source_head = "e" * 40
+
+    result = reconcile_due_integration_effects(limit=10, dependencies=dependencies)
+
+    with isolated_source_control_rw_engine.connect() as db:
+        repository = SqlAlchemySourceControlIntegrationRepository(db)
+        binding = repository.merge_request_binding_by_work_item(WORK_ITEM_ID)
+        observation = db.exec_driver_sql(
+            "SELECT state, head_sha, merge_commit_sha FROM source_control.merge_request_observation"
+        ).one()
+    assert result.effects[0].state is EffectState.BLOCKED
+    assert result.effects[0].last_error_code == expected_reason
+    assert binding is not None
+    assert binding["merge_request_iid"] == 17
+    assert observation[0] == provider_state.upper()
+    assert observation[1] == snapshot.head_sha
+    assert observation[2] == snapshot.merge_commit_sha
+    assert "source_branch" not in gitlab.calls
+    assert "create_mr" not in gitlab.calls
+    if provider_state == "closed":
+        assert requirement.blocked[-1].reason_code == expected_reason
+        assert requirement.external_drift == []
+    else:
+        assert requirement.external_drift[-1].binding_id == str(binding["id"])
+        assert requirement.blocked == []
+
+
+@pytest.mark.parametrize(
     "candidate",
     [
         _mr_snapshot(source_branch="feat/other"),
@@ -392,6 +487,117 @@ def test_unknown_create_locked_snapshot_remains_unknown(
             "SELECT count(*) FROM source_control.merge_request_binding"
         ).scalar_one()
     assert binding_count == 0
+
+
+@pytest.mark.parametrize("source_outcome", ["missing", "moved"])
+def test_unknown_create_open_snapshot_requires_current_source_branch(
+    isolated_source_control_rw_engine: Engine,
+    source_outcome: Literal["missing", "moved"],
+) -> None:
+    _seed_source_control(isolated_source_control_rw_engine)
+    _seed_integration_effect(
+        isolated_source_control_rw_engine,
+        state=EffectState.UNKNOWN,
+    )
+    with isolated_source_control_rw_engine.begin() as db:
+        db.exec_driver_sql(
+            "UPDATE source_control.source_control_effect SET next_reconcile_at=%s",
+            (NOW,),
+        )
+    dependencies, requirement, gitlab = _dependencies(isolated_source_control_rw_engine)
+    opened = _mr_snapshot()
+    gitlab.candidates = [opened]
+    gitlab.readback = opened
+    if source_outcome == "missing":
+        gitlab.branch_errors[TASK_BRANCH] = GitLabBranchNotFound("source missing")
+    else:
+        gitlab.source_head = "e" * 40
+
+    result = reconcile_due_integration_effects(limit=10, dependencies=dependencies)
+
+    with isolated_source_control_rw_engine.connect() as db:
+        repository = SqlAlchemySourceControlIntegrationRepository(db)
+        binding = repository.merge_request_binding_by_work_item(WORK_ITEM_ID)
+    assert result.effects[0].state is EffectState.UNKNOWN
+    assert binding is None
+    assert gitlab.calls.count("source_branch") == 1
+    assert "create_mr" not in gitlab.calls
+    assert requirement.ready == []
+    assert requirement.blocked == []
+
+
+def test_unknown_create_incomplete_merged_snapshot_remains_unknown(
+    isolated_source_control_rw_engine: Engine,
+) -> None:
+    _seed_source_control(isolated_source_control_rw_engine)
+    _seed_integration_effect(
+        isolated_source_control_rw_engine,
+        state=EffectState.UNKNOWN,
+    )
+    with isolated_source_control_rw_engine.begin() as db:
+        db.exec_driver_sql(
+            "UPDATE source_control.source_control_effect SET next_reconcile_at=%s",
+            (NOW,),
+        )
+    dependencies, requirement, gitlab = _dependencies(isolated_source_control_rw_engine)
+    incomplete = _mr_snapshot(state="merged")
+    gitlab.candidates = [incomplete]
+    gitlab.readback = incomplete
+
+    result = reconcile_due_integration_effects(limit=10, dependencies=dependencies)
+
+    with isolated_source_control_rw_engine.connect() as db:
+        repository = SqlAlchemySourceControlIntegrationRepository(db)
+        binding = repository.merge_request_binding_by_work_item(WORK_ITEM_ID)
+    assert result.effects[0].state is EffectState.UNKNOWN
+    assert binding is None
+    assert "source_branch" not in gitlab.calls
+    assert "create_mr" not in gitlab.calls
+    assert requirement.ready == []
+    assert requirement.blocked == []
+
+
+@pytest.mark.parametrize("provider_state", ["opened", "closed"])
+def test_unknown_create_non_merged_snapshot_with_merge_facts_remains_unknown(
+    isolated_source_control_rw_engine: Engine,
+    provider_state: Literal["opened", "closed"],
+) -> None:
+    _seed_source_control(isolated_source_control_rw_engine)
+    _seed_integration_effect(
+        isolated_source_control_rw_engine,
+        state=EffectState.UNKNOWN,
+    )
+    with isolated_source_control_rw_engine.begin() as db:
+        db.exec_driver_sql(
+            "UPDATE source_control.source_control_effect SET next_reconcile_at=%s",
+            (NOW,),
+        )
+    dependencies, requirement, gitlab = _dependencies(isolated_source_control_rw_engine)
+    malformed = _mr_snapshot(state=provider_state).model_copy(
+        update={
+            "merge_commit_sha": "d" * 40,
+            "merge_user_id": "provider-user-17",
+            "merged_at": NOW,
+        }
+    )
+    gitlab.candidates = [malformed]
+    gitlab.readback = malformed
+
+    result = reconcile_due_integration_effects(limit=10, dependencies=dependencies)
+
+    with isolated_source_control_rw_engine.connect() as db:
+        repository = SqlAlchemySourceControlIntegrationRepository(db)
+        binding = repository.merge_request_binding_by_work_item(WORK_ITEM_ID)
+        observation_count = db.exec_driver_sql(
+            "SELECT count(*) FROM source_control.merge_request_observation"
+        ).scalar_one()
+    assert result.effects[0].state is EffectState.UNKNOWN
+    assert binding is None
+    assert observation_count == 0
+    assert "source_branch" not in gitlab.calls
+    assert "create_mr" not in gitlab.calls
+    assert requirement.ready == []
+    assert requirement.blocked == []
 
 
 def test_create_reconciler_renews_ownership_before_retry_post(

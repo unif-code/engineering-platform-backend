@@ -6,6 +6,7 @@ from sqlalchemy import Engine
 import control_plane.app.modules.authorization as authorization
 import control_plane.app.modules.identity as identity
 import control_plane.app.modules.workspace as workspace
+from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
 from control_plane.app.modules.source_control.ports import (
     BindingEligibility,
     RequirementBindingContext,
@@ -24,7 +25,10 @@ class CurrentOwnerEligibilityAdapter:
     def evaluate(self, context: RequirementBindingContext) -> BindingEligibility:
         owner_id = context.human_owner_id
         if context.assignment_state != "ASSIGNED" or owner_id is None:
-            return BindingEligibility(eligible=False, reason_code="OWNER_UNASSIGNED")
+            return BindingEligibility(
+                eligible=False,
+                reason_code=SourceControlReason.OWNER_UNASSIGNED,
+            )
         try:
             with self.identity_engine.begin() as db:
                 account = identity.get_account(
@@ -33,7 +37,10 @@ class CurrentOwnerEligibilityAdapter:
                     dependencies=self.identity_dependencies,
                 )
             if account.status.value != "ENABLED":
-                return BindingEligibility(eligible=False, reason_code="OWNER_INELIGIBLE")
+                return BindingEligibility(
+                    eligible=False,
+                    reason_code=SourceControlReason.OWNER_INELIGIBLE,
+                )
             with self.workspace_engine.begin() as db:
                 formal_member = workspace.is_formal_member(
                     db,
@@ -42,7 +49,10 @@ class CurrentOwnerEligibilityAdapter:
                     dependencies=self.workspace_dependencies,
                 )
             if not formal_member:
-                return BindingEligibility(eligible=False, reason_code="OWNER_INELIGIBLE")
+                return BindingEligibility(
+                    eligible=False,
+                    reason_code=SourceControlReason.OWNER_INELIGIBLE,
+                )
             for capability in context.required_capabilities:
                 with self.authorization_engine.begin() as db:
                     grants = authorization.effective_grants(
@@ -53,7 +63,13 @@ class CurrentOwnerEligibilityAdapter:
                         dependencies=self.authorization_dependencies,
                     )
                 if not grants:
-                    return BindingEligibility(eligible=False, reason_code="OWNER_INELIGIBLE")
+                    return BindingEligibility(
+                        eligible=False,
+                        reason_code=SourceControlReason.OWNER_INELIGIBLE,
+                    )
         except Exception:
-            return BindingEligibility(eligible=False, reason_code="OWNER_INELIGIBLE")
+            return BindingEligibility(
+                eligible=False,
+                reason_code=SourceControlReason.OWNER_INELIGIBLE,
+            )
         return BindingEligibility(eligible=True)

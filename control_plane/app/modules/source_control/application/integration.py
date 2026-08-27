@@ -55,6 +55,7 @@ from control_plane.app.modules.source_control.application._integration_state imp
     _read_admission,
     _validated_effect_payload,
 )
+from control_plane.app.modules.source_control.application._reasons import stored_reason
 from control_plane.app.modules.source_control.application.dependencies import (
     SourceControlDependencies,
 )
@@ -64,6 +65,7 @@ from control_plane.app.modules.source_control.domain import (
     RequirementCallbackUnavailable,
     SourceControlDependencyUnavailable,
 )
+from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
 
 
 def process_integration_mr_request(
@@ -124,7 +126,7 @@ def process_integration_mr_request(
         )
         local_effect_conflict = existing_effect is not None and existing_payload is None
 
-    persisted_preflight_reason = inbox["last_error_code"]
+    persisted_preflight_reason = stored_reason(inbox["last_error_code"])
     if persisted_preflight_reason in _PREFLIGHT_OUTCOME_REASONS:
         if claimed is None:
             if inbox["state"] != "PROCESSED":
@@ -133,7 +135,7 @@ def process_integration_mr_request(
                 effect=None,
                 binding=None,
                 observation=None,
-                blocked_reason=persisted_preflight_reason,
+                blocked_reason=persisted_preflight_reason.value,
             )
         return _complete_preflight_block(
             callback_subject,
@@ -150,7 +152,7 @@ def process_integration_mr_request(
             callback_subject,
             message_id=message_id,
             inbox_attempts=claimed["attempts"],
-            reason_code="MR_CONFLICT",
+            reason_code=SourceControlReason.MR_CONFLICT,
             dependencies=dependencies,
         )
 
@@ -177,7 +179,7 @@ def process_integration_mr_request(
         )
 
     admission = _read_admission(inbox, branch_row, dependencies=dependencies)
-    if isinstance(admission, str):
+    if isinstance(admission, SourceControlReason):
         return _complete_preflight_block(
             callback_subject,
             message_id=message_id,
@@ -214,7 +216,7 @@ def process_integration_mr_request(
             existing_effect,
             message_id=message_id,
             inbox_attempts=claimed["attempts"],
-            reason_code="HEAD_SHA_CHANGED",
+            reason_code=SourceControlReason.HEAD_SHA_CHANGED,
             dependencies=dependencies,
         )
 
@@ -238,7 +240,7 @@ def process_integration_mr_request(
             callback_subject,
             message_id=message_id,
             inbox_attempts=claimed["attempts"],
-            reason_code="MR_CONFLICT",
+            reason_code=SourceControlReason.MR_CONFLICT,
             dependencies=dependencies,
         )
     effect = acquired.effect
@@ -274,8 +276,8 @@ def process_integration_mr_request(
     )
     error_code = {
         "opened": None,
-        "closed": "MR_CLOSED",
-        "merged": "EXTERNAL_MERGE_DRIFT",
+        "closed": SourceControlReason.MR_CLOSED,
+        "merged": SourceControlReason.EXTERNAL_MERGE_DRIFT,
     }[readback.state]
 
     try:
@@ -320,7 +322,7 @@ def process_integration_mr_request(
         effect=effect,
         binding=committed.binding,
         observation=committed.observation,
-        blocked_reason=error_code,
+        blocked_reason=None if error_code is None else error_code.value,
     )
 
 
