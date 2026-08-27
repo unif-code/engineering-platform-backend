@@ -30,6 +30,7 @@ from control_plane.app.modules.source_control.domain import (
     MergeRequestBindingDto,
     MergeRequestKind,
     MergeRequestObservationDto,
+    RequirementCallbackState,
     SourceControlDependencyUnavailable,
     SourceControlEffectDto,
 )
@@ -161,6 +162,7 @@ def complete_reconciliation_block(
             values={
                 "state": EffectState.BLOCKED.value,
                 "last_error_code": reason.value,
+                "requirement_callback_state": RequirementCallbackState.PENDING.value,
                 "next_reconcile_at": None,
                 "completed_at": now,
                 "updated_at": now,
@@ -281,6 +283,7 @@ def complete_create_reconciliation(
             values={
                 "state": final_state.value,
                 "last_error_code": None if reason is None else reason.value,
+                "requirement_callback_state": RequirementCallbackState.PENDING.value,
                 "next_reconcile_at": None,
                 "completed_at": now,
                 "updated_at": now,
@@ -367,6 +370,7 @@ def complete_merge_reconciliation(
             values={
                 "state": final_state.value,
                 "last_error_code": None if reason is None else reason.value,
+                "requirement_callback_state": RequirementCallbackState.PENDING.value,
                 "next_reconcile_at": None,
                 "completed_at": now,
                 "updated_at": now,
