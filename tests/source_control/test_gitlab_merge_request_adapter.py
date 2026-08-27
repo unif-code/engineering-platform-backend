@@ -1,3 +1,4 @@
+import traceback
 from collections.abc import Callable
 
 import httpx
@@ -94,11 +95,14 @@ def run_create_integration_mr(
     profile = adapter.get_project_delivery_profile(repository)
     assert profile.default_branch == "main"
     adapter.get_branch(repository, "dev")
-    assert adapter.list_merge_requests(
-        repository,
-        source_branch=source_branch,
-        target_branch="dev",
-    ) == []
+    assert (
+        adapter.list_merge_requests(
+            repository,
+            source_branch=source_branch,
+            target_branch="dev",
+        )
+        == []
+    )
     created = adapter.create_merge_request(
         repository,
         source_branch=source_branch,
@@ -137,6 +141,8 @@ def test_adapter_lists_then_creates_and_reads_exact_integration_mr() -> None:
                 "state": "opened",
                 "source_branch": TASK_BRANCH,
                 "target_branch": "dev",
+                "per_page": "100",
+                "page": "1",
             }
             return httpx.Response(200, json=[])
         if request.method == "POST":
@@ -349,3 +355,102 @@ def test_write_timeout_is_unknown_and_never_leaks_credentials() -> None:
         )
 
     assert "test-only-token" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("operation", "error_type"),
+    [
+        ("project", GitLabProviderUnavailable),
+        ("branch", GitLabProviderUnavailable),
+        ("list", GitLabProviderUnavailable),
+        ("create", GitLabResultUnknown),
+        ("get", GitLabProviderUnavailable),
+        ("merge", GitLabResultUnknown),
+    ],
+)
+def test_http_error_normalization_does_not_preserve_sensitive_exception_cause(
+    operation: str,
+    error_type: type[Exception],
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("provider-detail token=test-only-token", request=request)
+
+    with _client(handler) as client, pytest.raises(error_type) as raised:
+        adapter = _adapter(client)
+        if operation == "project":
+            adapter.get_project_delivery_profile(_profile())
+        elif operation == "branch":
+            adapter.get_branch(_profile(), "dev")
+        elif operation == "list":
+            adapter.list_merge_requests(
+                _profile(),
+                source_branch=TASK_BRANCH,
+                target_branch="dev",
+            )
+        elif operation == "create":
+            adapter.create_merge_request(
+                _profile(),
+                source_branch=TASK_BRANCH,
+                target_branch="dev",
+                expected_head_sha=HEAD_SHA,
+                title="feat: integrate WI-42",
+                description="Platform-Work-Item: 42",
+            )
+        elif operation == "get":
+            adapter.get_merge_request(_profile(), iid=17)
+        else:
+            adapter.merge_merge_request(_profile(), iid=17, expected_head_sha=HEAD_SHA)
+
+    rendered = "".join(traceback.format_exception(raised.value))
+    assert raised.value.__cause__ is None
+    assert "provider-detail" not in rendered
+    assert "test-only-token" not in rendered
+
+
+def test_list_merge_requests_rejects_candidates_spanning_pages() -> None:
+    page_calls: list[dict[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        page_calls.append(dict(request.url.params))
+        if request.url.params["page"] == "1":
+            return httpx.Response(200, headers={"X-Next-Page": "2"}, json=[_merge_request(iid=17)])
+        return httpx.Response(200, headers={"X-Next-Page": ""}, json=[_merge_request(iid=18)])
+
+    with _client(handler) as client, pytest.raises(GitLabResultUnknown):
+        _adapter(client).list_merge_requests(
+            _profile(),
+            source_branch=TASK_BRANCH,
+            target_branch="dev",
+        )
+
+    assert page_calls == [
+        {
+            "state": "opened",
+            "source_branch": TASK_BRANCH,
+            "target_branch": "dev",
+            "per_page": "100",
+            "page": "1",
+        },
+        {
+            "state": "opened",
+            "source_branch": TASK_BRANCH,
+            "target_branch": "dev",
+            "per_page": "100",
+            "page": "2",
+        },
+    ]
+
+
+@pytest.mark.parametrize("next_page", ["one", "1"])
+def test_list_merge_requests_rejects_invalid_or_cyclic_pagination_signal(next_page: str) -> None:
+    with (
+        _client(
+            lambda _request: httpx.Response(200, headers={"X-Next-Page": next_page}, json=[])
+        ) as client,
+        pytest.raises(GitLabProviderUnavailable),
+    ):
+        _adapter(client).list_merge_requests(
+            _profile(),
+            source_branch=TASK_BRANCH,
+            target_branch="dev",
+        )

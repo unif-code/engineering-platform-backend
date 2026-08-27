@@ -25,6 +25,8 @@ from control_plane.app.modules.source_control.ports.merge_requests import (
 
 _FULL_COMMIT_SHA = re.compile(r"^[0-9a-fA-F]{40,64}$")
 _MERGEABLE_PIPELINE_STATUS = "success"
+_MR_LIST_PAGE_SIZE = 100
+_MR_LIST_MAX_PAGES = 1000
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,8 +64,8 @@ class HttpxGitLabMergeRequestAdapter:
                 f"/projects/{self._project(repository)}",
                 headers=self._headers(repository),
             )
-        except httpx.HTTPError as error:
-            raise GitLabProviderUnavailable("GitLab project read is unavailable") from error
+        except httpx.HTTPError:
+            raise GitLabProviderUnavailable("GitLab project read is unavailable") from None
         if response.status_code in {401, 403}:
             raise GitLabAccessDenied("GitLab access denied")
         if response.status_code == 404:
@@ -104,8 +106,8 @@ class HttpxGitLabMergeRequestAdapter:
                 f"/projects/{self._project(repository)}/repository/branches/{branch}",
                 headers=self._headers(repository),
             )
-        except httpx.HTTPError as error:
-            raise GitLabProviderUnavailable("GitLab branch read is unavailable") from error
+        except httpx.HTTPError:
+            raise GitLabProviderUnavailable("GitLab branch read is unavailable") from None
         if response.status_code in {401, 403}:
             raise GitLabAccessDenied("GitLab access denied")
         if response.status_code == 404:
@@ -135,49 +137,65 @@ class HttpxGitLabMergeRequestAdapter:
         source_branch: str,
         target_branch: str,
     ) -> list[GitLabMergeRequestSnapshot]:
-        try:
-            response = self.client.get(
-                f"/projects/{self._project(repository)}/merge_requests",
-                params={
-                    "state": "opened",
-                    "source_branch": source_branch,
-                    "target_branch": target_branch,
-                },
-                headers=self._headers(repository),
-            )
-        except httpx.HTTPError as error:
-            raise GitLabProviderUnavailable("GitLab merge request list is unavailable") from error
-        if response.status_code in {401, 403}:
-            raise GitLabAccessDenied("GitLab access denied")
-        if response.status_code == 404:
-            raise GitLabProjectNotFound("GitLab project was not found")
-        if response.status_code != 200:
-            raise GitLabProviderUnavailable("GitLab merge request list is unavailable")
-        try:
-            payload = response.json()
-        except ValueError:
-            raise GitLabProviderUnavailable(
-                "GitLab returned an invalid merge request list"
-            ) from None
-        if not isinstance(payload, list):
-            raise GitLabProviderUnavailable("GitLab returned an invalid merge request list")
-        try:
-            snapshots = [
-                self._decode_merge_request(
-                    item,
-                    repository=repository,
-                    source_branch=source_branch,
-                    target_branch=target_branch,
+        page = 1
+        seen_pages: set[int] = set()
+        snapshots: list[GitLabMergeRequestSnapshot] = []
+        while True:
+            if page in seen_pages or len(seen_pages) >= _MR_LIST_MAX_PAGES:
+                raise GitLabProviderUnavailable("GitLab merge request pagination is invalid")
+            seen_pages.add(page)
+            try:
+                response = self.client.get(
+                    f"/projects/{self._project(repository)}/merge_requests",
+                    params={
+                        "state": "opened",
+                        "source_branch": source_branch,
+                        "target_branch": target_branch,
+                        "per_page": _MR_LIST_PAGE_SIZE,
+                        "page": page,
+                    },
+                    headers=self._headers(repository),
                 )
-                for item in payload
-            ]
-        except GitLabProviderUnavailable:
-            raise GitLabProviderUnavailable(
-                "GitLab returned an invalid merge request list"
-            ) from None
-        if len(snapshots) > 1:
-            raise GitLabResultUnknown("GitLab merge request result is ambiguous")
-        return snapshots
+            except httpx.HTTPError:
+                raise GitLabProviderUnavailable(
+                    "GitLab merge request list is unavailable"
+                ) from None
+            if response.status_code in {401, 403}:
+                raise GitLabAccessDenied("GitLab access denied")
+            if response.status_code == 404:
+                raise GitLabProjectNotFound("GitLab project was not found")
+            if response.status_code != 200:
+                raise GitLabProviderUnavailable("GitLab merge request list is unavailable")
+            try:
+                payload = response.json()
+            except ValueError:
+                raise GitLabProviderUnavailable(
+                    "GitLab returned an invalid merge request list"
+                ) from None
+            if not isinstance(payload, list):
+                raise GitLabProviderUnavailable("GitLab returned an invalid merge request list")
+            try:
+                snapshots.extend(
+                    self._decode_merge_request(
+                        item,
+                        repository=repository,
+                        source_branch=source_branch,
+                        target_branch=target_branch,
+                    )
+                    for item in payload
+                )
+            except GitLabProviderUnavailable:
+                raise GitLabProviderUnavailable(
+                    "GitLab returned an invalid merge request list"
+                ) from None
+            if len(snapshots) > 1:
+                raise GitLabResultUnknown("GitLab merge request result is ambiguous")
+            next_page = response.headers.get("X-Next-Page", "")
+            if next_page == "":
+                return snapshots
+            if not next_page.isdecimal() or int(next_page) <= 0:
+                raise GitLabProviderUnavailable("GitLab merge request pagination is invalid")
+            page = int(next_page)
 
     def create_merge_request(
         self,
@@ -203,8 +221,8 @@ class HttpxGitLabMergeRequestAdapter:
                 },
                 headers=self._headers(repository),
             )
-        except httpx.HTTPError as error:
-            raise GitLabResultUnknown("GitLab merge request creation result is unknown") from error
+        except httpx.HTTPError:
+            raise GitLabResultUnknown("GitLab merge request creation result is unknown") from None
         if response.status_code in {401, 403}:
             raise GitLabAccessDenied("GitLab access denied")
         if response.status_code == 404:
@@ -236,8 +254,8 @@ class HttpxGitLabMergeRequestAdapter:
                 f"/projects/{self._project(repository)}/merge_requests/{iid}",
                 headers=self._headers(repository),
             )
-        except httpx.HTTPError as error:
-            raise GitLabProviderUnavailable("GitLab merge request read is unavailable") from error
+        except httpx.HTTPError:
+            raise GitLabProviderUnavailable("GitLab merge request read is unavailable") from None
         if response.status_code in {401, 403}:
             raise GitLabAccessDenied("GitLab access denied")
         if response.status_code == 404:
@@ -270,8 +288,8 @@ class HttpxGitLabMergeRequestAdapter:
                 },
                 headers=self._headers(repository),
             )
-        except httpx.HTTPError as error:
-            raise GitLabResultUnknown("GitLab merge result is unknown") from error
+        except httpx.HTTPError:
+            raise GitLabResultUnknown("GitLab merge result is unknown") from None
         if response.status_code in {401, 403}:
             raise GitLabAccessDenied("GitLab access denied")
         if response.status_code == 404:
