@@ -1,4 +1,3 @@
-import os
 from collections.abc import Iterator
 from pathlib import Path
 from uuid import uuid4
@@ -7,9 +6,10 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import Engine, create_engine, inspect, text
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
+from tests.integration_database import migration_database_url
 from tests.source_control.conftest import IsolatedSourceControlDatabase
 
 pytestmark = pytest.mark.integration
@@ -29,8 +29,8 @@ EXPECTED_TABLES = {
 @pytest.fixture
 def fresh_source_control_migration_database_url(
     monkeypatch: pytest.MonkeyPatch,
-) -> Iterator[str]:
-    owner_url = make_url(os.environ["MIGRATION_DATABASE_URL"])
+) -> Iterator[URL]:
+    owner_url = migration_database_url()
     database_name = f"test_source_control_migration_{uuid4().hex}"
     maintenance = create_engine(
         owner_url.set(database="postgres"),
@@ -38,8 +38,11 @@ def fresh_source_control_migration_database_url(
     )
     with maintenance.connect() as db:
         db.execute(text(f'CREATE DATABASE "{database_name}"'))
-    target_url = owner_url.set(database=database_name).render_as_string(hide_password=False)
-    monkeypatch.setenv("MIGRATION_DATABASE_URL", target_url)
+    target_url = owner_url.set(database=database_name)
+    monkeypatch.setenv(
+        "MIGRATION_DATABASE_URL",
+        target_url.render_as_string(hide_password=False),
+    )
     try:
         yield target_url
     finally:
@@ -48,9 +51,12 @@ def fresh_source_control_migration_database_url(
         maintenance.dispose()
 
 
-def _config(database_url: str) -> Config:
+def _config(database_url: URL) -> Config:
     config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
+    config.set_main_option(
+        "sqlalchemy.url",
+        database_url.render_as_string(hide_password=False).replace("%", "%%"),
+    )
     return config
 
 
@@ -584,7 +590,7 @@ def test_database_rejects_merge_effect_subject_payload_mismatch(
 
 
 def test_0005_backfills_historical_effect_without_rewriting_identity_or_state(
-    fresh_source_control_migration_database_url: str,
+    fresh_source_control_migration_database_url: URL,
 ) -> None:
     config = _config(fresh_source_control_migration_database_url)
     command.upgrade(config, "0004_sc_secret_reference")
@@ -662,7 +668,7 @@ def test_0005_backfills_historical_effect_without_rewriting_identity_or_state(
 
 
 def test_0005_downgrade_fails_before_ddl_when_integration_facts_exist(
-    fresh_source_control_migration_database_url: str,
+    fresh_source_control_migration_database_url: URL,
 ) -> None:
     config = _config(fresh_source_control_migration_database_url)
     command.upgrade(config, "heads")
@@ -706,7 +712,9 @@ def test_source_control_downgrade_refuses_business_rows_and_preserves_requiremen
     config = Config("alembic.ini")
     config.set_main_option(
         "sqlalchemy.url",
-        isolated_source_control_database.url.replace("%", "%%"),
+        isolated_source_control_database.url.render_as_string(hide_password=False).replace(
+            "%", "%%"
+        ),
     )
     with pytest.raises(Exception, match="business rows"):
         command.downgrade(config, "source_control@base")

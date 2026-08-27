@@ -1,24 +1,26 @@
 import pytest
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Engine
 
 from control_plane.app.shared.db.settings import DbSettings
-
-
-def _engine_or_skip(url: str) -> Engine:
-    engine = create_engine(url, pool_pre_ping=True)
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-    except Exception:
-        pytest.skip("PostgreSQL 不可用：先 docker compose up -d 并 uv run alembic upgrade heads")
-    return engine
+from tests.integration_database import engine_or_skip as _engine_or_skip
+from tests.integration_database import parse_database_url
 
 
 @pytest.fixture(scope="session")
 def owner_engine() -> Engine:
-    return _engine_or_skip(DbSettings().migration_database_url)
+    return _engine_or_skip(
+        parse_database_url(
+            DbSettings().migration_database_url,
+            setting_name="MIGRATION_DATABASE_URL",
+        )
+    )
 
 
 @pytest.fixture(scope="session")
 def rw_engine() -> Engine:
-    return _engine_or_skip(DbSettings().database_url)
+    return _engine_or_skip(
+        parse_database_url(
+            DbSettings().database_url,
+            setting_name="DATABASE_URL",
+        )
+    )

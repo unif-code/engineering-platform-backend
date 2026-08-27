@@ -1,4 +1,3 @@
-import os
 from collections.abc import Iterator
 from uuid import uuid4
 
@@ -7,14 +6,16 @@ from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL
+
+from tests.integration_database import migration_database_url
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def fresh_requirement_database_url(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
-    owner_url = make_url(os.environ["MIGRATION_DATABASE_URL"])
+def fresh_requirement_database_url(monkeypatch: pytest.MonkeyPatch) -> Iterator[URL]:
+    owner_url = migration_database_url()
     database_name = f"test_requirement_migration_{uuid4().hex}"
     maintenance = create_engine(
         owner_url.set(database="postgres"),
@@ -22,8 +23,11 @@ def fresh_requirement_database_url(monkeypatch: pytest.MonkeyPatch) -> Iterator[
     )
     with maintenance.connect() as db:
         db.execute(text(f'CREATE DATABASE "{database_name}"'))
-    target_url = owner_url.set(database=database_name).render_as_string(hide_password=False)
-    monkeypatch.setenv("MIGRATION_DATABASE_URL", target_url)
+    target_url = owner_url.set(database=database_name)
+    monkeypatch.setenv(
+        "MIGRATION_DATABASE_URL",
+        target_url.render_as_string(hide_password=False),
+    )
     try:
         yield target_url
     finally:
@@ -32,14 +36,17 @@ def fresh_requirement_database_url(monkeypatch: pytest.MonkeyPatch) -> Iterator[
         maintenance.dispose()
 
 
-def _config(database_url: str) -> Config:
+def _config(database_url: URL) -> Config:
     config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
+    config.set_main_option(
+        "sqlalchemy.url",
+        database_url.render_as_string(hide_password=False).replace("%", "%%"),
+    )
     return config
 
 
 def test_fresh_upgrade_installs_requirement_and_all_visible_heads(
-    fresh_requirement_database_url: str,
+    fresh_requirement_database_url: URL,
 ) -> None:
     config = _config(fresh_requirement_database_url)
     command.upgrade(config, "heads")
@@ -81,7 +88,7 @@ def test_fresh_upgrade_installs_requirement_and_all_visible_heads(
 
 
 def test_requirement_0002_upgrades_the_original_0001_schema_in_place(
-    fresh_requirement_database_url: str,
+    fresh_requirement_database_url: URL,
 ) -> None:
     config = _config(fresh_requirement_database_url)
     command.upgrade(config, "0001_requirement_base")
@@ -133,7 +140,7 @@ def test_requirement_0002_upgrades_the_original_0001_schema_in_place(
 
 
 def test_all_migrations_round_trip_with_requirement_schema(
-    fresh_requirement_database_url: str,
+    fresh_requirement_database_url: URL,
 ) -> None:
     config = _config(fresh_requirement_database_url)
     command.upgrade(config, "heads")
@@ -157,7 +164,7 @@ def test_all_migrations_round_trip_with_requirement_schema(
 
 
 def test_requirement_delivery_facts_prevent_requirement_downgrade(
-    fresh_requirement_database_url: str,
+    fresh_requirement_database_url: URL,
 ) -> None:
     config = _config(fresh_requirement_database_url)
     command.upgrade(config, "heads")

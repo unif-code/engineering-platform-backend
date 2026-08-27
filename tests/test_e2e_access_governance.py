@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import time
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
@@ -16,13 +15,14 @@ import pyotp
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine, event, text
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL
 
 import control_plane.app.bootstrap.app as bootstrap
 from control_plane.app import __version__
 from control_plane.app.modules.identity import validate_session
 from control_plane.app.shared.db.settings import DbSettings
 from control_plane.tools import bootstrap_admin
+from tests.integration_database import parse_database_url, required_engine
 
 pytestmark = pytest.mark.integration
 
@@ -46,7 +46,7 @@ class _FailFirstAuthorizationBegin:
 @contextmanager
 def _runtime_engine(
     owner_engine: Engine,
-    runtime_url: str,
+    runtime_url: URL,
     *,
     privilege_role: str,
 ) -> Iterator[Engine]:
@@ -54,7 +54,7 @@ def _runtime_engine(
     quoted_role = f'"{login_role}"'
     password = f"test-only-{uuid4().hex}"
     engine = create_engine(
-        make_url(runtime_url).set(username=login_role, password=password),
+        runtime_url.set(username=login_role, password=password),
         pool_pre_ping=True,
     )
 
@@ -90,15 +90,13 @@ def e2e_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[tuple[Engine, dict[str, Engine]]]:
     settings = DbSettings()
-    owner = create_engine(settings.migration_database_url, pool_pre_ping=True)
-    try:
-        with owner.connect() as db:
-            assert db.execute(text("SELECT current_user")).scalar_one() == "platform_owner"
-    except Exception:
-        owner.dispose()
-        if os.getenv("REQUIRE_INTEGRATION_DB") == "1":
-            pytest.fail("Required PostgreSQL integration database unavailable for e2e")
-        pytest.skip("PostgreSQL integration database unavailable for e2e")
+    owner = required_engine(
+        parse_database_url(
+            settings.migration_database_url,
+            setting_name="MIGRATION_DATABASE_URL",
+        ),
+        role="platform_owner",
+    )
 
     secret_dir = tmp_path / "secrets"
     secret_dir.mkdir()
@@ -106,14 +104,53 @@ def e2e_runtime(
         (secret_dir / name).write_bytes(uuid4().bytes + uuid4().bytes)
     monkeypatch.setenv("SECRET_MATERIAL_PATH", str(secret_dir))
 
-    runtime_specs = {
-        "audit": (settings.database_url, "audit_rw"),
-        "identity": (settings.identity_database_url, "identity_rw"),
-        "organization": (settings.organization_database_url, "organization_rw"),
-        "workspace": (settings.workspace_database_url, "workspace_rw"),
-        "authorization": (settings.authorization_database_url, "authorization_rw"),
-        "configuration": (settings.configuration_database_url, "configuration_rw"),
-        "requirement": (settings.requirement_database_url, "requirement_rw"),
+    runtime_specs: dict[str, tuple[URL, str]] = {
+        "audit": (
+            parse_database_url(settings.database_url, setting_name="DATABASE_URL"),
+            "audit_rw",
+        ),
+        "identity": (
+            parse_database_url(
+                settings.identity_database_url,
+                setting_name="IDENTITY_DATABASE_URL",
+            ),
+            "identity_rw",
+        ),
+        "organization": (
+            parse_database_url(
+                settings.organization_database_url,
+                setting_name="ORGANIZATION_DATABASE_URL",
+            ),
+            "organization_rw",
+        ),
+        "workspace": (
+            parse_database_url(
+                settings.workspace_database_url,
+                setting_name="WORKSPACE_DATABASE_URL",
+            ),
+            "workspace_rw",
+        ),
+        "authorization": (
+            parse_database_url(
+                settings.authorization_database_url,
+                setting_name="AUTHORIZATION_DATABASE_URL",
+            ),
+            "authorization_rw",
+        ),
+        "configuration": (
+            parse_database_url(
+                settings.configuration_database_url,
+                setting_name="CONFIGURATION_DATABASE_URL",
+            ),
+            "configuration_rw",
+        ),
+        "requirement": (
+            parse_database_url(
+                settings.requirement_database_url,
+                setting_name="REQUIREMENT_DATABASE_URL",
+            ),
+            "requirement_rw",
+        ),
     }
     with ExitStack() as stack:
         engines = {

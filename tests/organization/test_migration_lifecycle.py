@@ -7,16 +7,17 @@ from alembic import command
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL
 from sqlalchemy.exc import SQLAlchemyError
+
+from tests.integration_database import migration_database_url
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def fresh_database_url(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
-    configured = os.environ["MIGRATION_DATABASE_URL"]
-    owner_url = make_url(configured)
+def fresh_database_url(monkeypatch: pytest.MonkeyPatch) -> Iterator[URL]:
+    owner_url = migration_database_url()
     database_name = f"task7_organization_{uuid4().hex}"
     maintenance_url = owner_url.set(database="postgres")
     maintenance = create_engine(maintenance_url, isolation_level="AUTOCOMMIT")
@@ -28,8 +29,11 @@ def fresh_database_url(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
         if os.getenv("REQUIRE_INTEGRATION_DB") == "1":
             pytest.fail("Required PostgreSQL unavailable for fresh migration test")
         pytest.skip("PostgreSQL unavailable for fresh migration test")
-    target_url = owner_url.set(database=database_name).render_as_string(hide_password=False)
-    monkeypatch.setenv("MIGRATION_DATABASE_URL", target_url)
+    target_url = owner_url.set(database=database_name)
+    monkeypatch.setenv(
+        "MIGRATION_DATABASE_URL",
+        target_url.render_as_string(hide_password=False),
+    )
     try:
         yield target_url
     finally:
@@ -38,14 +42,17 @@ def fresh_database_url(monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
         maintenance.dispose()
 
 
-def _config(database_url: str) -> Config:
+def _config(database_url: URL) -> Config:
     config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
+    config.set_main_option(
+        "sqlalchemy.url",
+        database_url.render_as_string(hide_password=False).replace("%", "%%"),
+    )
     return config
 
 
 def test_fresh_database_upgrade_heads_installs_all_visible_module_heads(
-    fresh_database_url: str,
+    fresh_database_url: URL,
 ) -> None:
     config = _config(fresh_database_url)
     command.upgrade(config, "heads")
@@ -84,7 +91,7 @@ def test_fresh_database_upgrade_heads_installs_all_visible_module_heads(
 
 
 def test_upgrade_adds_organization_without_rewriting_preexisting_module_data(
-    fresh_database_url: str,
+    fresh_database_url: URL,
 ) -> None:
     config = _config(fresh_database_url)
     command.upgrade(config, "0002_audit_transactional_append")
@@ -133,7 +140,7 @@ def test_upgrade_adds_organization_without_rewriting_preexisting_module_data(
 
 
 def test_all_module_migrations_round_trip_base_to_heads_on_isolated_database(
-    fresh_database_url: str,
+    fresh_database_url: URL,
 ) -> None:
     config = _config(fresh_database_url)
     command.upgrade(config, "heads")

@@ -1,34 +1,33 @@
-import os
 from collections.abc import Iterator
 
 import pytest
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Engine, text
 
 from control_plane.app.shared.db.settings import DbSettings
-
-
-def _required_engine(url: str, *, role: str) -> Engine:
-    engine = create_engine(url, pool_pre_ping=True)
-    try:
-        with engine.connect() as conn:
-            actual_role = conn.execute(text("SELECT current_user")).scalar_one()
-    except Exception:
-        engine.dispose()
-        if os.getenv("REQUIRE_INTEGRATION_DB") == "1":
-            pytest.fail(f"Required PostgreSQL integration database unavailable for {role}")
-        pytest.skip(f"PostgreSQL integration database unavailable for {role}")
-    assert actual_role == role
-    return engine
+from tests.integration_database import parse_database_url
+from tests.integration_database import required_engine as _required_engine
 
 
 @pytest.fixture(scope="session")
 def identity_owner_engine() -> Engine:
-    return _required_engine(DbSettings().migration_database_url, role="platform_owner")
+    return _required_engine(
+        parse_database_url(
+            DbSettings().migration_database_url,
+            setting_name="MIGRATION_DATABASE_URL",
+        ),
+        role="platform_owner",
+    )
 
 
 @pytest.fixture(scope="session")
 def identity_rw_engine() -> Engine:
-    return _required_engine(DbSettings().identity_database_url, role="identity_rw")
+    return _required_engine(
+        parse_database_url(
+            DbSettings().identity_database_url,
+            setting_name="IDENTITY_DATABASE_URL",
+        ),
+        role="identity_rw",
+    )
 
 
 @pytest.fixture

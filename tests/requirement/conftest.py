@@ -1,4 +1,3 @@
-import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -8,28 +7,21 @@ import pytest
 from alembic import command
 from alembic.config import Config
 from sqlalchemy import Engine, create_engine, event, text
-from sqlalchemy.engine import make_url
 
 from control_plane.app.shared.db.settings import DbSettings
-
-
-def _required_engine(url: str, *, role: str) -> Engine:
-    engine = create_engine(url, pool_pre_ping=True)
-    try:
-        with engine.connect() as db:
-            actual_role = db.execute(text("SELECT current_user")).scalar_one()
-    except Exception:
-        engine.dispose()
-        if os.getenv("REQUIRE_INTEGRATION_DB") == "1":
-            pytest.fail(f"Required PostgreSQL integration database unavailable for {role}")
-        pytest.skip(f"PostgreSQL integration database unavailable for {role}")
-    assert actual_role == role
-    return engine
+from tests.integration_database import parse_database_url
+from tests.integration_database import required_engine as _required_engine
 
 
 @pytest.fixture(scope="session")
 def requirement_owner_engine() -> Iterator[Engine]:
-    engine = _required_engine(DbSettings().migration_database_url, role="platform_owner")
+    engine = _required_engine(
+        parse_database_url(
+            DbSettings().migration_database_url,
+            setting_name="MIGRATION_DATABASE_URL",
+        ),
+        role="platform_owner",
+    )
     yield engine
     engine.dispose()
 
@@ -41,7 +33,7 @@ def _temporary_requirement_role_engine(
     login_role = f"test_requirement_login_{uuid4().hex}"
     quoted_login_role = f'"{login_role}"'
     test_password = "test-only-requirement-password"
-    owner_url = make_url(DbSettings().migration_database_url)
+    owner_url = requirement_owner_engine.url
     runtime_url = owner_url.set(username=login_role, password=test_password)
     engine = create_engine(runtime_url, pool_pre_ping=True)
 
@@ -85,7 +77,7 @@ def isolated_requirement_database(
     requirement_owner_engine: Engine,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator["IsolatedRequirementDatabase"]:
-    owner_url = make_url(DbSettings().migration_database_url)
+    owner_url = requirement_owner_engine.url
     database_name = f"test_requirement_repository_{uuid4().hex}"
     maintenance = create_engine(
         owner_url.set(database="postgres"),
@@ -93,8 +85,11 @@ def isolated_requirement_database(
     )
     with maintenance.connect() as db:
         db.execute(text(f'CREATE DATABASE "{database_name}"'))
-    target_url = owner_url.set(database=database_name).render_as_string(hide_password=False)
-    monkeypatch.setenv("MIGRATION_DATABASE_URL", target_url)
+    target_url = owner_url.set(database=database_name)
+    monkeypatch.setenv(
+        "MIGRATION_DATABASE_URL",
+        target_url.render_as_string(hide_password=False),
+    )
     command.upgrade(Config("alembic.ini"), "heads")
     isolated_owner = create_engine(target_url, pool_pre_ping=True)
     try:

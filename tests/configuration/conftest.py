@@ -1,4 +1,3 @@
-import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from runpy import run_path
@@ -6,30 +5,23 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import Engine, create_engine, event, text
-from sqlalchemy.engine import make_url
+from sqlalchemy.engine import URL
 
 from control_plane.app.shared.db.settings import DbSettings
-
-
-def _required_engine(url: str, *, role: str) -> Engine:
-    engine = create_engine(url, pool_pre_ping=True)
-    try:
-        with engine.connect() as db:
-            actual_role = db.execute(text("SELECT current_user")).scalar_one()
-            server_version = db.execute(text("SHOW server_version_num")).scalar_one()
-    except Exception:
-        engine.dispose()
-        if os.getenv("REQUIRE_INTEGRATION_DB") == "1":
-            pytest.fail(f"Required PostgreSQL integration database unavailable for {role}")
-        pytest.skip(f"PostgreSQL integration database unavailable for {role}")
-    assert actual_role == role
-    assert int(server_version) >= 180000
-    return engine
+from tests.integration_database import parse_database_url
+from tests.integration_database import required_engine as _required_engine
 
 
 @pytest.fixture(scope="session")
 def configuration_owner_engine() -> Iterator[Engine]:
-    engine = _required_engine(DbSettings().migration_database_url, role="platform_owner")
+    engine = _required_engine(
+        parse_database_url(
+            DbSettings().migration_database_url,
+            setting_name="MIGRATION_DATABASE_URL",
+        ),
+        role="platform_owner",
+        minimum_server_version=180000,
+    )
     yield engine
     engine.dispose()
 
@@ -44,7 +36,7 @@ def configuration_seed(configuration_owner_engine: Engine) -> None:
 @contextmanager
 def _temporary_runtime_role_engine(
     owner_engine: Engine,
-    runtime_url: str,
+    runtime_url: URL,
     *,
     privilege_role: str,
 ) -> Iterator[tuple[Engine, str]]:
@@ -52,7 +44,7 @@ def _temporary_runtime_role_engine(
     quoted_login_role = f'"{login_role}"'
     test_password = f"test-only-{uuid4().hex}"
     engine = create_engine(
-        make_url(runtime_url).set(username=login_role, password=test_password),
+        runtime_url.set(username=login_role, password=test_password),
         pool_pre_ping=True,
     )
 
@@ -85,9 +77,9 @@ def _temporary_runtime_role_engine(
 
 @pytest.fixture(scope="session")
 def configuration_rw_engine(configuration_owner_engine: Engine) -> Iterator[Engine]:
-    runtime_url = os.environ.get(
-        "CONFIGURATION_DATABASE_URL",
-        "postgresql+psycopg://configuration_rw:localdev@localhost:5432/platform",
+    runtime_url = parse_database_url(
+        DbSettings().configuration_database_url,
+        setting_name="CONFIGURATION_DATABASE_URL",
     )
     with _temporary_runtime_role_engine(
         configuration_owner_engine,
@@ -99,9 +91,9 @@ def configuration_rw_engine(configuration_owner_engine: Engine) -> Iterator[Engi
 
 @pytest.fixture(scope="session")
 def identity_rw_engine(configuration_owner_engine: Engine) -> Iterator[Engine]:
-    runtime_url = os.environ.get(
-        "IDENTITY_DATABASE_URL",
-        "postgresql+psycopg://identity_rw:localdev@localhost:5432/platform",
+    runtime_url = parse_database_url(
+        DbSettings().identity_database_url,
+        setting_name="IDENTITY_DATABASE_URL",
     )
     with _temporary_runtime_role_engine(
         configuration_owner_engine,
