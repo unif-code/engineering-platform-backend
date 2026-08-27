@@ -220,6 +220,7 @@ def append_audit(
     action: str,
     target_type: str,
     target_id: str,
+    correlation_id: str,
     dependencies: SourceControlDependencies,
 ) -> None:
     dependencies.audit.append_in_transaction(
@@ -233,7 +234,7 @@ def append_audit(
             target_type=target_type,
             target_id=target_id,
             result="SUCCESS",
-            correlation_id=f"source-control:effect:{target_id}",
+            correlation_id=correlation_id,
         ),
     )
 

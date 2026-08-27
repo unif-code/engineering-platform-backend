@@ -74,6 +74,7 @@ def _ready_mr(
             expected_revision=requested.work_item.revision,
             actor=SYSTEM_ACTOR,
             idempotency_key=f"effect:{key_suffix}:mr-ready",
+            correlation_id=f"source-control:effect:{key_suffix}:mr-ready",
             dependencies=_gate_dependencies(),
         )
 
@@ -370,6 +371,7 @@ def test_mr_ready_callback_moves_work_item_to_verifying_without_provider_fields(
             expected_revision=requested.work_item.revision,
             actor=SYSTEM_ACTOR,
             idempotency_key="effect:mr-ready:callback",
+            correlation_id="source-control:effect:mr-ready:callback",
             dependencies=_gate_dependencies(),
         )
 
@@ -379,6 +381,87 @@ def test_mr_ready_callback_moves_work_item_to_verifying_without_provider_fields(
     assert result.requirement.state.value == "VERIFYING"
     result_fields = set(result.requirement.model_dump()) | set(result.work_item.model_dump())
     assert not ({"project_id", "mr_iid", "head_sha", "provider_body"} & result_fields)
+
+
+def test_integration_callback_audit_uses_explicit_source_control_correlation(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    requested = _requested_mr(isolated_requirement_database, key_suffix="audit-correlation")
+    dependencies = _gate_dependencies()
+    ready_correlation = "source-control:effect:create-audit-correlation"
+    merged_correlation = "source-control:effect:merge-audit-correlation"
+    with isolated_requirement_database.runtime.begin() as db:
+        ready = record_integration_mr_ready(
+            db,
+            work_item_id=requested.work_item.id,
+            binding_id=BINDING_ID,
+            expected_revision=requested.work_item.revision,
+            actor=SYSTEM_ACTOR,
+            idempotency_key="effect:audit-correlation:mr-ready",
+            correlation_id=ready_correlation,
+            dependencies=dependencies,
+        )
+    with isolated_requirement_database.runtime.begin() as db:
+        merge_requested = request_integration_merge(
+            db,
+            requirement_id=ready.requirement.id,
+            work_item_id=ready.work_item.id,
+            expected_revision=ready.requirement.revision,
+            actor=Actor("employee-1"),
+            idempotency_key="request-merge-audit-correlation",
+            dependencies=dependencies,
+        )
+    with isolated_requirement_database.runtime.begin() as db:
+        record_integration_merged(
+            db,
+            work_item_id=merge_requested.work_item.id,
+            binding_id=BINDING_ID,
+            expected_revision=merge_requested.work_item.revision,
+            actor=SYSTEM_ACTOR,
+            idempotency_key="effect:audit-correlation:merged",
+            correlation_id=merged_correlation,
+            dependencies=dependencies,
+        )
+
+    with isolated_requirement_database.owner.connect() as db:
+        rows = db.execute(
+            text(
+                "SELECT action, target_id, correlation_id FROM audit.audit_event "
+                "WHERE target_id=:work_item_id AND action IN ("
+                "'requirement.integration_delivery.mr_ready', "
+                "'requirement.integration_delivery.merged')"
+            ),
+            {"work_item_id": requested.work_item.id},
+        ).all()
+    assert {(row.action, row.target_id): row.correlation_id for row in rows} == {
+        (
+            "requirement.integration_delivery.mr_ready",
+            requested.work_item.id,
+        ): ready_correlation,
+        (
+            "requirement.integration_delivery.merged",
+            requested.work_item.id,
+        ): merged_correlation,
+    }
+
+
+def test_integration_callback_rejects_blank_correlation(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    requested = _requested_mr(isolated_requirement_database, key_suffix="blank-correlation")
+
+    with pytest.raises(InvalidRequirementInput):
+        with isolated_requirement_database.runtime.begin() as db:
+            record_integration_mr_ready(
+                db,
+                work_item_id=requested.work_item.id,
+                binding_id=BINDING_ID,
+                expected_revision=requested.work_item.revision,
+                actor=SYSTEM_ACTOR,
+                idempotency_key="effect:blank-correlation:mr-ready",
+                correlation_id=" ",
+                dependencies=_gate_dependencies(),
+            )
 
 
 def test_callback_idempotency_conflicts_on_same_key_with_different_binding(
@@ -394,6 +477,7 @@ def test_callback_idempotency_conflicts_on_same_key_with_different_binding(
             expected_revision=requested.work_item.revision,
             actor=SYSTEM_ACTOR,
             idempotency_key="effect:stable:mr-ready",
+            correlation_id="source-control:effect:stable:mr-ready",
             dependencies=dependencies,
         )
     with isolated_requirement_database.runtime.begin() as db:
@@ -404,10 +488,25 @@ def test_callback_idempotency_conflicts_on_same_key_with_different_binding(
             expected_revision=requested.work_item.revision,
             actor=SYSTEM_ACTOR,
             idempotency_key="effect:stable:mr-ready",
+            correlation_id="source-control:effect:stable:mr-ready-replay",
             dependencies=dependencies,
         )
 
     assert replay == first
+    with isolated_requirement_database.owner.connect() as db:
+        events = (
+            db.execute(
+                text(
+                    "SELECT correlation_id FROM audit.audit_event "
+                    "WHERE target_id=:work_item_id "
+                    "AND action='requirement.integration_delivery.mr_ready'"
+                ),
+                {"work_item_id": requested.work_item.id},
+            )
+            .scalars()
+            .all()
+        )
+    assert events == ["source-control:effect:stable:mr-ready"]
     with pytest.raises(IdempotencyConflict):
         with isolated_requirement_database.runtime.begin() as db:
             record_integration_mr_ready(
@@ -417,6 +516,7 @@ def test_callback_idempotency_conflicts_on_same_key_with_different_binding(
                 expected_revision=requested.work_item.revision,
                 actor=SYSTEM_ACTOR,
                 idempotency_key="effect:stable:mr-ready",
+                correlation_id="source-control:effect:stable:mr-ready",
                 dependencies=dependencies,
             )
 
@@ -436,6 +536,7 @@ def test_old_blocked_callback_cannot_regress_a_newer_mr_ready_result(
                 expected_revision=ready.work_item.revision - 1,
                 actor=SYSTEM_ACTOR,
                 idempotency_key="effect:old:block",
+                correlation_id="source-control:effect:old:block",
                 dependencies=_gate_dependencies(),
             )
     with isolated_requirement_database.runtime.connect() as db:
@@ -462,6 +563,7 @@ def test_reconciliation_pending_and_safe_blocked_retain_stable_binding(
             expected_revision=requested.work_item.revision,
             actor=SYSTEM_ACTOR,
             idempotency_key="effect:merge:pending",
+            correlation_id="source-control:effect:merge:pending",
             dependencies=dependencies,
         )
     with isolated_requirement_database.runtime.begin() as db:
@@ -473,6 +575,7 @@ def test_reconciliation_pending_and_safe_blocked_retain_stable_binding(
             expected_revision=pending.work_item.revision,
             actor=SYSTEM_ACTOR,
             idempotency_key="effect:merge:blocked",
+            correlation_id="source-control:effect:merge:blocked",
             dependencies=dependencies,
         )
 
@@ -488,6 +591,27 @@ def test_reconciliation_pending_and_safe_blocked_retain_stable_binding(
         is IntegrationDeliveryBlockedReason.MR_CHECKS_BLOCKED
     )
     assert blocked.work_item.integration_merge_request_binding_id == BINDING_ID
+    with isolated_requirement_database.owner.connect() as db:
+        events = [
+            (str(row.action), str(row.correlation_id))
+            for row in db.execute(
+                text(
+                    "SELECT action, correlation_id FROM audit.audit_event "
+                    "WHERE target_id=:work_item_id "
+                    "AND action IN ('requirement.integration_delivery.blocked', "
+                    "'requirement.integration_delivery.reconciliation_pending') "
+                    "ORDER BY action"
+                ),
+                {"work_item_id": requested.work_item.id},
+            ).all()
+        ]
+    assert events == [
+        ("requirement.integration_delivery.blocked", "source-control:effect:merge:blocked"),
+        (
+            "requirement.integration_delivery.reconciliation_pending",
+            "source-control:effect:merge:pending",
+        ),
+    ]
 
 
 def test_blocked_callback_rejects_non_allowlisted_reason_at_runtime(
@@ -505,6 +629,7 @@ def test_blocked_callback_rejects_non_allowlisted_reason_at_runtime(
                 expected_revision=requested.work_item.revision,
                 actor=SYSTEM_ACTOR,
                 idempotency_key="effect:unsafe:blocked",
+                correlation_id="source-control:effect:unsafe:blocked",
                 dependencies=_gate_dependencies(),
             )
 
@@ -522,6 +647,7 @@ def test_merged_stays_verifying_and_replay_does_not_rollback_external_fact(
             expected_revision=requested.work_item.revision,
             actor=SYSTEM_ACTOR,
             idempotency_key="effect:merge:merged",
+            correlation_id="source-control:effect:merge:merged",
             dependencies=dependencies,
         )
     with isolated_requirement_database.runtime.begin() as db:
@@ -532,6 +658,7 @@ def test_merged_stays_verifying_and_replay_does_not_rollback_external_fact(
             expected_revision=requested.work_item.revision,
             actor=SYSTEM_ACTOR,
             idempotency_key="effect:merge:merged",
+            correlation_id="source-control:effect:merge:merged",
             dependencies=dependencies,
         )
     with isolated_requirement_database.runtime.connect() as db:
@@ -559,6 +686,7 @@ def test_external_merge_drift_enters_blocked_without_provider_details(
             expected_revision=requested.work_item.revision,
             actor=SYSTEM_ACTOR,
             idempotency_key="effect:external-drift",
+            correlation_id="source-control:effect:external-drift",
             dependencies=_gate_dependencies(),
         )
     with isolated_requirement_database.runtime.begin() as db:
@@ -569,6 +697,7 @@ def test_external_merge_drift_enters_blocked_without_provider_details(
             expected_revision=requested.work_item.revision,
             actor=SYSTEM_ACTOR,
             idempotency_key="effect:external-drift",
+            correlation_id="source-control:effect:external-drift",
             dependencies=_gate_dependencies(),
         )
 
@@ -585,6 +714,24 @@ def test_external_merge_drift_enters_blocked_without_provider_details(
         is IntegrationDeliveryBlockedReason.EXTERNAL_MERGE_DRIFT
     )
     assert result.work_item.integration_merge_request_binding_id == BINDING_ID
+    with isolated_requirement_database.owner.connect() as db:
+        events = [
+            (str(row.action), str(row.correlation_id))
+            for row in db.execute(
+                text(
+                    "SELECT action, correlation_id FROM audit.audit_event "
+                    "WHERE target_id=:work_item_id "
+                    "AND action='requirement.integration_delivery.external_merge_drift'"
+                ),
+                {"work_item_id": requested.work_item.id},
+            ).all()
+        ]
+    assert events == [
+        (
+            "requirement.integration_delivery.external_merge_drift",
+            "source-control:effect:external-drift",
+        )
+    ]
 
 
 def test_mr_closed_from_mr_pending_installs_first_binding_once(
@@ -601,6 +748,7 @@ def test_mr_closed_from_mr_pending_installs_first_binding_once(
             expected_revision=requested.work_item.revision,
             actor=SYSTEM_ACTOR,
             idempotency_key="effect:create:closed",
+            correlation_id="source-control:effect:create:closed",
             dependencies=dependencies,
         )
     with isolated_requirement_database.runtime.begin() as db:
@@ -612,6 +760,7 @@ def test_mr_closed_from_mr_pending_installs_first_binding_once(
             expected_revision=requested.work_item.revision,
             actor=SYSTEM_ACTOR,
             idempotency_key="effect:create:closed",
+            correlation_id="source-control:effect:create:closed",
             dependencies=dependencies,
         )
 
@@ -638,6 +787,7 @@ def test_mr_closed_from_mr_pending_installs_first_binding_once(
                 expected_revision=closed.work_item.revision,
                 actor=SYSTEM_ACTOR,
                 idempotency_key="effect:create:closed:other-binding",
+                correlation_id="source-control:effect:create:closed:other-binding",
                 dependencies=dependencies,
             )
 
@@ -655,6 +805,7 @@ def test_external_merge_drift_from_mr_pending_installs_first_binding_once(
             expected_revision=requested.work_item.revision,
             actor=SYSTEM_ACTOR,
             idempotency_key="effect:create:external-drift",
+            correlation_id="source-control:effect:create:external-drift",
             dependencies=dependencies,
         )
     with isolated_requirement_database.runtime.begin() as db:
@@ -665,6 +816,7 @@ def test_external_merge_drift_from_mr_pending_installs_first_binding_once(
             expected_revision=requested.work_item.revision,
             actor=SYSTEM_ACTOR,
             idempotency_key="effect:create:external-drift",
+            correlation_id="source-control:effect:create:external-drift",
             dependencies=dependencies,
         )
 
@@ -690,6 +842,7 @@ def test_external_merge_drift_from_mr_pending_installs_first_binding_once(
                 expected_revision=drift.work_item.revision,
                 actor=SYSTEM_ACTOR,
                 idempotency_key="effect:create:external-drift:other-binding",
+                correlation_id="source-control:effect:create:external-drift:other-binding",
                 dependencies=dependencies,
             )
 
@@ -707,6 +860,7 @@ def test_first_terminal_binding_rejects_non_mr_pending_delivery(
             expected_revision=requested.work_item.revision,
             actor=SYSTEM_ACTOR,
             idempotency_key="effect:create:reconciliation-pending",
+            correlation_id="source-control:effect:create:reconciliation-pending",
             dependencies=dependencies,
         )
 
@@ -720,6 +874,7 @@ def test_first_terminal_binding_rejects_non_mr_pending_delivery(
                 expected_revision=pending.work_item.revision,
                 actor=SYSTEM_ACTOR,
                 idempotency_key="effect:create:late-closed",
+                correlation_id="source-control:effect:create:late-closed",
                 dependencies=dependencies,
             )
     with pytest.raises(WorkItemDeliveryConflict):
@@ -731,6 +886,7 @@ def test_first_terminal_binding_rejects_non_mr_pending_delivery(
                 expected_revision=pending.work_item.revision,
                 actor=SYSTEM_ACTOR,
                 idempotency_key="effect:create:late-external-drift",
+                correlation_id="source-control:effect:create:late-external-drift",
                 dependencies=dependencies,
             )
 
@@ -750,6 +906,7 @@ def test_first_terminal_binding_rejects_old_revision_and_other_work_item(
                 expected_revision=first.work_item.revision - 1,
                 actor=SYSTEM_ACTOR,
                 idempotency_key="effect:create:terminal-stale",
+                correlation_id="source-control:effect:create:terminal-stale",
                 dependencies=dependencies,
             )
     with isolated_requirement_database.runtime.begin() as db:
@@ -761,6 +918,7 @@ def test_first_terminal_binding_rejects_old_revision_and_other_work_item(
             expected_revision=first.work_item.revision,
             actor=SYSTEM_ACTOR,
             idempotency_key="effect:create:terminal-work-item",
+            correlation_id="source-control:effect:create:terminal-work-item",
             dependencies=dependencies,
         )
     with pytest.raises(IdempotencyConflict):
@@ -773,6 +931,7 @@ def test_first_terminal_binding_rejects_old_revision_and_other_work_item(
                 expected_revision=second.work_item.revision,
                 actor=SYSTEM_ACTOR,
                 idempotency_key="effect:create:terminal-work-item",
+                correlation_id="source-control:effect:create:terminal-work-item",
                 dependencies=dependencies,
             )
 
@@ -790,6 +949,7 @@ def test_callback_rejects_binding_mismatch_without_overwriting_projection(
                 expected_revision=requested.work_item.revision,
                 actor=SYSTEM_ACTOR,
                 idempotency_key="effect:merge:wrong-binding",
+                correlation_id="source-control:effect:merge:wrong-binding",
                 dependencies=_gate_dependencies(),
             )
 

@@ -288,6 +288,7 @@ def _commit_external_merge_drift(
             action="source_control.integration_merge.external_drift",
             target_type="merge_request_binding",
             target_id=admission.binding.id,
+            correlation_id=f"source-control:inbox:{message_id}",
             dependencies=dependencies,
         )
     with dependencies.engine.begin() as db:
@@ -307,6 +308,7 @@ def _commit_external_merge_drift(
                     binding_id=admission.binding.id,
                     expected_revision=admission.context.work_item_revision,
                     idempotency_key=(f"source-control:external-merge-drift:{message_id}"),
+                    correlation_id=f"source-control:inbox:{message_id}",
                 )
             )
         except Exception:
@@ -369,6 +371,7 @@ def _commit_proven_merge_conflict(
             action="source_control.integration_merge.provider_fact_conflict",
             target_type="merge_request_binding",
             target_id=admission.binding.id,
+            correlation_id=f"source-control:inbox:{message_id}",
             dependencies=dependencies,
         )
     _finish_preflight_callback(
@@ -438,6 +441,7 @@ def _commit_merge_success(
             action="source_control.integration_merge.succeeded",
             target_type="source_control_effect",
             target_id=effect.id,
+            correlation_id=f"source-control:effect:{effect.id}",
             dependencies=dependencies,
         )
     return _effect_dto(final_row), _observation_dto(observation_row)

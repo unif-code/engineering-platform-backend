@@ -12,6 +12,7 @@ from control_plane.app.modules.requirement.application.common import (
     gate_instance_dto,
     requirement_dto,
     sdd_baseline_dto,
+    validated_correlation_id,
     work_item_dto,
 )
 from control_plane.app.modules.requirement.application.dependencies import (
@@ -488,6 +489,7 @@ def _record_repository_binding_once(
     task_branch: str,
     expected_revision: int,
     actor: Any,
+    correlation_id: str,
     dependencies: RequirementDependencies,
 ) -> WorkItemDto:
     row = repository.work_item_by_id(work_item_id, for_update=True)
@@ -525,6 +527,7 @@ def _record_repository_binding_once(
         target_type="WORK_ITEM",
         target_id=work_item_id,
         reason=f"repository={repository_id}; revision={updated['revision']}",
+        correlation_id=correlation_id,
     )
     return work_item_dto(updated)
 
@@ -539,9 +542,11 @@ def record_repository_binding(
     expected_revision: int,
     actor: Any,
     idempotency_key: str,
+    correlation_id: str,
     dependencies: RequirementDependencies,
 ) -> WorkItemDto:
     stable_actor = actor_id(actor)
+    stable_correlation_id = validated_correlation_id(correlation_id)
     material = dependencies.secret_manager.load()
     body: dict[str, object] = {
         "workItemId": work_item_id,
@@ -567,6 +572,7 @@ def record_repository_binding(
             task_branch=task_branch,
             expected_revision=expected_revision,
             actor=actor,
+            correlation_id=stable_correlation_id,
             dependencies=dependencies,
         )
         return IdempotentResponse(status_code=200, body=bound.model_dump(mode="json"))
@@ -593,6 +599,7 @@ def _record_repository_binding_blocked_once(
     reason_code: RepositoryBindingBlockedReason,
     expected_revision: int,
     actor: Any,
+    correlation_id: str,
     dependencies: RequirementDependencies,
 ) -> WorkItemDto:
     row = repository.work_item_by_id(work_item_id, for_update=True)
@@ -628,6 +635,7 @@ def _record_repository_binding_blocked_once(
             f"repository={repository_id}; reasonCode={reason_code.value}; "
             f"revision={updated['revision']}"
         ),
+        correlation_id=correlation_id,
     )
     return work_item_dto(updated)
 
@@ -641,9 +649,11 @@ def record_repository_binding_blocked(
     expected_revision: int,
     actor: Any,
     idempotency_key: str,
+    correlation_id: str,
     dependencies: RequirementDependencies,
 ) -> WorkItemDto:
     stable_actor = actor_id(actor)
+    stable_correlation_id = validated_correlation_id(correlation_id)
     material = dependencies.secret_manager.load()
     body: dict[str, object] = {
         "workItemId": work_item_id,
@@ -667,6 +677,7 @@ def record_repository_binding_blocked(
             reason_code=reason_code,
             expected_revision=expected_revision,
             actor=actor,
+            correlation_id=stable_correlation_id,
             dependencies=dependencies,
         )
         return IdempotentResponse(status_code=200, body=blocked.model_dump(mode="json"))

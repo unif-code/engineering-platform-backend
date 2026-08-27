@@ -45,6 +45,7 @@ def test_internal_delivery_blocked_callback_keeps_typed_reason_until_adapter_bou
         reason_code=SourceControlReason.MR_CONFLICT,
         expected_revision=5,
         idempotency_key="source-control:blocked:typed-reason",
+        correlation_id="source-control:inbox:typed-reason",
     )
 
     assert result.reason_code is SourceControlReason.MR_CONFLICT

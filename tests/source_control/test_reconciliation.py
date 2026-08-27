@@ -145,7 +145,7 @@ def test_reconciliation_converges_observed_branch(
     expected_state: EffectState,
     binding_count: int,
 ) -> None:
-    dependencies, _requirement, gitlab, _effect = _unknown_effect(isolated_source_control_rw_engine)
+    dependencies, requirement, gitlab, _effect = _unknown_effect(isolated_source_control_rw_engine)
     gitlab.branch_sha = observed_sha
 
     result = reconcile_due_effects(limit=10, dependencies=dependencies)
@@ -157,6 +157,10 @@ def test_reconciliation_converges_observed_branch(
     assert result.effects[0].state is expected_state
     assert result.effects[0].next_reconcile_at is None
     assert actual_bindings == binding_count
+    callbacks = (
+        requirement.ready if expected_state is EffectState.SUCCEEDED else requirement.blocked
+    )
+    assert callbacks[-1].correlation_id == f"source-control:effect:{result.effects[0].id}"
 
 
 def test_stale_reconciliation_lease_cannot_create_binding_after_new_owner_blocks(
@@ -279,6 +283,9 @@ def test_reconciliation_stops_new_writes_when_guard_is_no_longer_valid(
     assert gitlab.calls == []
     assert gitlab.created == []
     assert requirement.blocked[-1].reason_code == safe_reason
+    assert requirement.blocked[-1].correlation_id == (
+        f"source-control:effect:{result.effects[0].id}"
+    )
 
 
 def test_webhook_only_makes_matching_unknown_effect_due(

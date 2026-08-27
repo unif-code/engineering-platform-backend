@@ -901,7 +901,8 @@ def test_pre_put_merged_source_missing_preserves_fact_after_effect_classificatio
     _seed_merge_request(engine)
     if effect_kind != "none":
         _seed_planned_merge_effect(engine, frozen_head=HEAD_SHA)
-    dependencies, requirement, _eligibility, gitlab = _dependencies(engine)
+    audit = FakeAudit()
+    dependencies, requirement, _eligibility, gitlab = _dependencies(engine, audit=audit)
     gitlab.source_head = current_head
     gitlab._merged = True
     gitlab.source_after_merge_error = GitLabBranchNotFound("source branch removed")
@@ -920,6 +921,18 @@ def test_pre_put_merged_source_missing_preserves_fact_after_effect_classificatio
     if effect_kind == "none":
         assert result.effect is None
         assert len(requirement.external_drift) == 1
+        assert [
+            (entry.action, entry.target_id, entry.correlation_id) for entry in audit.entries
+        ] == [
+            (
+                "source_control.integration_merge.external_drift",
+                MR_BINDING_ID,
+                requirement.external_drift[0].correlation_id,
+            )
+        ]
+        assert requirement.external_drift[0].correlation_id == (
+            f"source-control:inbox:{MERGE_MESSAGE_ID}"
+        )
     else:
         assert result.effect is not None
         assert result.effect.state is EffectState.BLOCKED
@@ -965,8 +978,13 @@ def test_merged_provider_fact_waits_for_effect_tri_state_before_drift_callback(
     assert result.observation.state.value == "MERGED"
     assert result.observation.merge_commit_sha == MERGE_COMMIT_SHA
     assert [entry.action for entry in audit.entries] == [
-        "source_control.integration_merge.provider_fact_conflict"
+        "source_control.integration_merge.provider_fact_conflict",
+        "source_control.integration_delivery.blocked",
     ]
+    assert all(
+        entry.correlation_id == requirement.blocked[0].correlation_id for entry in audit.entries
+    )
+    assert requirement.blocked[0].correlation_id == f"source-control:inbox:{MERGE_MESSAGE_ID}"
     with engine.connect() as db:
         observation_count = db.execute(
             text(
@@ -1035,8 +1053,12 @@ def test_proven_merge_conflict_callback_ack_loss_replays_without_duplicate_obser
     assert tuple(gitlab.calls) == provider_calls
     assert gitlab.merge_calls == []
     assert [entry.action for entry in audit.entries] == [
-        "source_control.integration_merge.provider_fact_conflict"
+        "source_control.integration_merge.provider_fact_conflict",
+        "source_control.integration_delivery.blocked",
     ]
+    assert all(
+        entry.correlation_id == requirement.blocked[0].correlation_id for entry in audit.entries
+    )
 
 
 @pytest.mark.parametrize(

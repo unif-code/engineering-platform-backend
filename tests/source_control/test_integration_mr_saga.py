@@ -654,6 +654,7 @@ def _dependencies(
     gitlab: FakeGitLabMergeRequests | None = None,
     eligibility: FakeEligibility | None = None,
     binding_requirement: FakeRequirementBinding | None = None,
+    audit: FakeAudit | None = None,
     clock: FixedClock | MutableClock | None = None,
     delivery_repository_factory: SourceControlIntegrationRepositoryFactory = (
         SqlAlchemySourceControlIntegrationRepository
@@ -672,7 +673,7 @@ def _dependencies(
             engine=engine,
             requirement=binding_requirement,
             eligibility=eligibility or FakeEligibility(),
-            audit=FakeAudit(),
+            audit=audit or FakeAudit(),
             clock=clock or FixedClock(),
             random=FixedRandom(),
             policy=FixedPolicy(),
@@ -1932,10 +1933,12 @@ def test_preflight_block_callback_failure_remains_replayable_after_lease(
     gitlab = FakeGitLabMergeRequests(engine)
     gitlab.source_head = BASE_SHA
     clock = MutableClock()
+    audit = FakeAudit()
     dependencies, requirement, gitlab = _dependencies(
         engine,
         requirement=requirement,
         gitlab=gitlab,
+        audit=audit,
         clock=clock,
     )
 
@@ -1968,6 +1971,18 @@ def test_preflight_block_callback_failure_remains_replayable_after_lease(
     assert inbox["state"] == "PROCESSED"
     assert inbox["attempts"] == 2
     assert inbox["last_error_code"] == "NO_DELIVERY_COMMIT"
+    assert [
+        (entry.action, entry.target_type, entry.target_id, entry.correlation_id)
+        for entry in audit.entries
+    ] == [
+        (
+            "source_control.integration_delivery.blocked",
+            "delivery_request_inbox",
+            MESSAGE_ID,
+            requirement.blocked[0].correlation_id,
+        )
+    ]
+    assert requirement.blocked[0].correlation_id == f"source-control:inbox:{MESSAGE_ID}"
 
 
 def test_preflight_callback_success_survives_inbox_completion_ack_loss(
@@ -1979,10 +1994,12 @@ def test_preflight_callback_success_survives_inbox_completion_ack_loss(
     gitlab = FakeGitLabMergeRequests(engine)
     gitlab.source_head = BASE_SHA
     clock = MutableClock()
+    audit = FakeAudit()
     dependencies, requirement, gitlab = _dependencies(
         engine,
         requirement=requirement,
         gitlab=gitlab,
+        audit=audit,
         clock=clock,
         delivery_repository_factory=CommitThenRaiseCompleteInboxRepositoryFactory(),
     )
@@ -2006,6 +2023,17 @@ def test_preflight_callback_success_survives_inbox_completion_ack_loss(
     assert inbox["state"] == "PROCESSED"
     assert inbox["attempts"] == 1
     assert inbox["last_error_code"] == "NO_DELIVERY_COMMIT"
+    assert [
+        (entry.action, entry.target_type, entry.target_id, entry.correlation_id)
+        for entry in audit.entries
+    ] == [
+        (
+            "source_control.integration_delivery.blocked",
+            "delivery_request_inbox",
+            MESSAGE_ID,
+            f"source-control:inbox:{MESSAGE_ID}",
+        )
+    ]
 
 
 def test_preflight_callback_keys_are_scoped_to_message_and_work_item(
@@ -2506,6 +2534,9 @@ def test_final_provider_state_selects_exact_create_effect_and_requirement_outcom
         assert requirement.external_drift == []
         assert [blocked.reason_code for blocked in requirement.blocked] == ["MR_CLOSED"]
         assert requirement.blocked[0].binding_id == result.binding.id
+        assert requirement.blocked[0].correlation_id == (
+            f"source-control:effect:{result.effect.id}"
+        )
         assert requirement.context.integration_delivery_state == "BLOCKED"
     elif candidate_state == "merged":
         assert result.effect.state is EffectState.BLOCKED
@@ -2517,6 +2548,9 @@ def test_final_provider_state_selects_exact_create_effect_and_requirement_outcom
         assert requirement.ready == []
         assert requirement.blocked == []
         assert [drift.binding_id for drift in requirement.external_drift] == [result.binding.id]
+        assert requirement.external_drift[0].correlation_id == (
+            f"source-control:effect:{result.effect.id}"
+        )
         assert requirement.context.integration_delivery_state == "BLOCKED"
     else:
         assert result.effect.state is EffectState.UNKNOWN
@@ -2527,6 +2561,9 @@ def test_final_provider_state_selects_exact_create_effect_and_requirement_outcom
         assert requirement.blocked == []
         assert requirement.external_drift == []
         assert len(requirement.pending) == 1
+        assert requirement.pending[0].correlation_id == (
+            f"source-control:effect:{result.effect.id}"
+        )
         assert requirement.context.integration_delivery_state == "RECONCILIATION_PENDING"
     assert "create_mr" not in gitlab.calls
 
