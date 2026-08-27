@@ -5,16 +5,19 @@ from typing import Any, Literal
 from uuid import UUID
 
 import pytest
-from sqlalchemy import Connection, Engine
+from sqlalchemy import Connection, Engine, text
 
 from control_plane.app.modules.source_control import (
     EffectOperation,
     EffectState,
+    RequirementCallbackUnavailable,
     SourceControlDependencies,
     SourceControlDependencyUnavailable,
     process_integration_mr_request,
 )
 from control_plane.app.modules.source_control.adapters import (
+    RequirementFacadeBindingAdapter,
+    RequirementFacadeDeliveryAdapter,
     SqlAlchemySourceControlIntegrationRepository,
     SqlAlchemySourceControlRepository,
 )
@@ -27,8 +30,10 @@ from control_plane.app.modules.source_control.ports import (
     GitLabBranchNotFound,
     GitLabMergeRequestSnapshot,
     GitLabProjectDeliveryProfile,
+    GitLabProjectPolicyUnsupported,
     GitLabProviderUnavailable,
     GitLabResultUnknown,
+    GitLabTargetBranchNotProtected,
     IntegrationDeliveryBlockedResult,
     IntegrationMergedResult,
     IntegrationMrReadyResult,
@@ -37,6 +42,12 @@ from control_plane.app.modules.source_control.ports import (
     RequirementDeliveryContext,
     SourceControlIntegrationRepositoryFactory,
 )
+from tests.requirement.conftest import (
+    IsolatedRequirementDatabase,
+    _temporary_requirement_role_engine,
+)
+from tests.requirement.test_baseline_gate import _gate_dependencies
+from tests.requirement.test_integration_delivery_relay import _requested_mr
 
 NOW = datetime(2026, 8, 26, 8, 0, tzinfo=UTC)
 MESSAGE_ID = "30000000-0000-0000-0000-000000000701"
@@ -49,6 +60,9 @@ BRANCH_BINDING_ID = "70000000-0000-0000-0000-000000000701"
 BASE_SHA = "a" * 40
 HEAD_SHA = "b" * 40
 TASK_BRANCH = "feat/wi-701-integration-mr"
+SECOND_MESSAGE_ID = "30000000-0000-0000-0000-000000000702"
+SECOND_REQUIREMENT_ID = "40000000-0000-0000-0000-000000000702"
+SECOND_WORK_ITEM_ID = "50000000-0000-0000-0000-000000000702"
 
 
 class FixedClock:
@@ -133,6 +147,14 @@ class FakeRequirementBinding:
         raise AssertionError(result)
 
 
+class MappedRequirementBinding(FakeRequirementBinding):
+    def __init__(self, contexts: dict[str, RequirementBindingContext]) -> None:
+        self.contexts = contexts
+
+    def binding_context(self, work_item_id: str) -> RequirementBindingContext:
+        return self.contexts[work_item_id]
+
+
 class FakeRequirementDelivery:
     def __init__(self, context: RequirementDeliveryContext | None = None) -> None:
         self.context = context or _delivery_context()
@@ -142,6 +164,12 @@ class FakeRequirementDelivery:
         self.fail_ready = False
         self.fail_blocked = False
         self.fail_pending = False
+        self.ready_attempts = 0
+        self.blocked_attempts = 0
+        self.pending_attempts = 0
+        self._ready_keys: set[str] = set()
+        self._blocked_keys: set[str] = set()
+        self._pending_keys: set[str] = set()
 
     def delivery_context(self, work_item_id: str) -> RequirementDeliveryContext:
         assert work_item_id == WORK_ITEM_ID
@@ -168,18 +196,30 @@ class FakeRequirementDelivery:
         raise AssertionError((message_id, error_code, retry_at))
 
     def record_mr_ready(self, result: IntegrationMrReadyResult) -> None:
+        self.ready_attempts += 1
         if self.fail_ready:
             raise RuntimeError("requirement callback unavailable")
+        if result.idempotency_key in self._ready_keys:
+            return
+        self._ready_keys.add(result.idempotency_key)
         self.ready.append(result)
 
     def record_blocked(self, result: IntegrationDeliveryBlockedResult) -> None:
+        self.blocked_attempts += 1
         if self.fail_blocked:
             raise RuntimeError("requirement callback unavailable")
+        if result.idempotency_key in self._blocked_keys:
+            return
+        self._blocked_keys.add(result.idempotency_key)
         self.blocked.append(result)
 
     def record_pending(self, result: IntegrationReconciliationPendingResult) -> None:
+        self.pending_attempts += 1
         if self.fail_pending:
             raise RuntimeError("requirement callback unavailable")
+        if result.idempotency_key in self._pending_keys:
+            return
+        self._pending_keys.add(result.idempotency_key)
         self.pending.append(result)
 
     def record_merged(self, result: IntegrationMergedResult) -> None:
@@ -189,11 +229,56 @@ class FakeRequirementDelivery:
         raise AssertionError(result)
 
 
+class AdvancingRequirementDelivery(FakeRequirementDelivery):
+    def record_mr_ready(self, result: IntegrationMrReadyResult) -> None:
+        super().record_mr_ready(result)
+        self.context = self.context.model_copy(
+            update={
+                "requirement_revision": self.context.requirement_revision + 1,
+                "requirement_state": "VERIFYING",
+                "work_item_revision": self.context.work_item_revision + 1,
+                "work_item_state": "VERIFYING",
+                "integration_delivery_state": "MR_OPEN",
+                "integration_merge_request_binding_id": result.binding_id,
+            }
+        )
+
+    def record_blocked(self, result: IntegrationDeliveryBlockedResult) -> None:
+        super().record_blocked(result)
+        self.context = self.context.model_copy(
+            update={
+                "work_item_revision": self.context.work_item_revision + 1,
+                "integration_delivery_state": "BLOCKED",
+            }
+        )
+
+    def record_pending(self, result: IntegrationReconciliationPendingResult) -> None:
+        super().record_pending(result)
+        self.context = self.context.model_copy(
+            update={
+                "work_item_revision": self.context.work_item_revision + 1,
+                "integration_delivery_state": "RECONCILIATION_PENDING",
+            }
+        )
+
+
+class MappedRequirementDelivery(FakeRequirementDelivery):
+    def __init__(self, contexts: dict[str, RequirementDeliveryContext]) -> None:
+        super().__init__(next(iter(contexts.values())))
+        self.contexts = contexts
+
+    def delivery_context(self, work_item_id: str) -> RequirementDeliveryContext:
+        return self.contexts[work_item_id]
+
+
 class FakeGitLabMergeRequests:
     def __init__(self, engine: Engine) -> None:
         self.engine = engine
         self.calls: list[str] = []
         self.source_head = HEAD_SHA
+        self.source_readback_head: str | None = None
+        self.source_readback_error: Exception | None = None
+        self._source_reads = 0
         self.candidates: list[GitLabMergeRequestSnapshot] = []
         self.readback = _mr_snapshot()
         self.create_error: Exception | None = None
@@ -203,6 +288,7 @@ class FakeGitLabMergeRequests:
         self.branch_errors: dict[str, Exception] = {}
         self.before_readback: Callable[[], None] | None = None
         self.expected_title = f"feat: integrate {WORK_ITEM_ID}"
+        self.expected_effect_head = HEAD_SHA
 
     def get_project_delivery_profile(self, _repository: object) -> GitLabProjectDeliveryProfile:
         self.calls.append("profile")
@@ -219,9 +305,20 @@ class FakeGitLabMergeRequests:
         self.calls.append("dev_branch" if name == "dev" else "source_branch")
         if name in self.branch_errors:
             raise self.branch_errors[name]
+        if name == TASK_BRANCH:
+            self._source_reads += 1
+            if self._source_reads > 1 and self.source_readback_error is not None:
+                raise self.source_readback_error
+            source_head = (
+                self.source_head
+                if self._source_reads == 1 or self.source_readback_head is None
+                else self.source_readback_head
+            )
+        else:
+            source_head = "c" * 40
         return BranchSnapshot(
             name=name,
-            commit_sha=self.source_head if name == TASK_BRANCH else "c" * 40,
+            commit_sha=source_head,
         )
 
     def list_merge_requests(
@@ -230,9 +327,11 @@ class FakeGitLabMergeRequests:
         *,
         source_branch: str,
         target_branch: str,
+        state: Literal["all"] | None = None,
     ) -> list[GitLabMergeRequestSnapshot]:
         self.calls.append("list_mr")
         assert (source_branch, target_branch) == (TASK_BRANCH, "dev")
+        assert state == "all"
         if self.list_error is not None:
             raise self.list_error
         return self.candidates
@@ -261,7 +360,7 @@ class FakeGitLabMergeRequests:
         }
         assert source_branch == TASK_BRANCH
         assert target_branch == "dev"
-        assert expected_head_sha == HEAD_SHA
+        assert expected_head_sha == self.expected_effect_head
         assert title == self.expected_title
         assert description == (
             f"Requirement: {REQUIREMENT_ID}\n"
@@ -325,6 +424,7 @@ def _mr_snapshot(
 def _delivery_context() -> RequirementDeliveryContext:
     return RequirementDeliveryContext(
         requirement_id=REQUIREMENT_ID,
+        requirement_revision=3,
         requirement_state="IN_PROGRESS",
         workspace_id=WORKSPACE_ID,
         work_item_id=WORK_ITEM_ID,
@@ -420,6 +520,36 @@ def _seed_source_control(engine: Engine) -> None:
             repository_id=REPOSITORY_ID,
             actor_id="employee-1",
             integration_merge_request_binding_id=None,
+            now=NOW,
+        )
+
+
+def _seed_integration_effect(
+    engine: Engine,
+    *,
+    state: EffectState = EffectState.PLANNED,
+    requirement_id: str = REQUIREMENT_ID,
+    request_fingerprint: str = "sha256:delivery-request",
+    branch_binding_id: str = BRANCH_BINDING_ID,
+    head_sha: str = HEAD_SHA,
+) -> None:
+    with engine.begin() as db:
+        SqlAlchemySourceControlIntegrationRepository(db).insert_effect(
+            id="80000000-0000-0000-0000-000000000701",
+            effect_key=f"source-control:create-integration-mr:{WORK_ITEM_ID}",
+            operation=EffectOperation.CREATE_INTEGRATION_MR.value,
+            subject_key=f"work-item:{WORK_ITEM_ID}",
+            payload={"branchBindingId": branch_binding_id, "headSha": head_sha},
+            work_item_id=WORK_ITEM_ID,
+            requirement_id=requirement_id,
+            repository_id=REPOSITORY_ID,
+            request_fingerprint=request_fingerprint,
+            attempts=1 if state is EffectState.IN_FLIGHT else 0,
+            next_reconcile_at=(
+                NOW + timedelta(minutes=2) if state is EffectState.IN_FLIGHT else None
+            ),
+            state=state.value,
+            requirement_callback_state="PENDING",
             now=NOW,
         )
 
@@ -581,6 +711,105 @@ def test_mismatched_requirement_contexts_fail_closed_before_provider_calls(
     assert gitlab.calls == []
 
 
+def test_mismatched_originating_requirement_revision_fails_closed_before_provider_calls(
+    isolated_source_control_database: Any,
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_source_control(engine)
+    requirement = FakeRequirementDelivery(
+        _delivery_context().model_copy(update={"requirement_revision": 4})
+    )
+    gitlab = FakeGitLabMergeRequests(engine)
+    dependencies, _requirement, _gitlab = _dependencies(
+        engine,
+        requirement=requirement,
+        gitlab=gitlab,
+    )
+
+    with pytest.raises(SourceControlDependencyUnavailable):
+        process_integration_mr_request(
+            message_id=MESSAGE_ID,
+            dependencies=dependencies,
+        )
+
+    assert gitlab.calls == []
+
+
+@pytest.mark.parametrize(
+    "effect_values",
+    [
+        {"request_fingerprint": "sha256:other-request"},
+        {"requirement_id": "40000000-0000-0000-0000-000000000799"},
+        {"branch_binding_id": "70000000-0000-0000-0000-000000000799"},
+    ],
+    ids=("fingerprint", "requirement", "branch-binding"),
+)
+def test_existing_planned_effect_local_collision_blocks_without_provider_calls(
+    isolated_source_control_database: Any,
+    effect_values: dict[str, str],
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_source_control(engine)
+    _seed_integration_effect(engine, **effect_values)
+    gitlab = FakeGitLabMergeRequests(engine)
+    dependencies, requirement, _gitlab = _dependencies(engine, gitlab=gitlab)
+
+    result = process_integration_mr_request(
+        message_id=MESSAGE_ID,
+        dependencies=dependencies,
+    )
+
+    assert result.effect is None
+    assert result.blocked_reason == "MR_CONFLICT"
+    assert requirement.blocked[0].reason_code == "MR_CONFLICT"
+    assert gitlab.calls == []
+
+
+def test_existing_planned_effect_frozen_head_change_blocks_before_list_or_post(
+    isolated_source_control_database: Any,
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_source_control(engine)
+    frozen_head = "d" * 40
+    _seed_integration_effect(engine, head_sha=frozen_head)
+    gitlab = FakeGitLabMergeRequests(engine)
+    dependencies, requirement, _gitlab = _dependencies(engine, gitlab=gitlab)
+
+    result = process_integration_mr_request(
+        message_id=MESSAGE_ID,
+        dependencies=dependencies,
+    )
+
+    assert result.effect is not None
+    assert result.effect.payload.head_sha == frozen_head
+    assert result.effect.state is EffectState.BLOCKED
+    assert result.blocked_reason == "HEAD_SHA_CHANGED"
+    assert requirement.blocked[0].reason_code == "HEAD_SHA_CHANGED"
+    assert "list_mr" not in gitlab.calls
+    assert "create_mr" not in gitlab.calls
+
+
+def test_existing_in_flight_effect_replays_pending_without_provider_write(
+    isolated_source_control_database: Any,
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_source_control(engine)
+    _seed_integration_effect(engine, state=EffectState.IN_FLIGHT)
+    gitlab = FakeGitLabMergeRequests(engine)
+    dependencies, requirement, _gitlab = _dependencies(engine, gitlab=gitlab)
+
+    result = process_integration_mr_request(
+        message_id=MESSAGE_ID,
+        dependencies=dependencies,
+    )
+
+    assert result.effect is not None
+    assert result.effect.state is EffectState.IN_FLIGHT
+    assert result.blocked_reason == "RECONCILIATION_PENDING"
+    assert len(requirement.pending) == 1
+    assert gitlab.calls == []
+
+
 def test_create_mr_saga_persists_effect_before_post_and_reads_back(
     isolated_source_control_database: Any,
 ) -> None:
@@ -609,6 +838,7 @@ def test_create_mr_saga_persists_effect_before_post_and_reads_back(
         "list_mr",
         "create_mr",
         "get_mr",
+        "source_branch",
     ]
 
 
@@ -665,6 +895,7 @@ def test_unique_matching_merge_request_is_adopted_without_post(
         "dev_branch",
         "list_mr",
         "get_mr",
+        "source_branch",
     ]
 
 
@@ -779,6 +1010,295 @@ def test_pending_callback_failure_replays_without_repeating_provider_calls(
     assert len(requirement.pending) == 1
 
 
+def test_terminal_ready_replay_precedes_advanced_requirement_admission(
+    isolated_source_control_database: Any,
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_source_control(engine)
+    requirement = AdvancingRequirementDelivery()
+    dependencies, requirement, gitlab = _dependencies(
+        engine,
+        requirement=requirement,
+    )
+
+    first = process_integration_mr_request(
+        message_id=MESSAGE_ID,
+        dependencies=dependencies,
+    )
+    provider_calls = tuple(gitlab.calls)
+    second = process_integration_mr_request(
+        message_id=MESSAGE_ID,
+        dependencies=dependencies,
+    )
+
+    assert first.effect is not None
+    assert first.effect.callback_state.value == "ACKED"
+    assert second.effect is not None
+    assert second.effect.callback_state.value == "ACKED"
+    assert second.binding == first.binding
+    assert tuple(gitlab.calls) == provider_calls
+    assert requirement.ready_attempts == 1
+
+
+def test_terminal_blocked_replay_precedes_advanced_requirement_admission(
+    isolated_source_control_database: Any,
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_source_control(engine)
+    requirement = AdvancingRequirementDelivery()
+    gitlab = FakeGitLabMergeRequests(engine)
+    gitlab.candidates = [_mr_snapshot(), _mr_snapshot(iid=18)]
+    dependencies, requirement, gitlab = _dependencies(
+        engine,
+        requirement=requirement,
+        gitlab=gitlab,
+    )
+
+    first = process_integration_mr_request(
+        message_id=MESSAGE_ID,
+        dependencies=dependencies,
+    )
+    provider_calls = tuple(gitlab.calls)
+    second = process_integration_mr_request(
+        message_id=MESSAGE_ID,
+        dependencies=dependencies,
+    )
+
+    assert first.effect is not None
+    assert first.effect.state is EffectState.BLOCKED
+    assert second.effect is not None
+    assert second.effect.state is EffectState.BLOCKED
+    assert second.blocked_reason == "MR_CONFLICT"
+    assert tuple(gitlab.calls) == provider_calls
+    assert requirement.blocked_attempts == 1
+
+
+def test_terminal_pending_replay_precedes_advanced_requirement_admission(
+    isolated_source_control_database: Any,
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_source_control(engine)
+    requirement = AdvancingRequirementDelivery()
+    gitlab = FakeGitLabMergeRequests(engine)
+    gitlab.create_error = GitLabResultUnknown("post timed out")
+    dependencies, requirement, gitlab = _dependencies(
+        engine,
+        requirement=requirement,
+        gitlab=gitlab,
+    )
+
+    first = process_integration_mr_request(
+        message_id=MESSAGE_ID,
+        dependencies=dependencies,
+    )
+    provider_calls = tuple(gitlab.calls)
+    second = process_integration_mr_request(
+        message_id=MESSAGE_ID,
+        dependencies=dependencies,
+    )
+
+    assert first.effect is not None
+    assert first.effect.state is EffectState.UNKNOWN
+    assert second.effect is not None
+    assert second.effect.state is EffectState.UNKNOWN
+    assert second.blocked_reason == "RECONCILIATION_PENDING"
+    assert tuple(gitlab.calls) == provider_calls
+    assert requirement.pending_attempts == 1
+
+
+def test_terminal_success_replay_advances_real_requirement_once_without_provider(
+    isolated_source_control_database: Any,
+) -> None:
+    source_engine = isolated_source_control_database.runtime
+    with _temporary_requirement_role_engine(
+        isolated_source_control_database.owner
+    ) as requirement_engine:
+        requirement_database = IsolatedRequirementDatabase(
+            owner=isolated_source_control_database.owner,
+            runtime=requirement_engine,
+        )
+        requested = _requested_mr(
+            requirement_database,
+            key_suffix="source-control-terminal-replay",
+        )
+        requirement_dependencies = _gate_dependencies()
+        delivery = RequirementFacadeDeliveryAdapter(
+            engine=requirement_engine,
+            dependencies=requirement_dependencies,
+        )
+        binding_requirement = RequirementFacadeBindingAdapter(
+            engine=requirement_engine,
+            dependencies=requirement_dependencies,
+            clock=FixedClock(),
+        )
+        envelope = delivery.claim_requests(
+            limit=1,
+            lease_until=NOW + timedelta(minutes=1),
+        )[0]
+        delivery_context = delivery.delivery_context(requested.work_item.id)
+        branch_effect_id = "60000000-0000-0000-0000-000000000901"
+        branch_binding_id = "70000000-0000-0000-0000-000000000901"
+        integration_effect_id = "80000000-0000-0000-0000-000000000901"
+        merge_request_binding_id = "90000000-0000-0000-0000-000000000901"
+        head_sha = "b" * 40
+        assert delivery_context.base_commit_sha is not None
+        assert delivery_context.task_branch is not None
+        with source_engine.begin() as db:
+            source = SqlAlchemySourceControlRepository(db)
+            integration = SqlAlchemySourceControlIntegrationRepository(db)
+            source.insert_workspace_repository(
+                id=delivery_context.repository_id,
+                workspace_id=delivery_context.workspace_id,
+                provider="GITLAB",
+                project_id="101",
+                project_path="platform/backend",
+                default_branch="main",
+                connection_ref="gitlab-dev",
+                credential_secret_ref="secret-ref:credential",
+                webhook_signing_secret_ref="secret-ref:webhook",
+                status="AUTHORIZED",
+                revision=1,
+                now=NOW,
+            )
+            source.insert_effect(
+                id=branch_effect_id,
+                effect_key=f"source-control:create-task-branch:{requested.work_item.id}",
+                operation="CREATE_TASK_BRANCH",
+                work_item_id=requested.work_item.id,
+                requirement_id=requested.requirement.id,
+                repository_id=delivery_context.repository_id,
+                work_item_number=901,
+                branch_name=delivery_context.task_branch,
+                base_commit_sha=delivery_context.base_commit_sha,
+                request_fingerprint="sha256:real-branch",
+                attempts=1,
+                state="SUCCEEDED",
+                requirement_callback_state="ACKED",
+                next_reconcile_at=None,
+                completed_at=NOW,
+                now=NOW,
+            )
+            source.insert_binding(
+                id=branch_binding_id,
+                work_item_id=requested.work_item.id,
+                requirement_id=requested.requirement.id,
+                workspace_id=delivery_context.workspace_id,
+                repository_id=delivery_context.repository_id,
+                work_item_number=901,
+                base_commit_sha=delivery_context.base_commit_sha,
+                branch_name=delivery_context.task_branch,
+                effect_id=branch_effect_id,
+                now=NOW,
+            )
+            integration.accept_delivery_request(
+                message_id=envelope.message_id,
+                topic=envelope.topic,
+                payload_hash=envelope.payload_hash,
+                requirement_id=envelope.requirement_id,
+                requirement_revision=envelope.requirement_revision,
+                work_item_id=envelope.work_item_id,
+                work_item_revision=envelope.work_item_revision,
+                repository_id=envelope.repository_id,
+                actor_id=envelope.actor_id,
+                integration_merge_request_binding_id=None,
+                now=NOW,
+            )
+            claimed = integration.claim_delivery_request(
+                envelope.message_id,
+                now=NOW,
+                lease_until=NOW + timedelta(minutes=1),
+            )
+            assert claimed is not None
+            completed = integration.complete_delivery_request(
+                envelope.message_id,
+                expected_attempts=claimed["attempts"],
+                now=NOW,
+            )
+            assert completed is not None
+            integration.insert_effect(
+                id=integration_effect_id,
+                effect_key=(f"source-control:create-integration-mr:{requested.work_item.id}"),
+                operation=EffectOperation.CREATE_INTEGRATION_MR.value,
+                subject_key=f"work-item:{requested.work_item.id}",
+                payload={
+                    "branchBindingId": branch_binding_id,
+                    "headSha": head_sha,
+                },
+                work_item_id=requested.work_item.id,
+                requirement_id=requested.requirement.id,
+                repository_id=delivery_context.repository_id,
+                request_fingerprint=envelope.payload_hash,
+                attempts=1,
+                next_reconcile_at=None,
+                state=EffectState.SUCCEEDED.value,
+                requirement_callback_state="PENDING",
+                completed_at=NOW,
+                now=NOW,
+            )
+            integration.insert_merge_request_binding(
+                id=merge_request_binding_id,
+                kind="INTEGRATION",
+                work_item_id=requested.work_item.id,
+                requirement_id=requested.requirement.id,
+                workspace_id=delivery_context.workspace_id,
+                repository_id=delivery_context.repository_id,
+                branch_binding_id=branch_binding_id,
+                external_project_id="101",
+                merge_request_iid=17,
+                source_branch=delivery_context.task_branch,
+                target_branch="dev",
+                create_effect_id=integration_effect_id,
+                head_sha=head_sha,
+                creation_origin="PLATFORM_CREATED",
+                now=NOW,
+            )
+            integration.append_merge_request_observation(
+                id="91000000-0000-0000-0000-000000000901",
+                binding_id=merge_request_binding_id,
+                head_sha=head_sha,
+                state="OPEN",
+                merge_commit_sha=None,
+                external_merge_user_id=None,
+                merged_at=None,
+                observation_digest="sha256:real-terminal-replay",
+                observed_at=NOW,
+            )
+
+        gitlab = FakeGitLabMergeRequests(source_engine)
+        dependencies = SourceControlDependencies(
+            repository_factory=SqlAlchemySourceControlRepository,
+            engine=source_engine,
+            requirement=binding_requirement,
+            eligibility=FakeEligibility(),
+            audit=FakeAudit(),
+            clock=FixedClock(),
+            random=FixedRandom(),
+            policy=FixedPolicy(),
+            delivery_repository_factory=SqlAlchemySourceControlIntegrationRepository,
+            requirement_delivery=delivery,
+            gitlab_merge_requests=gitlab,
+        )
+
+        first = process_integration_mr_request(
+            message_id=envelope.message_id,
+            dependencies=dependencies,
+        )
+        after_first = delivery.delivery_context(requested.work_item.id)
+        second = process_integration_mr_request(
+            message_id=envelope.message_id,
+            dependencies=dependencies,
+        )
+        after_second = delivery.delivery_context(requested.work_item.id)
+
+    assert first.effect is not None
+    assert first.effect.callback_state.value == "ACKED"
+    assert second.effect == first.effect
+    assert after_first.integration_delivery_state == "MR_OPEN"
+    assert after_first.integration_merge_request_binding_id == merge_request_binding_id
+    assert after_second == after_first
+    assert gitlab.calls == []
+
+
 class FailOnceOnBindingRepository(SqlAlchemySourceControlIntegrationRepository):
     def __init__(self, db: Connection, state: dict[str, bool]) -> None:
         super().__init__(db)
@@ -797,6 +1317,38 @@ class FailOnceOnBindingRepositoryFactory:
 
     def __call__(self, db: Connection) -> FailOnceOnBindingRepository:
         return FailOnceOnBindingRepository(db, self.state)
+
+
+class CommitThenRaiseCompleteInboxRepository(SqlAlchemySourceControlIntegrationRepository):
+    def __init__(self, db: Connection, state: dict[str, bool]) -> None:
+        super().__init__(db)
+        self.state = state
+
+    def complete_delivery_request(
+        self,
+        message_id: str,
+        *,
+        expected_attempts: int,
+        now: datetime,
+    ) -> object:
+        completed = super().complete_delivery_request(
+            message_id,
+            expected_attempts=expected_attempts,
+            now=now,
+        )
+        if completed is not None and not self.state["raised"]:
+            self.state["raised"] = True
+            self.db.commit()
+            raise RuntimeError("local commit acknowledgement was lost")
+        return completed
+
+
+class CommitThenRaiseCompleteInboxRepositoryFactory:
+    def __init__(self) -> None:
+        self.state = {"raised": False}
+
+    def __call__(self, db: Connection) -> CommitThenRaiseCompleteInboxRepository:
+        return CommitThenRaiseCompleteInboxRepository(db, self.state)
 
 
 def test_local_persistence_failure_after_create_marks_effect_unknown(
@@ -824,6 +1376,44 @@ def test_local_persistence_failure_after_create_marks_effect_unknown(
     with engine.connect() as db:
         repository = SqlAlchemySourceControlIntegrationRepository(db)
         assert repository.merge_request_binding_by_work_item(WORK_ITEM_ID) is None
+
+
+def test_committed_source_control_facts_survive_local_commit_ack_loss(
+    isolated_source_control_database: Any,
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_source_control(engine)
+    factory = CommitThenRaiseCompleteInboxRepositoryFactory()
+    dependencies, requirement, _gitlab = _dependencies(
+        engine,
+        delivery_repository_factory=factory,
+    )
+
+    result = process_integration_mr_request(
+        message_id=MESSAGE_ID,
+        dependencies=dependencies,
+    )
+
+    assert result.effect is not None
+    assert result.effect.state is EffectState.SUCCEEDED
+    assert result.binding is not None
+    assert result.observation is not None
+    assert len(requirement.ready) == 1
+    with engine.connect() as db:
+        repository = SqlAlchemySourceControlIntegrationRepository(db)
+        binding = repository.merge_request_binding_by_work_item(WORK_ITEM_ID)
+        assert binding is not None
+        observation_count = db.execute(
+            text(
+                "SELECT count(*) FROM source_control.merge_request_observation "
+                "WHERE binding_id = CAST(:binding_id AS uuid)"
+            ),
+            {"binding_id": str(binding["id"])},
+        ).scalar_one()
+        inbox = repository.delivery_request(MESSAGE_ID)
+    assert observation_count == 1
+    assert inbox is not None
+    assert inbox["state"] == "PROCESSED"
 
 
 def test_ready_callback_failure_replays_without_repeating_provider_calls(
@@ -928,10 +1518,10 @@ def test_preflight_block_callback_failure_remains_replayable_after_lease(
     assert second.effect is None
     assert second.blocked_reason == "NO_DELIVERY_COMMIT"
     assert len(requirement.blocked) == 1
+    assert requirement.blocked[0].idempotency_key == (
+        f"source-control:integration-blocked:{MESSAGE_ID}:{WORK_ITEM_ID}:NO_DELIVERY_COMMIT"
+    )
     assert gitlab.calls == [
-        "profile",
-        "source_branch",
-        "dev_branch",
         "profile",
         "source_branch",
         "dev_branch",
@@ -941,6 +1531,144 @@ def test_preflight_block_callback_failure_remains_replayable_after_lease(
     assert inbox is not None
     assert inbox["state"] == "PROCESSED"
     assert inbox["attempts"] == 2
+    assert inbox["last_error_code"] == "NO_DELIVERY_COMMIT"
+
+
+class FailOnceCompleteInboxRepository(SqlAlchemySourceControlIntegrationRepository):
+    def __init__(self, db: Connection, state: dict[str, bool]) -> None:
+        super().__init__(db)
+        self.state = state
+
+    def complete_delivery_request(
+        self,
+        message_id: str,
+        *,
+        expected_attempts: int,
+        now: datetime,
+    ) -> object:
+        if not self.state["failed"]:
+            self.state["failed"] = True
+            return None
+        return super().complete_delivery_request(
+            message_id,
+            expected_attempts=expected_attempts,
+            now=now,
+        )
+
+
+class FailOnceCompleteInboxRepositoryFactory:
+    def __init__(self) -> None:
+        self.state = {"failed": False}
+
+    def __call__(self, db: Connection) -> FailOnceCompleteInboxRepository:
+        return FailOnceCompleteInboxRepository(db, self.state)
+
+
+def test_preflight_callback_success_survives_inbox_completion_ack_loss(
+    isolated_source_control_database: Any,
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_source_control(engine)
+    requirement = FakeRequirementDelivery()
+    gitlab = FakeGitLabMergeRequests(engine)
+    gitlab.source_head = BASE_SHA
+    clock = MutableClock()
+    dependencies, requirement, gitlab = _dependencies(
+        engine,
+        requirement=requirement,
+        gitlab=gitlab,
+        clock=clock,
+        delivery_repository_factory=FailOnceCompleteInboxRepositoryFactory(),
+    )
+
+    with pytest.raises(RequirementCallbackUnavailable):
+        process_integration_mr_request(
+            message_id=MESSAGE_ID,
+            dependencies=dependencies,
+        )
+    clock.current = NOW + timedelta(minutes=3)
+    replay = process_integration_mr_request(
+        message_id=MESSAGE_ID,
+        dependencies=dependencies,
+    )
+
+    assert replay.blocked_reason == "NO_DELIVERY_COMMIT"
+    assert len(requirement.blocked) == 1
+    assert requirement.blocked_attempts == 2
+    with engine.connect() as db:
+        inbox = SqlAlchemySourceControlIntegrationRepository(db).delivery_request(MESSAGE_ID)
+    assert inbox["state"] == "PROCESSED"
+    assert inbox["attempts"] == 2
+    assert inbox["last_error_code"] == "NO_DELIVERY_COMMIT"
+
+
+def test_preflight_callback_keys_are_scoped_to_message_and_work_item(
+    isolated_source_control_database: Any,
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_source_control(engine)
+    with engine.begin() as db:
+        SqlAlchemySourceControlIntegrationRepository(db).accept_delivery_request(
+            message_id=SECOND_MESSAGE_ID,
+            topic="requirement.integration-merge-request.requested",
+            payload_hash="sha256:second-delivery-request",
+            requirement_id=SECOND_REQUIREMENT_ID,
+            requirement_revision=3,
+            work_item_id=SECOND_WORK_ITEM_ID,
+            work_item_revision=5,
+            repository_id=REPOSITORY_ID,
+            actor_id="employee-1",
+            integration_merge_request_binding_id=None,
+            now=NOW,
+        )
+    delivery_contexts = {
+        WORK_ITEM_ID: _delivery_context().model_copy(update={"human_owner_id": "employee-2"}),
+        SECOND_WORK_ITEM_ID: _delivery_context().model_copy(
+            update={
+                "requirement_id": SECOND_REQUIREMENT_ID,
+                "work_item_id": SECOND_WORK_ITEM_ID,
+                "human_owner_id": "employee-2",
+            }
+        ),
+    }
+    binding_contexts = {
+        WORK_ITEM_ID: _binding_context().model_copy(update={"human_owner_id": "employee-2"}),
+        SECOND_WORK_ITEM_ID: _binding_context().model_copy(
+            update={
+                "requirement_id": SECOND_REQUIREMENT_ID,
+                "work_item_id": SECOND_WORK_ITEM_ID,
+                "human_owner_id": "employee-2",
+            }
+        ),
+    }
+    requirement = MappedRequirementDelivery(delivery_contexts)
+    gitlab = FakeGitLabMergeRequests(engine)
+    dependencies, requirement, gitlab = _dependencies(
+        engine,
+        requirement=requirement,
+        binding_requirement=MappedRequirementBinding(binding_contexts),
+        gitlab=gitlab,
+    )
+
+    first = process_integration_mr_request(
+        message_id=MESSAGE_ID,
+        dependencies=dependencies,
+    )
+    second = process_integration_mr_request(
+        message_id=SECOND_MESSAGE_ID,
+        dependencies=dependencies,
+    )
+
+    assert first.blocked_reason == "OWNER_MISMATCH"
+    assert second.blocked_reason == "OWNER_MISMATCH"
+    assert [result.idempotency_key for result in requirement.blocked] == [
+        f"source-control:integration-blocked:{MESSAGE_ID}:{WORK_ITEM_ID}:OWNER_MISMATCH",
+        (
+            "source-control:integration-blocked:"
+            f"{SECOND_MESSAGE_ID}:{SECOND_WORK_ITEM_ID}:OWNER_MISMATCH"
+        ),
+    ]
+    assert gitlab.calls == []
 
 
 def test_readback_head_drift_appends_latest_observation_without_mutating_effect_payload(
@@ -951,6 +1679,7 @@ def test_readback_head_drift_appends_latest_observation_without_mutating_effect_
     moved_head = "d" * 40
     gitlab = FakeGitLabMergeRequests(engine)
     gitlab.readback = _mr_snapshot(head_sha=moved_head)
+    gitlab.source_readback_head = moved_head
     dependencies, _requirement, _gitlab = _dependencies(engine, gitlab=gitlab)
 
     result = process_integration_mr_request(
@@ -964,9 +1693,68 @@ def test_readback_head_drift_appends_latest_observation_without_mutating_effect_
         "headSha": HEAD_SHA,
     }
     assert result.binding is not None
-    assert result.binding.head_sha == HEAD_SHA
+    assert result.binding.head_sha == moved_head
     assert result.observation is not None
     assert result.observation.head_sha == moved_head
+
+
+@pytest.mark.parametrize(
+    ("readback_head", "source_readback_head", "source_readback_error"),
+    [
+        ("d" * 40, HEAD_SHA, None),
+        (HEAD_SHA, HEAD_SHA, GitLabProviderUnavailable("second source read unavailable")),
+    ],
+    ids=("head-mismatch", "second-source-unavailable"),
+)
+def test_final_mr_and_source_branch_double_read_failure_is_unknown(
+    isolated_source_control_database: Any,
+    readback_head: str,
+    source_readback_head: str,
+    source_readback_error: Exception | None,
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_source_control(engine)
+    gitlab = FakeGitLabMergeRequests(engine)
+    gitlab.readback = _mr_snapshot(head_sha=readback_head)
+    gitlab.source_readback_head = source_readback_head
+    gitlab.source_readback_error = source_readback_error
+    dependencies, requirement, _gitlab = _dependencies(engine, gitlab=gitlab)
+
+    result = process_integration_mr_request(
+        message_id=MESSAGE_ID,
+        dependencies=dependencies,
+    )
+
+    assert result.effect is not None
+    assert result.effect.state is EffectState.UNKNOWN
+    assert result.binding is None
+    assert result.observation is None
+    assert result.blocked_reason == "RECONCILIATION_PENDING"
+    assert len(requirement.pending) == 1
+    assert gitlab.calls[-2:] == ["get_mr", "source_branch"]
+
+
+def test_adopt_candidate_head_is_decided_only_by_final_double_read_proof(
+    isolated_source_control_database: Any,
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_source_control(engine)
+    gitlab = FakeGitLabMergeRequests(engine)
+    gitlab.candidates = [_mr_snapshot(head_sha="d" * 40)]
+    dependencies, requirement, _gitlab = _dependencies(engine, gitlab=gitlab)
+
+    result = process_integration_mr_request(
+        message_id=MESSAGE_ID,
+        dependencies=dependencies,
+    )
+
+    assert result.effect is not None
+    assert result.effect.state is EffectState.SUCCEEDED
+    assert result.binding is not None
+    assert result.binding.creation_origin.value == "EXTERNAL_ADOPTED"
+    assert len(requirement.ready) == 1
+    assert "create_mr" not in gitlab.calls
+    assert gitlab.calls[-2:] == ["get_mr", "source_branch"]
 
 
 def test_current_owner_mismatch_blocks_before_provider_calls(
@@ -1068,7 +1856,7 @@ def test_branch_binding_context_mismatch_blocks_before_provider_calls(
     assert gitlab.calls == []
 
 
-def test_ambiguous_provider_list_blocks_as_mr_conflict(
+def test_ambiguous_provider_list_enters_reconciliation(
     isolated_source_control_database: Any,
 ) -> None:
     engine = isolated_source_control_database.runtime
@@ -1083,9 +1871,9 @@ def test_ambiguous_provider_list_blocks_as_mr_conflict(
     )
 
     assert result.effect is not None
-    assert result.effect.state is EffectState.BLOCKED
-    assert result.blocked_reason == "MR_CONFLICT"
-    assert requirement.blocked[0].reason_code == "MR_CONFLICT"
+    assert result.effect.state is EffectState.UNKNOWN
+    assert result.blocked_reason == "RECONCILIATION_PENDING"
+    assert len(requirement.pending) == 1
 
 
 @pytest.mark.parametrize(
@@ -1098,7 +1886,7 @@ def test_ambiguous_provider_list_blocks_as_mr_conflict(
     ],
     ids=("project", "source", "target", "state"),
 )
-def test_incompatible_readback_blocks_as_mr_conflict(
+def test_incompatible_final_readback_enters_reconciliation(
     isolated_source_control_database: Any,
     readback: GitLabMergeRequestSnapshot,
 ) -> None:
@@ -1114,9 +1902,9 @@ def test_incompatible_readback_blocks_as_mr_conflict(
     )
 
     assert result.effect is not None
-    assert result.effect.state is EffectState.BLOCKED
-    assert result.blocked_reason == "MR_CONFLICT"
-    assert requirement.blocked[0].reason_code == "MR_CONFLICT"
+    assert result.effect.state is EffectState.UNKNOWN
+    assert result.blocked_reason == "RECONCILIATION_PENDING"
+    assert len(requirement.pending) == 1
 
 
 def test_missing_requirement_binding_dependency_fails_closed_without_claiming(
@@ -1159,7 +1947,7 @@ def test_target_branch_missing_blocks_without_planning_an_effect(
     assert gitlab.calls == ["profile", "source_branch", "dev_branch"]
 
 
-def test_provider_list_unavailable_blocks_without_post(
+def test_provider_list_unavailable_enters_reconciliation_without_post(
     isolated_source_control_database: Any,
 ) -> None:
     engine = isolated_source_control_database.runtime
@@ -1174,9 +1962,132 @@ def test_provider_list_unavailable_blocks_without_post(
     )
 
     assert result.effect is not None
+    assert result.effect.state is EffectState.UNKNOWN
+    assert result.blocked_reason == "RECONCILIATION_PENDING"
+    assert len(requirement.pending) == 1
+    assert "create_mr" not in gitlab.calls
+
+
+def test_provider_transient_before_effect_releases_inbox_without_blocked_callback(
+    isolated_source_control_database: Any,
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_source_control(engine)
+    gitlab = FakeGitLabMergeRequests(engine)
+    gitlab.profile_error = GitLabProviderUnavailable("profile unavailable")
+    dependencies, requirement, _gitlab = _dependencies(engine, gitlab=gitlab)
+
+    with pytest.raises(RequirementCallbackUnavailable):
+        process_integration_mr_request(
+            message_id=MESSAGE_ID,
+            dependencies=dependencies,
+        )
+
+    with engine.connect() as db:
+        inbox = SqlAlchemySourceControlIntegrationRepository(db).delivery_request(MESSAGE_ID)
+    assert inbox["state"] == "FAILED"
+    assert inbox["last_error_code"] == "PROVIDER_UNAVAILABLE"
+    assert requirement.blocked == []
+    assert requirement.pending == []
+
+
+@pytest.mark.parametrize(
+    ("profile_error", "branch_error", "reason_code"),
+    [
+        (GitLabProjectPolicyUnsupported("unsupported policy"), None, "PROJECT_PROFILE_UNSUPPORTED"),
+        (None, GitLabTargetBranchNotProtected("dev is unprotected"), "TARGET_BRANCH_NOT_PROTECTED"),
+    ],
+    ids=("project-policy", "target-protection"),
+)
+def test_stable_provider_policy_errors_are_allowlisted_preflight_blocks(
+    isolated_source_control_database: Any,
+    profile_error: Exception | None,
+    branch_error: Exception | None,
+    reason_code: str,
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_source_control(engine)
+    gitlab = FakeGitLabMergeRequests(engine)
+    gitlab.profile_error = profile_error
+    if branch_error is not None:
+        gitlab.branch_errors["dev"] = branch_error
+    dependencies, requirement, _gitlab = _dependencies(engine, gitlab=gitlab)
+
+    result = process_integration_mr_request(
+        message_id=MESSAGE_ID,
+        dependencies=dependencies,
+    )
+
+    assert result.effect is None
+    assert result.blocked_reason == reason_code
+    assert requirement.blocked[0].reason_code == reason_code
+
+
+def test_list_all_states_treats_every_exact_mr_as_a_candidate(
+    isolated_source_control_database: Any,
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_source_control(engine)
+    gitlab = FakeGitLabMergeRequests(engine)
+    gitlab.candidates = [
+        _mr_snapshot(iid=17, state="opened"),
+        _mr_snapshot(iid=18, state="closed"),
+        _mr_snapshot(iid=19, state="merged"),
+    ]
+    dependencies, requirement, _gitlab = _dependencies(engine, gitlab=gitlab)
+
+    result = process_integration_mr_request(
+        message_id=MESSAGE_ID,
+        dependencies=dependencies,
+    )
+
+    assert result.effect is not None
     assert result.effect.state is EffectState.BLOCKED
-    assert result.blocked_reason == "PROVIDER_UNAVAILABLE"
-    assert requirement.blocked[0].reason_code == "PROVIDER_UNAVAILABLE"
+    assert result.blocked_reason == "MR_CONFLICT"
+    assert len(requirement.blocked) == 1
+    assert "create_mr" not in gitlab.calls
+
+
+@pytest.mark.parametrize("candidate_state", ["opened", "closed", "merged"])
+def test_single_exact_candidate_in_any_provider_state_is_adopted_after_readback(
+    isolated_source_control_database: Any,
+    candidate_state: Literal["opened", "closed", "merged"],
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_source_control(engine)
+    candidate = _mr_snapshot(state=candidate_state)
+    if candidate_state == "merged":
+        candidate = candidate.model_copy(
+            update={
+                "merge_commit_sha": "c" * 40,
+                "merge_user_id": "provider-user-17",
+                "merged_at": NOW,
+            }
+        )
+    gitlab = FakeGitLabMergeRequests(engine)
+    gitlab.candidates = [candidate]
+    gitlab.readback = candidate
+    dependencies, requirement, _gitlab = _dependencies(engine, gitlab=gitlab)
+
+    result = process_integration_mr_request(
+        message_id=MESSAGE_ID,
+        dependencies=dependencies,
+    )
+
+    assert result.effect is not None
+    assert result.effect.state is EffectState.SUCCEEDED
+    assert result.binding is not None
+    assert result.binding.creation_origin.value == "EXTERNAL_ADOPTED"
+    assert result.observation is not None
+    assert (
+        result.observation.state.value
+        == {
+            "opened": "OPEN",
+            "closed": "CLOSED",
+            "merged": "MERGED",
+        }[candidate_state]
+    )
+    assert len(requirement.ready) == 1
     assert "create_mr" not in gitlab.calls
 
 
@@ -1215,12 +2126,13 @@ def test_stale_worker_cannot_commit_facts_after_effect_and_inbox_leases_are_stol
         assert stolen_inbox is not None
 
     gitlab.before_readback = steal_leases
-    dependencies, _requirement, _gitlab = _dependencies(engine, gitlab=gitlab)
+    dependencies, requirement, _gitlab = _dependencies(engine, gitlab=gitlab)
 
-    result = process_integration_mr_request(
-        message_id=MESSAGE_ID,
-        dependencies=dependencies,
-    )
+    with pytest.raises(RequirementCallbackUnavailable):
+        process_integration_mr_request(
+            message_id=MESSAGE_ID,
+            dependencies=dependencies,
+        )
 
     with engine.connect() as db:
         repository = SqlAlchemySourceControlIntegrationRepository(db)
@@ -1230,14 +2142,74 @@ def test_stale_worker_cannot_commit_facts_after_effect_and_inbox_leases_are_stol
         )
         inbox = repository.delivery_request(MESSAGE_ID)
         binding = repository.merge_request_binding_by_work_item(WORK_ITEM_ID)
+        observation_count = db.execute(
+            text("SELECT count(*) FROM source_control.merge_request_observation")
+        ).scalar_one()
     assert effect["state"] == "RECONCILIATION"
     assert effect["attempts"] == 2
-    assert result.effect is not None
-    assert result.effect.state is EffectState.RECONCILIATION
-    assert result.blocked_reason == "RECONCILIATION_PENDING"
+    assert effect["requirement_callback_state"] == "PENDING"
     assert inbox["state"] == "PROCESSING"
     assert inbox["attempts"] == 2
     assert binding is None
+    assert observation_count == 0
+    assert requirement.ready == []
+    assert requirement.blocked == []
+    assert requirement.pending == []
+
+
+class LoseSucceededCallbackFenceRepository(SqlAlchemySourceControlIntegrationRepository):
+    def transition_effect(
+        self,
+        effect_id: str,
+        *,
+        expected_state: str,
+        expected_attempts: int,
+        values: dict[str, object],
+    ) -> object:
+        if expected_state == EffectState.SUCCEEDED.value:
+            return None
+        return super().transition_effect(
+            effect_id,
+            expected_state=expected_state,
+            expected_attempts=expected_attempts,
+            values=values,
+        )
+
+
+class LoseSucceededCallbackFenceRepositoryFactory:
+    def __call__(self, db: Connection) -> LoseSucceededCallbackFenceRepository:
+        return LoseSucceededCallbackFenceRepository(db)
+
+
+def test_callback_fence_loss_stops_before_requirement_callback_or_state_mutation(
+    isolated_source_control_database: Any,
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_source_control(engine)
+    dependencies, requirement, _gitlab = _dependencies(
+        engine,
+        delivery_repository_factory=LoseSucceededCallbackFenceRepositoryFactory(),
+    )
+
+    with pytest.raises(RequirementCallbackUnavailable):
+        process_integration_mr_request(
+            message_id=MESSAGE_ID,
+            dependencies=dependencies,
+        )
+
+    with engine.connect() as db:
+        repository = SqlAlchemySourceControlIntegrationRepository(db)
+        effect = repository.effect_by_operation_subject(
+            EffectOperation.CREATE_INTEGRATION_MR.value,
+            f"work-item:{WORK_ITEM_ID}",
+        )
+        binding = repository.merge_request_binding_by_work_item(WORK_ITEM_ID)
+    assert effect["state"] == EffectState.SUCCEEDED.value
+    assert effect["requirement_callback_state"] == "PENDING"
+    assert binding is not None
+    assert requirement.ready == []
+    assert requirement.blocked == []
+    assert requirement.pending == []
 
 
 @pytest.mark.parametrize(
@@ -1246,9 +2218,8 @@ def test_stale_worker_cannot_commit_facts_after_effect_and_inbox_leases_are_stol
         _mr_snapshot(project_id="202"),
         _mr_snapshot(source_branch="feat/other"),
         _mr_snapshot(target_branch="main"),
-        _mr_snapshot(head_sha="d" * 40),
     ],
-    ids=("project", "source", "target", "head"),
+    ids=("project", "source", "target"),
 )
 def test_incompatible_merge_request_candidate_blocks_as_conflict(
     isolated_source_control_database: Any,

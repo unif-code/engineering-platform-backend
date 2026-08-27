@@ -321,6 +321,7 @@ def get_integration_delivery_context(
         raise IntegrationDeliveryMessageInvalid(work_item_id)
     return IntegrationDeliveryContext(
         requirement_id=str(row["requirement_id"]),
+        requirement_revision=row["requirement_revision"],
         requirement_state=RequirementState(row["requirement_state"]),
         workspace_id=str(row["workspace_id"]),
         work_item_id=str(row["work_item_id"]),

@@ -39,6 +39,8 @@ from control_plane.app.modules.source_control.ports.merge_requests import (
     GitLabMergeRequestSnapshot,
     GitLabProjectDeliveryProfile,
     GitLabProjectNotFound,
+    GitLabProjectPolicyUnsupported,
+    GitLabTargetBranchNotProtected,
 )
 from control_plane.app.modules.source_control.ports.repository import (
     SourceControlRepository,
@@ -73,8 +75,10 @@ __all__ = [
     "GitLabProviderUnavailable",
     "GitLabProjectDeliveryProfile",
     "GitLabProjectNotFound",
+    "GitLabProjectPolicyUnsupported",
     "GitLabRepositoryProfile",
     "GitLabResultUnknown",
+    "GitLabTargetBranchNotProtected",
     "IntegrationDeliveryBlockedResult",
     "IntegrationMergedResult",
     "IntegrationMrReadyResult",

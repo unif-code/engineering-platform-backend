@@ -276,6 +276,7 @@ def test_requirement_delivery_adapter_maps_context_to_source_control_dto(
         "get_integration_delivery_context",
         lambda *_args, **_kwargs: IntegrationDeliveryContext(
             requirement_id="40000000-0000-0000-0000-000000000523",
+            requirement_revision=7,
             requirement_state=RequirementState.IN_PROGRESS,
             workspace_id="20000000-0000-0000-0000-000000000523",
             work_item_id="50000000-0000-0000-0000-000000000523",
@@ -297,6 +298,7 @@ def test_requirement_delivery_adapter_maps_context_to_source_control_dto(
     context = adapter.delivery_context("50000000-0000-0000-0000-000000000523")
 
     assert context.requirement_state == "IN_PROGRESS"
+    assert context.requirement_revision == 7
     assert context.repository_state == "BOUND"
     assert context.integration_delivery_state == "MR_PENDING"
     assert context.request_actor_id == "employee-1"

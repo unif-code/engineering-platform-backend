@@ -14,6 +14,14 @@ class GitLabProjectNotFound(GitLabError):
     pass
 
 
+class GitLabProjectPolicyUnsupported(GitLabError):
+    pass
+
+
+class GitLabTargetBranchNotProtected(GitLabError):
+    pass
+
+
 class GitLabMergeRequestNotFound(GitLabError):
     pass
 
@@ -71,6 +79,7 @@ class GitLabMergeRequestPort(Protocol):
         *,
         source_branch: str,
         target_branch: str,
+        state: Literal["all"] = "all",
     ) -> list[GitLabMergeRequestSnapshot]: ...
 
     def create_merge_request(

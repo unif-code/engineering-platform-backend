@@ -1,6 +1,6 @@
 import re
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Literal, cast
 from urllib.parse import quote
 
 import httpx
@@ -21,6 +21,8 @@ from control_plane.app.modules.source_control.ports.merge_requests import (
     GitLabMergeRequestSnapshot,
     GitLabProjectDeliveryProfile,
     GitLabProjectNotFound,
+    GitLabProjectPolicyUnsupported,
+    GitLabTargetBranchNotProtected,
 )
 
 _FULL_COMMIT_SHA = re.compile(r"^[0-9a-fA-F]{40,64}$")
@@ -81,13 +83,16 @@ class HttpxGitLabMergeRequestAdapter:
             raise GitLabProviderUnavailable("GitLab returned an invalid project response") from None
         if (
             not isinstance(project_path, str)
-            or project_path != repository.project_path
             or not isinstance(default_branch, str)
-            or default_branch != repository.default_branch
             or merge_method not in {"merge", "rebase_merge", "ff"}
+        ):
+            raise GitLabProviderUnavailable("GitLab returned an invalid project response")
+        if (
+            project_path != repository.project_path
+            or default_branch != repository.default_branch
             or merge_method != "merge"
         ):
-            raise GitLabProviderUnavailable("GitLab project delivery policy is invalid")
+            raise GitLabProjectPolicyUnsupported("GitLab project delivery policy is unsupported")
         return GitLabProjectDeliveryProfile(
             project_id=repository.project_id,
             project_path=project_path,
@@ -124,7 +129,7 @@ class HttpxGitLabMergeRequestAdapter:
         if observed_name != name or not isinstance(protected, bool):
             raise GitLabProviderUnavailable("GitLab returned an invalid branch response")
         if name == "dev" and not protected:
-            raise GitLabProviderUnavailable("GitLab target branch is not protected")
+            raise GitLabTargetBranchNotProtected("GitLab target branch is not protected")
         try:
             return BranchSnapshot(name=observed_name, commit_sha=self._sha(commit_sha))
         except GitLabProviderUnavailable:
@@ -136,7 +141,10 @@ class HttpxGitLabMergeRequestAdapter:
         *,
         source_branch: str,
         target_branch: str,
+        state: Literal["all"] = "all",
     ) -> list[GitLabMergeRequestSnapshot]:
+        if state != "all":
+            raise ValueError("GitLab merge request list state must be all")
         page = 1
         seen_pages: set[int] = set()
         snapshots: list[GitLabMergeRequestSnapshot] = []
@@ -148,7 +156,7 @@ class HttpxGitLabMergeRequestAdapter:
                 response = self.client.get(
                     f"/projects/{self._project(repository)}/merge_requests",
                     params={
-                        "state": "opened",
+                        "state": state,
                         "source_branch": source_branch,
                         "target_branch": target_branch,
                         "per_page": _MR_LIST_PAGE_SIZE,
@@ -188,8 +196,6 @@ class HttpxGitLabMergeRequestAdapter:
                 raise GitLabProviderUnavailable(
                     "GitLab returned an invalid merge request list"
                 ) from None
-            if len(snapshots) > 1:
-                raise GitLabResultUnknown("GitLab merge request result is ambiguous")
             next_page = response.headers.get("X-Next-Page", "")
             if next_page == "":
                 return snapshots

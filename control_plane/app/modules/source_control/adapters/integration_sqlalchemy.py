@@ -17,6 +17,21 @@ _EFFECT_UPDATE_COLUMNS = frozenset(
         "updated_at",
     }
 )
+_PREFLIGHT_OUTCOME_REASONS = frozenset(
+    {
+        "BRANCH_BINDING_MISSING",
+        "HEAD_SHA_CHANGED",
+        "MR_CONFLICT",
+        "NO_DELIVERY_COMMIT",
+        "OWNER_INELIGIBLE",
+        "OWNER_MISMATCH",
+        "PROJECT_PROFILE_UNSUPPORTED",
+        "REPOSITORY_NOT_AUTHORIZED",
+        "TARGET_BRANCH_NOT_FOUND",
+        "TARGET_BRANCH_NOT_PROTECTED",
+    }
+)
+_TRANSIENT_INBOX_ERRORS = frozenset({"PROVIDER_UNAVAILABLE"})
 
 
 class SqlAlchemySourceControlIntegrationRepository:
@@ -80,7 +95,7 @@ class SqlAlchemySourceControlIntegrationRepository:
                     "FOR UPDATE SKIP LOCKED LIMIT :limit"
                     ") UPDATE source_control.delivery_request_inbox AS inbox "
                     "SET state='PROCESSING', attempts=inbox.attempts + 1, "
-                    "available_at=:lease_until, updated_at=:now, last_error_code=NULL "
+                    "available_at=:lease_until, updated_at=:now "
                     "FROM candidates WHERE inbox.message_id=candidates.message_id "
                     "RETURNING inbox.*"
                 ),
@@ -100,7 +115,7 @@ class SqlAlchemySourceControlIntegrationRepository:
                 text(
                     "UPDATE source_control.delivery_request_inbox "
                     "SET state='PROCESSING', attempts=attempts + 1, "
-                    "available_at=:lease_until, updated_at=:now, last_error_code=NULL "
+                    "available_at=:lease_until, updated_at=:now "
                     "WHERE message_id=:message_id AND available_at <= :now "
                     "AND state IN ('RECEIVED', 'FAILED', 'PROCESSING') RETURNING *"
                 ),
@@ -108,6 +123,67 @@ class SqlAlchemySourceControlIntegrationRepository:
                     "message_id": message_id,
                     "now": now,
                     "lease_until": lease_until,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def record_preflight_outcome(
+        self,
+        message_id: str,
+        *,
+        expected_attempts: int,
+        reason_code: str,
+        now: datetime,
+    ) -> Any:
+        if reason_code not in _PREFLIGHT_OUTCOME_REASONS:
+            raise ValueError("Invalid preflight outcome reason")
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE source_control.delivery_request_inbox "
+                    "SET last_error_code=:reason_code, updated_at=:now "
+                    "WHERE message_id=:message_id AND state='PROCESSING' "
+                    "AND attempts=:expected_attempts RETURNING *"
+                ),
+                {
+                    "message_id": message_id,
+                    "expected_attempts": expected_attempts,
+                    "reason_code": reason_code,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def release_delivery_request(
+        self,
+        message_id: str,
+        *,
+        expected_attempts: int,
+        error_code: str,
+        retry_at: datetime,
+        now: datetime,
+    ) -> Any:
+        if error_code not in _TRANSIENT_INBOX_ERRORS:
+            raise ValueError("Invalid transient inbox error")
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE source_control.delivery_request_inbox "
+                    "SET state='FAILED', available_at=:retry_at, "
+                    "last_error_code=:error_code, updated_at=:now "
+                    "WHERE message_id=:message_id AND state='PROCESSING' "
+                    "AND attempts=:expected_attempts RETURNING *"
+                ),
+                {
+                    "message_id": message_id,
+                    "expected_attempts": expected_attempts,
+                    "error_code": error_code,
+                    "retry_at": retry_at,
+                    "now": now,
                 },
             )
             .mappings()
@@ -125,8 +201,8 @@ class SqlAlchemySourceControlIntegrationRepository:
             self.db.execute(
                 text(
                     "UPDATE source_control.delivery_request_inbox "
-                    "SET state='PROCESSED', processed_at=:now, updated_at=:now, "
-                    "last_error_code=NULL WHERE message_id=:message_id "
+                    "SET state='PROCESSED', processed_at=:now, updated_at=:now "
+                    "WHERE message_id=:message_id "
                     "AND state='PROCESSING' AND attempts=:expected_attempts RETURNING *"
                 ),
                 {

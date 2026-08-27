@@ -33,6 +33,25 @@ class SourceControlIntegrationRepository(Protocol):
         lease_until: datetime,
     ) -> Any: ...
 
+    def record_preflight_outcome(
+        self,
+        message_id: str,
+        *,
+        expected_attempts: int,
+        reason_code: str,
+        now: datetime,
+    ) -> Any: ...
+
+    def release_delivery_request(
+        self,
+        message_id: str,
+        *,
+        expected_attempts: int,
+        error_code: str,
+        retry_at: datetime,
+        now: datetime,
+    ) -> Any: ...
+
     def complete_delivery_request(
         self,
         message_id: str,

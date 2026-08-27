@@ -209,6 +209,7 @@ class IntegrationDeliveryContext(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     requirement_id: str
+    requirement_revision: int
     requirement_state: RequirementState
     workspace_id: str
     work_item_id: str

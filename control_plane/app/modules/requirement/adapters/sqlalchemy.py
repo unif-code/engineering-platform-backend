@@ -453,6 +453,7 @@ class SqlAlchemyRequirementRepository:
             self.db.execute(
                 text(
                     "SELECT requirement.id AS requirement_id, "
+                    "requirement.revision AS requirement_revision, "
                     "requirement.state AS requirement_state, requirement.workspace_id, "
                     "work_item.id AS work_item_id, work_item.revision AS work_item_revision, "
                     "work_item.state AS work_item_state, work_item.repository_id, "
