@@ -1,5 +1,7 @@
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 from sqlalchemy import create_engine
@@ -11,15 +13,32 @@ import control_plane.app.modules.workspace as workspace_module
 from control_plane.app.modules.identity import AccountStatus
 from control_plane.app.modules.requirement import (
     AssignmentState,
+    IntegrationDeliveryBlockedReason,
+    IntegrationDeliveryContext,
+    IntegrationDeliveryRequestKind,
+    IntegrationDeliveryRequestMessage,
+    IntegrationDeliveryState,
     RepositoryBindingRequestMessage,
+    RepositoryState,
+    RequirementState,
     RequirementType,
+    WorkItemState,
 )
 from control_plane.app.modules.source_control import RequirementCallbackUnavailable
 from control_plane.app.modules.source_control.adapters import (
     CurrentOwnerEligibilityAdapter,
     RequirementFacadeBindingAdapter,
+    RequirementFacadeDeliveryAdapter,
 )
-from control_plane.app.modules.source_control.ports import RequirementBindingContext
+from control_plane.app.modules.source_control.domain import DeliveryRequestKind
+from control_plane.app.modules.source_control.ports import (
+    ExternalMergeDriftResult,
+    IntegrationDeliveryBlockedResult,
+    IntegrationMergedResult,
+    IntegrationMrReadyResult,
+    IntegrationReconciliationPendingResult,
+    RequirementBindingContext,
+)
 
 NOW = datetime(2026, 8, 26, 5, 0, tzinfo=UTC)
 
@@ -162,4 +181,191 @@ def test_requirement_adapter_sanitizes_acknowledgement_failure(
         adapter.acknowledge_request("30000000-0000-0000-0000-000000000521")
 
     assert "provider detail" not in str(raised.value)
+    engine.dispose()
+
+
+def test_requirement_delivery_adapter_uses_package_root_facade(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = create_engine("sqlite://")
+    dependencies = SimpleNamespace(clock=FixedClock())
+    monkeypatch.setattr(
+        requirement_module,
+        "claim_integration_delivery_requests",
+        lambda *_args, **_kwargs: (
+            IntegrationDeliveryRequestMessage(
+                message_id="30000000-0000-0000-0000-000000000522",
+                payload_hash="sha256:delivery-request",
+                requirement_id="40000000-0000-0000-0000-000000000522",
+                requirement_revision=3,
+                work_item_id="50000000-0000-0000-0000-000000000522",
+                work_item_revision=5,
+                repository_id="gitlab-project-522",
+                actor_id="employee-1",
+                kind=IntegrationDeliveryRequestKind.CREATE_MR,
+                integration_merge_request_binding_id=None,
+                attempts=1,
+            ),
+        ),
+    )
+    adapter = RequirementFacadeDeliveryAdapter(
+        engine=engine,
+        dependencies=dependencies,
+    )
+
+    messages = adapter.claim_requests(limit=10, lease_until=NOW + timedelta(minutes=1))
+
+    assert messages[0].kind is DeliveryRequestKind.CREATE_MR
+    assert messages[0].actor_id == "employee-1"
+    engine.dispose()
+
+
+def test_requirement_delivery_adapter_maps_context_to_source_control_dto(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = create_engine("sqlite://")
+    dependencies = SimpleNamespace(clock=FixedClock())
+    monkeypatch.setattr(
+        requirement_module,
+        "get_integration_delivery_context",
+        lambda *_args, **_kwargs: IntegrationDeliveryContext(
+            requirement_id="40000000-0000-0000-0000-000000000523",
+            requirement_state=RequirementState.IN_PROGRESS,
+            workspace_id="20000000-0000-0000-0000-000000000523",
+            work_item_id="50000000-0000-0000-0000-000000000523",
+            work_item_revision=5,
+            work_item_state=WorkItemState.IN_PROGRESS,
+            repository_id="gitlab-project-523",
+            repository_state=RepositoryState.BOUND,
+            human_owner_id="employee-1",
+            required_capabilities=("code.read", "code.change"),
+            base_commit_sha="a" * 40,
+            task_branch="feat/523-context",
+            integration_delivery_state=IntegrationDeliveryState.MR_PENDING,
+            integration_merge_request_binding_id=None,
+            request_actor_id="employee-1",
+        ),
+    )
+    adapter = RequirementFacadeDeliveryAdapter(engine=engine, dependencies=dependencies)
+
+    context = adapter.delivery_context("50000000-0000-0000-0000-000000000523")
+
+    assert context.requirement_state == "IN_PROGRESS"
+    assert context.repository_state == "BOUND"
+    assert context.integration_delivery_state == "MR_PENDING"
+    assert context.request_actor_id == "employee-1"
+    engine.dispose()
+
+
+def test_requirement_delivery_adapter_calls_public_callbacks_with_stable_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = create_engine("sqlite://")
+    dependencies = SimpleNamespace(clock=FixedClock())
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def capture(name: str) -> Callable[..., None]:
+        def callback(*_args: object, **kwargs: object) -> None:
+            calls.append((name, kwargs))
+
+        return callback
+
+    monkeypatch.setattr(requirement_module, "record_integration_mr_ready", capture("ready"))
+    monkeypatch.setattr(
+        requirement_module,
+        "record_integration_delivery_blocked",
+        capture("blocked"),
+    )
+    monkeypatch.setattr(
+        requirement_module,
+        "record_integration_reconciliation_pending",
+        capture("pending"),
+    )
+    monkeypatch.setattr(requirement_module, "record_integration_merged", capture("merged"))
+    monkeypatch.setattr(
+        requirement_module,
+        "record_external_merge_drift",
+        capture("drift"),
+    )
+    adapter = RequirementFacadeDeliveryAdapter(engine=engine, dependencies=dependencies)
+    work_item_id = "50000000-0000-0000-0000-000000000524"
+    expected_revision = 5
+    idempotency_key = "effect:524"
+
+    adapter.record_mr_ready(
+        IntegrationMrReadyResult(
+            work_item_id=work_item_id,
+            expected_revision=expected_revision,
+            idempotency_key=idempotency_key,
+            binding_id="70000000-0000-0000-0000-000000000524",
+        )
+    )
+    adapter.record_blocked(
+        IntegrationDeliveryBlockedResult(
+            work_item_id=work_item_id,
+            expected_revision=expected_revision,
+            idempotency_key=idempotency_key,
+            binding_id=None,
+            reason_code="MR_CONFLICT",
+        )
+    )
+    adapter.record_pending(
+        IntegrationReconciliationPendingResult(
+            work_item_id=work_item_id,
+            expected_revision=expected_revision,
+            idempotency_key=idempotency_key,
+            binding_id=None,
+        )
+    )
+    adapter.record_merged(
+        IntegrationMergedResult(
+            work_item_id=work_item_id,
+            expected_revision=expected_revision,
+            idempotency_key=idempotency_key,
+            binding_id="70000000-0000-0000-0000-000000000524",
+        )
+    )
+    adapter.record_external_merge_drift(
+        ExternalMergeDriftResult(
+            work_item_id=work_item_id,
+            expected_revision=expected_revision,
+            idempotency_key=idempotency_key,
+            binding_id="70000000-0000-0000-0000-000000000524",
+        )
+    )
+
+    assert [name for name, _kwargs in calls] == [
+        "ready",
+        "blocked",
+        "pending",
+        "merged",
+        "drift",
+    ]
+    assert calls[1][1]["reason_code"] is IntegrationDeliveryBlockedReason.MR_CONFLICT
+    assert all(
+        cast(SimpleNamespace, kwargs["actor"]).account_id == "source-control-worker"
+        for _, kwargs in calls
+    )
+    engine.dispose()
+
+
+def test_requirement_delivery_adapter_sanitizes_public_facade_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = create_engine("sqlite://")
+    dependencies = SimpleNamespace(clock=FixedClock())
+    monkeypatch.setattr(
+        requirement_module,
+        "acknowledge_integration_delivery_request",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("provider-payload=test-only-secret")
+        ),
+    )
+    adapter = RequirementFacadeDeliveryAdapter(engine=engine, dependencies=dependencies)
+
+    with pytest.raises(RequirementCallbackUnavailable) as raised:
+        adapter.acknowledge_request("30000000-0000-0000-0000-000000000525")
+
+    assert "provider-payload" not in str(raised.value)
+    assert raised.value.__cause__ is None
     engine.dispose()
