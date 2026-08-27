@@ -86,12 +86,18 @@ def test_human_start_requires_ready_requirement_and_work_item() -> None:
 
 
 def test_mr_ready_keeps_requirement_in_progress_until_all_required_items_verify() -> None:
-    assert transition_integration_mr_ready(
-        (WorkItemState.VERIFYING, WorkItemState.IN_PROGRESS),
-    ) is RequirementState.IN_PROGRESS
-    assert transition_integration_mr_ready(
-        (WorkItemState.VERIFYING, WorkItemState.VERIFYING),
-    ) is RequirementState.VERIFYING
+    assert (
+        transition_integration_mr_ready(
+            (WorkItemState.VERIFYING, WorkItemState.IN_PROGRESS),
+        )
+        is RequirementState.IN_PROGRESS
+    )
+    assert (
+        transition_integration_mr_ready(
+            (WorkItemState.VERIFYING, WorkItemState.VERIFYING),
+        )
+        is RequirementState.VERIFYING
+    )
 ```
 
 - [ ] **Step 2: 运行领域测试并确认缺少新类型**
@@ -280,6 +286,7 @@ def update_work_item_delivery(
     now: datetime,
 ) -> Any: ...
 
+
 def required_work_item_states(self, requirement_id: str) -> tuple[str, ...]: ...
 ```
 
@@ -290,18 +297,28 @@ SQL `UPDATE` 必须带 `WHERE id=:id AND revision=:expected_revision`，只更�
 命令流程固定为：锁 Requirement → 锁 WorkItem → 校验关系/状态/actor → claim idempotency → 写 WorkItem/Requirement → 写 Outbox（MR/Merge 请求）→ Audit → seal idempotency。MR/Merge Outbox payload 分别固定为：
 
 ```python
-{"kind": "CREATE_MR", "requirementId": requirement.id,
- "requirementRevision": requirement.revision, "workItemId": work_item.id,
- "workItemRevision": work_item.revision, "repositoryId": work_item.repository_id,
- "actorId": actor.account_id}
+{
+    "kind": "CREATE_MR",
+    "requirementId": requirement.id,
+    "requirementRevision": requirement.revision,
+    "workItemId": work_item.id,
+    "workItemRevision": work_item.revision,
+    "repositoryId": work_item.repository_id,
+    "actorId": actor.account_id,
+}
 ```
 
 ```python
-{"kind": "MERGE_MR", "requirementId": requirement.id,
- "requirementRevision": requirement.revision, "workItemId": work_item.id,
- "workItemRevision": work_item.revision,
- "integrationMergeRequestBindingId": work_item.integration_merge_request_binding_id,
- "repositoryId": work_item.repository_id, "actorId": actor.account_id}
+{
+    "kind": "MERGE_MR",
+    "requirementId": requirement.id,
+    "requirementRevision": requirement.revision,
+    "workItemId": work_item.id,
+    "workItemRevision": work_item.revision,
+    "integrationMergeRequestBindingId": work_item.integration_merge_request_binding_id,
+    "repositoryId": work_item.repository_id,
+    "actorId": actor.account_id,
+}
 ```
 
 不接受 body 中的 branch、MR IID 或 SHA。
@@ -466,17 +483,27 @@ def test_merge_effect_subject_is_exact_binding_and_head() -> None:
 
 def test_observation_requires_merge_commit_only_when_merged() -> None:
     MergeRequestObservationDto(
-        id=OBSERVATION_ID, binding_id=BINDING_ID, head_sha="a" * 40,
-        state=MergeRequestState.OPEN, merge_commit_sha=None,
-        external_merge_user_id=None, merged_at=None,
-        observation_digest="sha256:open", observed_at=NOW,
+        id=OBSERVATION_ID,
+        binding_id=BINDING_ID,
+        head_sha="a" * 40,
+        state=MergeRequestState.OPEN,
+        merge_commit_sha=None,
+        external_merge_user_id=None,
+        merged_at=None,
+        observation_digest="sha256:open",
+        observed_at=NOW,
     )
     with pytest.raises(ValidationError):
         MergeRequestObservationDto(
-            id=OBSERVATION_ID, binding_id=BINDING_ID, head_sha="a" * 40,
-            state=MergeRequestState.MERGED, merge_commit_sha=None,
-            external_merge_user_id="42", merged_at=NOW,
-            observation_digest="sha256:merged", observed_at=NOW,
+            id=OBSERVATION_ID,
+            binding_id=BINDING_ID,
+            head_sha="a" * 40,
+            state=MergeRequestState.MERGED,
+            merge_commit_sha=None,
+            external_merge_user_id="42",
+            merged_at=NOW,
+            observation_digest="sha256:merged",
+            observed_at=NOW,
         )
 ```
 
@@ -644,7 +671,9 @@ Port 方法签名固定为 get profile/branch、list/create/get MR、merge MR(ex
 ```python
 def test_adapter_merges_with_exact_sha_without_squash_or_source_removal() -> None:
     merged = adapter.merge_merge_request(
-        _profile(), iid=17, expected_head_sha=HEAD_SHA,
+        _profile(),
+        iid=17,
+        expected_head_sha=HEAD_SHA,
     )
     assert merge_request.url.params["sha"] == HEAD_SHA
     assert merge_request.url.params["squash"] == "false"
@@ -702,7 +731,9 @@ def test_requirement_delivery_adapter_uses_package_root_facade(monkeypatch) -> N
 
 ```python
 class RequirementDeliveryPort(Protocol):
-    def claim_requests(self, *, limit: int, lease_until: datetime) -> tuple[DeliveryRequestEnvelope, ...]: ...
+    def claim_requests(
+        self, *, limit: int, lease_until: datetime
+    ) -> tuple[DeliveryRequestEnvelope, ...]: ...
     def acknowledge_request(self, message_id: str) -> None: ...
     def release_request(self, message_id: str, *, error_code: str, retry_at: datetime) -> None: ...
     def delivery_context(self, work_item_id: str) -> RequirementDeliveryContext: ...
