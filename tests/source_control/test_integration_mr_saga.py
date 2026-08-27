@@ -9,6 +9,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import Connection, Engine, text
 
+from control_plane.app.modules.requirement import get_requirement
 from control_plane.app.modules.source_control import (
     EffectOperation,
     EffectState,
@@ -349,6 +350,7 @@ class FakeGitLabMergeRequests:
         self.before_readback: Callable[[], None] | None = None
         self.expected_title = f"feat: integrate {WORK_ITEM_ID}"
         self.expected_effect_head = HEAD_SHA
+        self.expected_source_branch = TASK_BRANCH
 
     def get_project_delivery_profile(self, _repository: object) -> GitLabProjectDeliveryProfile:
         self.calls.append("profile")
@@ -367,7 +369,7 @@ class FakeGitLabMergeRequests:
         self.calls.append("dev_branch" if name == "dev" else "source_branch")
         if name in self.branch_errors:
             raise self.branch_errors[name]
-        if name == TASK_BRANCH:
+        if name == self.expected_source_branch:
             self._source_reads += 1
             if self._source_reads > 1 and self.source_readback_error is not None:
                 raise self.source_readback_error
@@ -392,7 +394,7 @@ class FakeGitLabMergeRequests:
         state: Literal["all"] | None = None,
     ) -> list[GitLabMergeRequestSnapshot]:
         self.calls.append("list_mr")
-        assert (source_branch, target_branch) == (TASK_BRANCH, "dev")
+        assert (source_branch, target_branch) == (self.expected_source_branch, "dev")
         assert state == "all"
         if self.list_error is not None:
             raise self.list_error
@@ -1362,6 +1364,178 @@ def test_terminal_success_replay_advances_real_requirement_once_without_provider
     assert after_first.integration_merge_request_binding_id == merge_request_binding_id
     assert after_second == after_first
     assert gitlab.calls == []
+
+
+@pytest.mark.parametrize("candidate_state", ["closed", "merged"])
+def test_create_terminal_mr_installs_real_requirement_binding_once(
+    isolated_source_control_database: Any,
+    candidate_state: Literal["closed", "merged"],
+) -> None:
+    source_engine = isolated_source_control_database.runtime
+    with _temporary_requirement_role_engine(
+        isolated_source_control_database.owner
+    ) as requirement_engine:
+        requirement_database = IsolatedRequirementDatabase(
+            owner=isolated_source_control_database.owner,
+            runtime=requirement_engine,
+        )
+        requested = _requested_mr(
+            requirement_database,
+            key_suffix=f"source-control-create-{candidate_state}",
+        )
+        requirement_dependencies = _gate_dependencies()
+        delivery = RequirementFacadeDeliveryAdapter(
+            engine=requirement_engine,
+            dependencies=requirement_dependencies,
+        )
+        binding_requirement = RequirementFacadeBindingAdapter(
+            engine=requirement_engine,
+            dependencies=requirement_dependencies,
+            clock=FixedClock(),
+        )
+        envelope = delivery.claim_requests(
+            limit=1,
+            lease_until=NOW + timedelta(minutes=1),
+        )[0]
+        delivery_context = delivery.delivery_context(requested.work_item.id)
+        assert delivery_context.base_commit_sha is not None
+        assert delivery_context.task_branch is not None
+        branch_effect_id = "60000000-0000-0000-0000-000000000902"
+        branch_binding_id = "70000000-0000-0000-0000-000000000902"
+        with source_engine.begin() as db:
+            source = SqlAlchemySourceControlRepository(db)
+            integration = SqlAlchemySourceControlIntegrationRepository(db)
+            source.insert_workspace_repository(
+                id=delivery_context.repository_id,
+                workspace_id=delivery_context.workspace_id,
+                provider="GITLAB",
+                project_id="101",
+                project_path="platform/backend",
+                default_branch="main",
+                connection_ref="gitlab-dev",
+                credential_secret_ref="secret-ref:credential",
+                webhook_signing_secret_ref="secret-ref:webhook",
+                status="AUTHORIZED",
+                revision=1,
+                now=NOW,
+            )
+            source.insert_effect(
+                id=branch_effect_id,
+                effect_key=f"source-control:create-task-branch:{requested.work_item.id}",
+                operation="CREATE_TASK_BRANCH",
+                work_item_id=requested.work_item.id,
+                requirement_id=requested.requirement.id,
+                repository_id=delivery_context.repository_id,
+                work_item_number=902,
+                branch_name=delivery_context.task_branch,
+                base_commit_sha=delivery_context.base_commit_sha,
+                request_fingerprint="sha256:real-create-terminal-branch",
+                attempts=1,
+                state="SUCCEEDED",
+                requirement_callback_state="ACKED",
+                next_reconcile_at=None,
+                completed_at=NOW,
+                now=NOW,
+            )
+            source.insert_binding(
+                id=branch_binding_id,
+                work_item_id=requested.work_item.id,
+                requirement_id=requested.requirement.id,
+                workspace_id=delivery_context.workspace_id,
+                repository_id=delivery_context.repository_id,
+                work_item_number=902,
+                base_commit_sha=delivery_context.base_commit_sha,
+                branch_name=delivery_context.task_branch,
+                effect_id=branch_effect_id,
+                now=NOW,
+            )
+            integration.accept_delivery_request(
+                message_id=envelope.message_id,
+                topic=envelope.topic,
+                payload_hash=envelope.payload_hash,
+                requirement_id=envelope.requirement_id,
+                requirement_revision=envelope.requirement_revision,
+                work_item_id=envelope.work_item_id,
+                work_item_revision=envelope.work_item_revision,
+                repository_id=envelope.repository_id,
+                actor_id=envelope.actor_id,
+                integration_merge_request_binding_id=None,
+                now=NOW,
+            )
+
+        candidate = _mr_snapshot(
+            source_branch=delivery_context.task_branch,
+            state=candidate_state,
+        )
+        if candidate_state == "merged":
+            candidate = candidate.model_copy(
+                update={
+                    "merge_commit_sha": "c" * 40,
+                    "merge_user_id": "provider-user-17",
+                    "merged_at": NOW,
+                }
+            )
+        gitlab = FakeGitLabMergeRequests(source_engine)
+        gitlab.expected_source_branch = delivery_context.task_branch
+        gitlab.candidates = [candidate]
+        gitlab.readback = candidate
+        dependencies = SourceControlDependencies(
+            repository_factory=SqlAlchemySourceControlRepository,
+            engine=source_engine,
+            requirement=binding_requirement,
+            eligibility=FakeEligibility(),
+            audit=FakeAudit(),
+            clock=FixedClock(),
+            random=FixedRandom(),
+            policy=FixedPolicy(),
+            delivery_repository_factory=SqlAlchemySourceControlIntegrationRepository,
+            requirement_delivery=delivery,
+            gitlab_merge_requests=gitlab,
+        )
+
+        first = process_integration_mr_request(
+            message_id=envelope.message_id,
+            dependencies=dependencies,
+        )
+        provider_calls = tuple(gitlab.calls)
+        with requirement_engine.connect() as db:
+            after_first = get_requirement(
+                db,
+                requirement_id=requested.requirement.id,
+                dependencies=requirement_dependencies,
+            )
+        second = process_integration_mr_request(
+            message_id=envelope.message_id,
+            dependencies=dependencies,
+        )
+        with requirement_engine.connect() as db:
+            after_second = get_requirement(
+                db,
+                requirement_id=requested.requirement.id,
+                dependencies=requirement_dependencies,
+            )
+
+    assert first.effect is not None
+    assert first.effect.state is EffectState.BLOCKED
+    assert first.effect.callback_state.value == "ACKED"
+    assert first.binding is not None
+    assert first.observation is not None
+    expected_reason = {
+        "closed": "MR_CLOSED",
+        "merged": "EXTERNAL_MERGE_DRIFT",
+    }[candidate_state]
+    assert first.effect.last_error_code == expected_reason
+    assert first.blocked_reason == expected_reason
+    assert first.observation.state.value == candidate_state.upper()
+    work_item = after_first.work_items[0]
+    assert work_item.integration_merge_request_binding_id == first.binding.id
+    assert work_item.integration_delivery_state.value == "BLOCKED"
+    assert work_item.integration_blocked_reason_code is not None
+    assert work_item.integration_blocked_reason_code.value == expected_reason
+    assert work_item.state.value == ("IN_PROGRESS" if candidate_state == "closed" else "VERIFYING")
+    assert second.effect == first.effect
+    assert after_second == after_first
+    assert tuple(gitlab.calls) == provider_calls
 
 
 class FailOnceOnBindingRepository(SqlAlchemySourceControlIntegrationRepository):
