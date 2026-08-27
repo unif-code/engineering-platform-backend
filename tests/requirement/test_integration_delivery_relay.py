@@ -13,6 +13,7 @@ from control_plane.app.modules.requirement import (
     IntegrationDeliveryRequestMessage,
     IntegrationDeliveryState,
     InvalidRequirementInput,
+    RequirementState,
     StaleWorkItemRevision,
     WorkItemDeliveryConflict,
     WorkItemDeliveryResult,
@@ -560,7 +561,23 @@ def test_external_merge_drift_enters_blocked_without_provider_details(
             idempotency_key="effect:external-drift",
             dependencies=_gate_dependencies(),
         )
+    with isolated_requirement_database.runtime.begin() as db:
+        replay = record_external_merge_drift(
+            db,
+            work_item_id=requested.work_item.id,
+            binding_id=BINDING_ID,
+            expected_revision=requested.work_item.revision,
+            actor=SYSTEM_ACTOR,
+            idempotency_key="effect:external-drift",
+            dependencies=_gate_dependencies(),
+        )
 
+    assert replay == result
+    assert result.requirement.state is RequirementState.VERIFYING
+    assert result.requirement.revision == requested.requirement.revision
+    assert replay.requirement.revision == result.requirement.revision
+    assert result.work_item.revision == requested.work_item.revision + 1
+    assert replay.work_item.revision == result.work_item.revision
     assert result.work_item.state is WorkItemState.VERIFYING
     assert result.work_item.integration_delivery_state is IntegrationDeliveryState.BLOCKED
     assert (
@@ -599,7 +616,11 @@ def test_mr_closed_from_mr_pending_installs_first_binding_once(
         )
 
     assert replay == closed
+    assert closed.requirement.state is RequirementState.IN_PROGRESS
+    assert closed.requirement.revision == requested.requirement.revision
+    assert replay.requirement.revision == closed.requirement.revision
     assert closed.work_item.revision == requested.work_item.revision + 1
+    assert replay.work_item.revision == closed.work_item.revision
     assert closed.work_item.state is WorkItemState.IN_PROGRESS
     assert closed.work_item.integration_delivery_state is IntegrationDeliveryState.BLOCKED
     assert (
@@ -648,7 +669,11 @@ def test_external_merge_drift_from_mr_pending_installs_first_binding_once(
         )
 
     assert replay == drift
+    assert drift.requirement.state is RequirementState.VERIFYING
+    assert drift.requirement.revision == requested.requirement.revision + 1
+    assert replay.requirement.revision == drift.requirement.revision
     assert drift.work_item.revision == requested.work_item.revision + 1
+    assert replay.work_item.revision == drift.work_item.revision
     assert drift.work_item.state is WorkItemState.VERIFYING
     assert drift.work_item.integration_delivery_state is IntegrationDeliveryState.BLOCKED
     assert (
