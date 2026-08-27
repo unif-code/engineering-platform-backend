@@ -747,6 +747,7 @@ def _record_bound_terminal(
             operation=operation,
             now=now,
             dependencies=dependencies,
+            advance_requirement=first_external_drift_binding,
         )
 
     return _record_callback(

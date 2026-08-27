@@ -1533,6 +1533,12 @@ def test_create_terminal_mr_installs_real_requirement_binding_once(
     assert work_item.integration_blocked_reason_code is not None
     assert work_item.integration_blocked_reason_code.value == expected_reason
     assert work_item.state.value == ("IN_PROGRESS" if candidate_state == "closed" else "VERIFYING")
+    assert after_first.requirement.state.value == (
+        "IN_PROGRESS" if candidate_state == "closed" else "VERIFYING"
+    )
+    assert after_first.requirement.revision == requested.requirement.revision + (
+        0 if candidate_state == "closed" else 1
+    )
     assert second.effect == first.effect
     assert after_second == after_first
     assert tuple(gitlab.calls) == provider_calls
