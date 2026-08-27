@@ -3,6 +3,7 @@ from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 
+from control_plane.app.modules.source_control.application._batch_claim import InboxClaimLost
 from control_plane.app.modules.source_control.application._reasons import stored_reason
 from control_plane.app.modules.source_control.application.audit import (
     append_lifecycle_audit,
@@ -313,10 +314,11 @@ def get_repository_branch_binding(
     return None if row is None else _binding_dto(row)
 
 
-def process_binding_request(
+def _process_binding_request(
     *,
     message_id: str,
     dependencies: SourceControlDependencies,
+    claim_required: bool,
 ) -> ProcessBindingRequestResult:
     requirement = dependencies.requirement
     eligibility = dependencies.eligibility
@@ -335,6 +337,8 @@ def process_binding_request(
         inbox = claimed or repository.binding_request(message_id)
     if inbox is None:
         raise RequirementCallbackUnavailable("Binding request is unavailable")
+    if claimed is None and claim_required:
+        raise InboxClaimLost(message_id)
 
     context = requirement.binding_context(str(inbox["work_item_id"]))
     with dependencies.engine.connect() as db:
@@ -644,4 +648,28 @@ def process_binding_request(
         _effect_dto(succeeded_row),
         context,
         dependencies,
+    )
+
+
+def process_binding_request(
+    *,
+    message_id: str,
+    dependencies: SourceControlDependencies,
+) -> ProcessBindingRequestResult:
+    return _process_binding_request(
+        message_id=message_id,
+        dependencies=dependencies,
+        claim_required=False,
+    )
+
+
+def process_binding_candidate(
+    *,
+    message_id: str,
+    dependencies: SourceControlDependencies,
+) -> ProcessBindingRequestResult:
+    return _process_binding_request(
+        message_id=message_id,
+        dependencies=dependencies,
+        claim_required=True,
     )

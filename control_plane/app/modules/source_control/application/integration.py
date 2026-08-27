@@ -68,10 +68,11 @@ from control_plane.app.modules.source_control.domain import (
 from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
 
 
-def process_integration_mr_request(
+def _process_integration_mr_request(
     *,
     message_id: str,
     dependencies: SourceControlDependencies,
+    claim_required: bool,
 ) -> ProcessIntegrationRequestResult:
     repository_factory = dependencies.delivery_repository_factory
     requirement_delivery = dependencies.requirement_delivery
@@ -92,6 +93,7 @@ def process_integration_mr_request(
         message_id,
         expected_topic=_CREATE_TOPIC,
         dependencies=dependencies,
+        claim_required=claim_required,
     )
 
     callback_subject = _OriginatingCallbackSubject(
@@ -326,6 +328,30 @@ def process_integration_mr_request(
     )
 
 
+def process_integration_mr_request(
+    *,
+    message_id: str,
+    dependencies: SourceControlDependencies,
+) -> ProcessIntegrationRequestResult:
+    return _process_integration_mr_request(
+        message_id=message_id,
+        dependencies=dependencies,
+        claim_required=False,
+    )
+
+
+def process_integration_mr_candidate(
+    *,
+    message_id: str,
+    dependencies: SourceControlDependencies,
+) -> ProcessIntegrationRequestResult:
+    return _process_integration_mr_request(
+        message_id=message_id,
+        dependencies=dependencies,
+        claim_required=True,
+    )
+
+
 def process_integration_merge_request(
     *,
     message_id: str,
@@ -334,4 +360,17 @@ def process_integration_merge_request(
     return _process_integration_merge_request(
         message_id=message_id,
         dependencies=dependencies,
+        claim_required=False,
+    )
+
+
+def process_integration_merge_candidate(
+    *,
+    message_id: str,
+    dependencies: SourceControlDependencies,
+) -> ProcessIntegrationRequestResult:
+    return _process_integration_merge_request(
+        message_id=message_id,
+        dependencies=dependencies,
+        claim_required=True,
     )

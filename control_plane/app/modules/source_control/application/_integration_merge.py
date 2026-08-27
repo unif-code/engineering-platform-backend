@@ -63,6 +63,7 @@ def _process_integration_merge_request(
     *,
     message_id: str,
     dependencies: SourceControlDependencies,
+    claim_required: bool = False,
 ) -> ProcessIntegrationRequestResult:
     repository_factory = dependencies.delivery_repository_factory
     if (
@@ -78,6 +79,7 @@ def _process_integration_merge_request(
         message_id,
         expected_topic=_MERGE_TOPIC,
         dependencies=dependencies,
+        claim_required=claim_required,
     )
     persisted_preflight_reason = stored_reason(inbox["last_error_code"])
     if persisted_preflight_reason in _MERGE_PREFLIGHT_OUTCOME_REASONS:

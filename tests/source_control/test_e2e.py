@@ -22,6 +22,8 @@ from control_plane.app.modules.source_control import (
 )
 from control_plane.app.modules.source_control.adapters import (
     RequirementFacadeBindingAdapter,
+    RequirementFacadeDeliveryAdapter,
+    SqlAlchemySourceControlIntegrationRepository,
     SqlAlchemySourceControlRepository,
 )
 from control_plane.app.modules.source_control.api import SourceControlWebhookRuntime
@@ -91,6 +93,11 @@ def _dependencies(
         gitlab=gitlab,
         policy=FixedPolicy(),
         webhook_secrets=FakeSecrets(),
+        delivery_repository_factory=SqlAlchemySourceControlIntegrationRepository,
+        requirement_delivery=RequirementFacadeDeliveryAdapter(
+            requirement.runtime,
+            requirement_dependencies(),
+        ),
     )
 
 
@@ -405,7 +412,7 @@ def test_unassembled_connector_and_worker_fail_closed_without_leaking_details(
     assert "secret-body" not in response.text
 
     exit_code = worker_main(
-        ["relay", "--limit", "1"],
+        ["relay", "--limit", "2"],
         dependencies_provider=_unavailable_dependencies,
     )
     output = capsys.readouterr().out

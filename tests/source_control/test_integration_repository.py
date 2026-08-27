@@ -170,6 +170,46 @@ def test_delivery_inbox_completion_uses_claim_attempt_as_fence(
     assert completed["state"] == "PROCESSED"
 
 
+def test_delivery_candidate_discovery_is_read_only_and_excludes_active_lease(
+    isolated_source_control_rw_engine: Engine,
+) -> None:
+    with isolated_source_control_rw_engine.begin() as db:
+        _insert_repository(SqlAlchemySourceControlRepository(db))
+        integration = SqlAlchemySourceControlIntegrationRepository(db)
+        integration.accept_delivery_request(
+            message_id=MESSAGE_ID,
+            topic="requirement.integration-merge-request.requested",
+            payload_hash="sha256:delivery",
+            requirement_id=REQUIREMENT_ID,
+            requirement_revision=3,
+            work_item_id=WORK_ITEM_ID,
+            work_item_revision=5,
+            repository_id=REPOSITORY_ID,
+            actor_id="employee-1",
+            integration_merge_request_binding_id=None,
+            now=NOW,
+        )
+        before = integration.delivery_request(MESSAGE_ID)
+        first = integration.pending_delivery_request_candidates(limit=10, now=NOW)
+        after = integration.delivery_request(MESSAGE_ID)
+        claimed = integration.claim_delivery_request(
+            MESSAGE_ID,
+            expected_topic="requirement.integration-merge-request.requested",
+            now=NOW,
+            lease_until=NOW + timedelta(minutes=2),
+        )
+        during_lease = integration.pending_delivery_request_candidates(limit=10, now=NOW)
+
+    assert [(str(row["message_id"]), row["topic"]) for row in first] == [
+        (MESSAGE_ID, "requirement.integration-merge-request.requested")
+    ]
+    assert before["state"] == after["state"] == "RECEIVED"
+    assert before["attempts"] == after["attempts"] == 0
+    assert before["available_at"] == after["available_at"] == NOW
+    assert claimed["attempts"] == 1
+    assert during_lease == []
+
+
 def test_exact_claim_preserves_fenced_allowlisted_preflight_outcome(
     isolated_source_control_rw_engine: Engine,
 ) -> None:

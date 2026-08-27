@@ -140,6 +140,16 @@ class RelayBindingRequestsResult(BaseModel):
     released: NonNegativeInt
 
 
+class SourceControlBatchResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    claimed: NonNegativeInt
+    processed: NonNegativeInt
+    released: NonNegativeInt = 0
+    effect_ids: tuple[NonEmptyStr, ...] = ()
+    error_codes: tuple[NonEmptyStr, ...] = ()
+
+
 class SourceControlEffectDto(BaseModel):
     model_config = ConfigDict(frozen=True)
 

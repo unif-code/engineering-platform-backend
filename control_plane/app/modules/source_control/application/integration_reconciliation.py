@@ -47,11 +47,13 @@ def reconcile_due_integration_effects(
         elif effect.operation is EffectOperation.MERGE_INTEGRATION_MR:
             effect = reconcile_merge_effect(effect, dependencies=dependencies)
         effects.append(effect)
-    effects.extend(
-        replay_pending_integration_callbacks(
-            limit=limit,
-            excluded_effect_ids=frozenset(effect.id for effect in effects),
-            dependencies=dependencies,
+    remaining = limit - len(effects)
+    if remaining > 0:
+        effects.extend(
+            replay_pending_integration_callbacks(
+                limit=remaining,
+                excluded_effect_ids=frozenset(effect.id for effect in effects),
+                dependencies=dependencies,
+            )
         )
-    )
     return ReconcileDueIntegrationEffectsResult(effects=tuple(effects))

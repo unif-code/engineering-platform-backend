@@ -2,7 +2,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from threading import Event, Lock
+from threading import Barrier, Event, Lock
 from typing import Any, Literal, TypedDict
 from uuid import UUID
 
@@ -17,6 +17,7 @@ from control_plane.app.modules.source_control import (
     RequirementCallbackUnavailable,
     SourceControlDependencies,
     SourceControlDependencyUnavailable,
+    process_due_source_control_inboxes,
     process_integration_mr_request,
 )
 from control_plane.app.modules.source_control.adapters import (
@@ -24,6 +25,11 @@ from control_plane.app.modules.source_control.adapters import (
     RequirementFacadeDeliveryAdapter,
     SqlAlchemySourceControlIntegrationRepository,
     SqlAlchemySourceControlRepository,
+)
+from control_plane.app.modules.source_control.application import batches
+from control_plane.app.modules.source_control.application._batch_claim import InboxClaimLost
+from control_plane.app.modules.source_control.application.integration import (
+    process_integration_mr_candidate,
 )
 from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
 from control_plane.app.modules.source_control.ports import (
@@ -1717,6 +1723,134 @@ def test_ready_callback_failure_replays_without_repeating_provider_calls(
     assert second.binding == first.binding
     assert tuple(gitlab.calls) == first_calls
     assert len(requirement.ready) == 1
+
+
+def test_completed_delivery_candidate_strict_loser_performs_no_replay_or_side_effect(
+    isolated_source_control_database: Any,
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_source_control(engine)
+    dependencies, requirement, gitlab = _dependencies(engine)
+
+    first = process_integration_mr_request(
+        message_id=MESSAGE_ID,
+        dependencies=dependencies,
+    )
+    provider_calls = tuple(gitlab.calls)
+    callback_count = len(requirement.ready)
+    with engine.connect() as db:
+        repository = SqlAlchemySourceControlIntegrationRepository(db)
+        effect_count = db.execute(
+            text("SELECT count(*) FROM source_control.source_control_effect")
+        ).scalar_one()
+        attempts = repository.delivery_request(MESSAGE_ID)["attempts"]
+
+    with pytest.raises(InboxClaimLost):
+        process_integration_mr_candidate(
+            message_id=MESSAGE_ID,
+            dependencies=dependencies,
+        )
+
+    with engine.connect() as db:
+        repository = SqlAlchemySourceControlIntegrationRepository(db)
+        after_effect_count = db.execute(
+            text("SELECT count(*) FROM source_control.source_control_effect")
+        ).scalar_one()
+        after_attempts = repository.delivery_request(MESSAGE_ID)["attempts"]
+    assert first.effect is not None
+    assert tuple(gitlab.calls) == provider_calls
+    assert len(requirement.ready) == callback_count
+    assert after_effect_count == effect_count == 2
+    assert after_attempts == attempts == 1
+
+
+def test_active_delivery_candidate_strict_loser_stops_before_provider_or_callback(
+    isolated_source_control_database: Any,
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_source_control(engine)
+    dependencies, requirement, gitlab = _dependencies(engine)
+    with engine.begin() as db:
+        repository = SqlAlchemySourceControlIntegrationRepository(db)
+        claimed = repository.claim_delivery_request(
+            MESSAGE_ID,
+            expected_topic="requirement.integration-merge-request.requested",
+            now=NOW,
+            lease_until=NOW + timedelta(minutes=2),
+        )
+
+    with pytest.raises(InboxClaimLost):
+        process_integration_mr_candidate(
+            message_id=MESSAGE_ID,
+            dependencies=dependencies,
+        )
+    with pytest.raises(RequirementCallbackUnavailable):
+        process_integration_mr_request(
+            message_id=MESSAGE_ID,
+            dependencies=dependencies,
+        )
+
+    with engine.connect() as db:
+        effect_count = db.execute(
+            text(
+                "SELECT count(*) FROM source_control.source_control_effect "
+                "WHERE operation='CREATE_INTEGRATION_MR'"
+            )
+        ).scalar_one()
+    assert claimed is not None
+    assert claimed["attempts"] == 1
+    assert gitlab.calls == []
+    assert effect_count == 0
+    assert requirement.ready == []
+
+
+def test_two_batches_that_read_same_delivery_candidate_have_one_exact_winner(
+    isolated_source_control_database: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_source_control(engine)
+    dependencies, requirement, gitlab = _dependencies(engine)
+    both_scanned = Barrier(2)
+    original = batches._pending_process_candidates
+
+    def synchronized_candidates(
+        *,
+        limit: int,
+        dependencies: SourceControlDependencies,
+    ) -> tuple[Any, ...]:
+        candidates = original(limit=limit, dependencies=dependencies)
+        both_scanned.wait(timeout=5)
+        return candidates
+
+    monkeypatch.setattr(batches, "_pending_process_candidates", synchronized_candidates)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = tuple(
+            pool.map(
+                lambda _index: process_due_source_control_inboxes(
+                    limit=3,
+                    dependencies=dependencies,
+                ),
+                range(2),
+            )
+        )
+
+    with engine.connect() as db:
+        repository = SqlAlchemySourceControlIntegrationRepository(db)
+        effect_count = db.execute(
+            text(
+                "SELECT count(*) FROM source_control.source_control_effect "
+                "WHERE operation='CREATE_INTEGRATION_MR'"
+            )
+        ).scalar_one()
+        attempts = repository.delivery_request(MESSAGE_ID)["attempts"]
+    assert sum(result.claimed for result in results) == 1
+    assert sum(result.processed for result in results) == 1
+    assert all(result.error_codes == () for result in results)
+    assert gitlab.calls.count("create_mr") == 1
+    assert effect_count == 1
+    assert len(requirement.ready) == 1
+    assert attempts == 1
 
 
 def test_dependency_unavailable_callback_is_durably_failed_for_terminal_replay(
