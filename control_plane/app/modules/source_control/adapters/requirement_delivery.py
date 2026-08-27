@@ -158,7 +158,7 @@ class RequirementFacadeDeliveryAdapter:
 
     def record_blocked(self, result: IntegrationDeliveryBlockedResult) -> None:
         try:
-            reason_code = requirement.IntegrationDeliveryBlockedReason(result.reason_code)
+            reason_code = requirement.IntegrationDeliveryBlockedReason(result.reason_code.value)
             with self.engine.begin() as db:
                 requirement.record_integration_delivery_blocked(
                     db,

@@ -25,6 +25,7 @@ from control_plane.app.modules.source_control import (
 from control_plane.app.modules.source_control.adapters import (
     SqlAlchemySourceControlRepository,
 )
+from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
 from control_plane.app.modules.source_control.ports import (
     BindingBlockedResult,
     BindingEligibility,
@@ -112,7 +113,7 @@ class FakeEligibility:
     def evaluate(self, _context: RequirementBindingContext) -> BindingEligibility:
         return BindingEligibility(
             eligible=self.eligible,
-            reason_code=None if self.eligible else "OWNER_INELIGIBLE",
+            reason_code=(None if self.eligible else SourceControlReason.OWNER_INELIGIBLE),
         )
 
 

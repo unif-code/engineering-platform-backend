@@ -4,6 +4,7 @@ from typing import Protocol
 from pydantic import BaseModel, ConfigDict, Field
 
 from control_plane.app.modules.source_control.domain import DeliveryRequestEnvelope
+from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
 
 
 class RequirementDeliveryContext(BaseModel):
@@ -41,7 +42,7 @@ class IntegrationDeliveryBlockedResult(BaseModel):
 
     work_item_id: str
     binding_id: str | None
-    reason_code: str
+    reason_code: SourceControlReason
     expected_revision: int
     idempotency_key: str
 

@@ -28,6 +28,7 @@ from control_plane.app.modules.source_control.application._integration_common im
 from control_plane.app.modules.source_control.application._integration_common import (
     snapshot_state as _snapshot_state,
 )
+from control_plane.app.modules.source_control.application._reasons import effect_reason
 from control_plane.app.modules.source_control.application.dependencies import (
     SourceControlDependencies,
 )
@@ -41,6 +42,7 @@ from control_plane.app.modules.source_control.domain import (
     SourceControlDependencyUnavailable,
     SourceControlEffectDto,
 )
+from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
 from control_plane.app.modules.source_control.ports import (
     ExternalMergeDriftResult,
     GitLabMergeRequestSnapshot,
@@ -57,7 +59,7 @@ def _record_effect_callback(
     *,
     kind: Literal["ready", "merged", "blocked", "pending", "external_drift"],
     binding_id: str | None = None,
-    reason_code: str | None = None,
+    reason_code: SourceControlReason | None = None,
     operation: EffectOperation = _CREATE_OPERATION,
     dependencies: SourceControlDependencies,
 ) -> SourceControlEffectDto:
@@ -119,7 +121,7 @@ def _record_effect_callback(
                         reason_code=reason_code,
                         expected_revision=context.work_item_revision,
                         idempotency_key=(
-                            f"source-control:integration-blocked:{locked.id}:{reason_code}"
+                            f"source-control:integration-blocked:{locked.id}:{reason_code.value}"
                         ),
                     )
                 )
@@ -214,7 +216,7 @@ def _mark_unknown(
             expected_attempts=effect.attempts,
             values={
                 "state": EffectState.UNKNOWN.value,
-                "last_error_code": "EXTERNAL_RESULT_UNKNOWN",
+                "last_error_code": SourceControlReason.EXTERNAL_RESULT_UNKNOWN.value,
                 "next_reconcile_at": policy.next_reconcile_at(
                     now=now,
                     attempts=effect.attempts,
@@ -244,7 +246,7 @@ def _mark_unknown(
         effect=unknown,
         binding=binding,
         observation=observation,
-        blocked_reason="RECONCILIATION_PENDING",
+        blocked_reason=SourceControlReason.RECONCILIATION_PENDING.value,
     )
 
 
@@ -283,7 +285,7 @@ def _replay_processed_request(
                 None
                 if effect.state is EffectState.SUCCEEDED
                 else (
-                    "RECONCILIATION_PENDING"
+                    SourceControlReason.RECONCILIATION_PENDING.value
                     if effect.state
                     in {
                         EffectState.IN_FLIGHT,
@@ -317,17 +319,22 @@ def _replay_processed_request(
             effect=effect,
             binding=None,
             observation=None,
-            blocked_reason="RECONCILIATION_PENDING",
+            blocked_reason=SourceControlReason.RECONCILIATION_PENDING.value,
         )
     if effect.state is EffectState.BLOCKED and effect.last_error_code is not None:
+        reason_code = effect_reason(effect)
+        if reason_code is None:
+            raise SourceControlDependencyUnavailable("Blocked reason is unavailable")
         effect = _record_effect_callback(
             context,
             effect,
             kind=(
-                "external_drift" if effect.last_error_code == "EXTERNAL_MERGE_DRIFT" else "blocked"
+                "external_drift"
+                if reason_code is SourceControlReason.EXTERNAL_MERGE_DRIFT
+                else "blocked"
             ),
             binding_id=None if binding is None else binding.id,
-            reason_code=effect.last_error_code,
+            reason_code=reason_code,
             dependencies=dependencies,
         )
     return ProcessIntegrationRequestResult(
@@ -343,7 +350,7 @@ def _finish_preflight_callback(
     *,
     message_id: str,
     inbox_attempts: int,
-    reason_code: str,
+    reason_code: SourceControlReason,
     binding_id: str | None = None,
     kind: Literal["blocked", "external_drift"] = "blocked",
     idempotency_key: str | None = None,
@@ -360,7 +367,7 @@ def _finish_preflight_callback(
             inbox is None
             or inbox["state"] != "PROCESSING"
             or inbox["attempts"] != inbox_attempts
-            or inbox["last_error_code"] != reason_code
+            or inbox["last_error_code"] != reason_code.value
         ):
             raise RequirementCallbackUnavailable("Integration MR inbox lease was lost")
         try:
@@ -389,7 +396,7 @@ def _finish_preflight_callback(
                         idempotency_key=(
                             idempotency_key
                             or "source-control:integration-blocked:"
-                            f"{message_id}:{context.work_item_id}:{reason_code}"
+                            f"{message_id}:{context.work_item_id}:{reason_code.value}"
                         ),
                     )
                 )
@@ -410,7 +417,7 @@ def _complete_preflight_block(
     *,
     message_id: str,
     inbox_attempts: int,
-    reason_code: str,
+    reason_code: SourceControlReason,
     binding: MergeRequestBindingDto | None = None,
     observation: MergeRequestObservationDto | None = None,
     idempotency_key: str | None = None,
@@ -425,7 +432,7 @@ def _complete_preflight_block(
         marked = repository.record_preflight_outcome(
             message_id,
             expected_attempts=inbox_attempts,
-            reason_code=reason_code,
+            reason_code=reason_code.value,
             now=now,
         )
         if marked is None:
@@ -444,13 +451,13 @@ def _complete_preflight_block(
             effect=None,
             binding=binding,
             observation=observation,
-            blocked_reason=reason_code,
+            blocked_reason=reason_code.value,
         )
     return ProcessIntegrationRequestResult(
         effect=None,
         binding=binding,
         observation=observation,
-        blocked_reason=reason_code,
+        blocked_reason=reason_code.value,
     )
 
 
@@ -460,7 +467,7 @@ def _complete_effect_block(
     *,
     message_id: str,
     inbox_attempts: int,
-    reason_code: str,
+    reason_code: SourceControlReason,
     operation: EffectOperation = _CREATE_OPERATION,
     binding: MergeRequestBindingDto | None = None,
     observation: MergeRequestObservationDto | None = None,
@@ -495,7 +502,7 @@ def _complete_effect_block(
             expected_attempts=effect.attempts,
             values={
                 "state": EffectState.BLOCKED.value,
-                "last_error_code": reason_code,
+                "last_error_code": reason_code.value,
                 "next_reconcile_at": None,
                 "completed_at": now,
                 "updated_at": now,
@@ -520,7 +527,11 @@ def _complete_effect_block(
     blocked = _record_effect_callback(
         context,
         blocked,
-        kind=("external_drift" if reason_code == "EXTERNAL_MERGE_DRIFT" else "blocked"),
+        kind=(
+            "external_drift"
+            if reason_code is SourceControlReason.EXTERNAL_MERGE_DRIFT
+            else "blocked"
+        ),
         binding_id=None if binding is None else binding.id,
         reason_code=reason_code,
         operation=operation,
@@ -533,7 +544,7 @@ def _complete_effect_block(
         effect=blocked,
         binding=binding,
         observation=final_observation,
-        blocked_reason=reason_code,
+        blocked_reason=reason_code.value,
     )
 
 
@@ -551,7 +562,7 @@ def _release_pre_effect_transient(
         released = repository_factory(db).release_delivery_request(
             message_id,
             expected_attempts=inbox_attempts,
-            error_code="PROVIDER_UNAVAILABLE",
+            error_code=SourceControlReason.PROVIDER_UNAVAILABLE.value,
             retry_at=now + timedelta(minutes=1),
             now=now,
         )
@@ -595,6 +606,7 @@ def _resolve_atomic_fact_commit(
     ):
         binding = _binding_dto(binding_row)
         observation = _observation_dto(observation_row)
+        persisted_reason = effect_reason(persisted_effect)
         if persisted_effect.state is EffectState.SUCCEEDED:
             persisted_effect = _record_ready(
                 context,
@@ -603,23 +615,23 @@ def _resolve_atomic_fact_commit(
                 dependencies=dependencies,
             )
             blocked_reason = None
-        elif persisted_effect.last_error_code in {
-            "MR_CLOSED",
-            "EXTERNAL_MERGE_DRIFT",
+        elif persisted_reason in {
+            SourceControlReason.MR_CLOSED,
+            SourceControlReason.EXTERNAL_MERGE_DRIFT,
         }:
             persisted_effect = _record_effect_callback(
                 context,
                 persisted_effect,
                 kind=(
                     "external_drift"
-                    if persisted_effect.last_error_code == "EXTERNAL_MERGE_DRIFT"
+                    if persisted_reason is SourceControlReason.EXTERNAL_MERGE_DRIFT
                     else "blocked"
                 ),
                 binding_id=binding.id,
-                reason_code=persisted_effect.last_error_code,
+                reason_code=persisted_reason,
                 dependencies=dependencies,
             )
-            blocked_reason = persisted_effect.last_error_code
+            blocked_reason = persisted_reason.value
         else:
             raise RequirementCallbackUnavailable("Integration MR commit outcome is inconsistent")
         return ProcessIntegrationRequestResult(

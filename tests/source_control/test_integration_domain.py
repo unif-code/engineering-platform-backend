@@ -4,6 +4,7 @@ from typing import Any, cast
 import pytest
 from pydantic import ValidationError
 
+from control_plane.app.modules.requirement import IntegrationDeliveryBlockedReason
 from control_plane.app.modules.source_control.domain import (
     CreateIntegrationMergeRequestEffectPayload,
     DeliveryRequestEnvelope,
@@ -21,6 +22,13 @@ from control_plane.app.modules.source_control.domain import (
     branch_effect_coordinates,
     merge_effect_subject,
 )
+from control_plane.app.modules.source_control.domain.reasons import (
+    CREATE_PREFLIGHT_REASONS,
+    MERGE_PREFLIGHT_REASONS,
+    REQUIREMENT_DELIVERY_REASONS,
+    SourceControlReason,
+)
+from control_plane.app.modules.source_control.ports import IntegrationDeliveryBlockedResult
 
 NOW = datetime(2026, 8, 26, 4, 0, tzinfo=UTC)
 BINDING_ID = "70000000-0000-0000-0000-000000000501"
@@ -28,6 +36,27 @@ OBSERVATION_ID = "80000000-0000-0000-0000-000000000501"
 WORK_ITEM_ID = "50000000-0000-0000-0000-000000000501"
 BRANCH_BINDING_ID = "71000000-0000-0000-0000-000000000501"
 HEAD_SHA = "a" * 40
+
+
+def test_internal_delivery_blocked_callback_keeps_typed_reason_until_adapter_boundary() -> None:
+    result = IntegrationDeliveryBlockedResult(
+        work_item_id=WORK_ITEM_ID,
+        binding_id=None,
+        reason_code=SourceControlReason.MR_CONFLICT,
+        expected_revision=5,
+        idempotency_key="source-control:blocked:typed-reason",
+    )
+
+    assert result.reason_code is SourceControlReason.MR_CONFLICT
+
+
+def test_source_control_requirement_reasons_match_public_requirement_contract() -> None:
+    requirement_values = {reason.value for reason in IntegrationDeliveryBlockedReason}
+    source_control_values = {reason.value for reason in REQUIREMENT_DELIVERY_REASONS}
+
+    assert source_control_values == requirement_values
+    assert CREATE_PREFLIGHT_REASONS <= REQUIREMENT_DELIVERY_REASONS
+    assert MERGE_PREFLIGHT_REASONS <= REQUIREMENT_DELIVERY_REASONS
 
 
 def test_delivery_request_shape_binds_topic_kind_and_existing_mr_binding() -> None:

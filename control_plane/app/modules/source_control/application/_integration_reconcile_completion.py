@@ -20,6 +20,7 @@ from control_plane.app.modules.source_control.application._integration_reconcile
 from control_plane.app.modules.source_control.application._integration_reconcile_provider import (
     CreateProviderProof,
 )
+from control_plane.app.modules.source_control.application._reasons import effect_reason
 from control_plane.app.modules.source_control.application.dependencies import (
     SourceControlDependencies,
 )
@@ -42,12 +43,14 @@ class CreateCompletion:
     effect: SourceControlEffectDto
     binding: MergeRequestBindingDto | None
     observation: MergeRequestObservationDto | None
+    reason: SourceControlReason | None
     completed_by_worker: bool
 
 
 @dataclass(frozen=True, slots=True)
 class EffectCompletion:
     effect: SourceControlEffectDto
+    reason: SourceControlReason | None
     completed_by_worker: bool
 
 
@@ -55,6 +58,7 @@ class EffectCompletion:
 class MergeCompletion:
     effect: SourceControlEffectDto
     observation: MergeRequestObservationDto | None
+    reason: SourceControlReason | None
     completed_by_worker: bool
 
 
@@ -149,7 +153,7 @@ def complete_reconciliation_block(
             or locked.state is not EffectState.RECONCILIATION
             or locked.attempts != effect.attempts
         ):
-            return EffectCompletion(locked, False)
+            return EffectCompletion(locked, effect_reason(locked), False)
         row = repository.transition_effect(
             effect.id,
             expected_state=EffectState.RECONCILIATION.value,
@@ -171,7 +175,7 @@ def complete_reconciliation_block(
             target_id=effect.id,
             dependencies=dependencies,
         )
-    return EffectCompletion(effect_dto(row), True)
+    return EffectCompletion(effect_dto(row), reason, True)
 
 
 def deliver_terminal_effect(
@@ -182,6 +186,8 @@ def deliver_terminal_effect(
 ) -> SourceControlEffectDto:
     if not completion.completed_by_worker:
         return completion.effect
+    if completion.reason is None:
+        raise SourceControlDependencyUnavailable("Blocked reason is unavailable")
     requirement = dependencies.requirement_delivery
     if requirement is None:
         return completion.effect
@@ -194,7 +200,7 @@ def deliver_terminal_effect(
         return completion.effect
     kind: Literal["external_drift", "blocked"] = (
         "external_drift"
-        if completion.effect.last_error_code == SourceControlReason.EXTERNAL_MERGE_DRIFT
+        if completion.reason is SourceControlReason.EXTERNAL_MERGE_DRIFT
         else "blocked"
     )
     return _record_effect_callback(
@@ -205,7 +211,7 @@ def deliver_terminal_effect(
         completion.effect,
         kind=kind,
         binding_id=binding_id,
-        reason_code=completion.effect.last_error_code,
+        reason_code=completion.reason,
         operation=completion.effect.operation,
         dependencies=dependencies,
     )
@@ -239,7 +245,7 @@ def complete_create_reconciliation(
             or locked.state is not EffectState.RECONCILIATION
             or locked.attempts != effect.attempts
         ):
-            return CreateCompletion(locked, None, None, False)
+            return CreateCompletion(locked, None, None, effect_reason(locked), False)
         binding_row = repository.insert_merge_request_binding(
             id=str(dependencies.random.uuid4()),
             kind=MergeRequestKind.INTEGRATION.value,
@@ -297,6 +303,7 @@ def complete_create_reconciliation(
         effect=effect_dto(final_row),
         binding=binding_dto(binding_row),
         observation=observation_dto(observation_row),
+        reason=reason,
         completed_by_worker=True,
     )
 
@@ -334,7 +341,7 @@ def complete_merge_reconciliation(
             or locked.state is not EffectState.RECONCILIATION
             or locked.attempts != effect.attempts
         ):
-            return MergeCompletion(locked, None, False)
+            return MergeCompletion(locked, None, effect_reason(locked), False)
         observation_row = repository.append_merge_request_observation(
             id=str(dependencies.random.uuid4()),
             binding_id=context.binding.id,
@@ -381,6 +388,7 @@ def complete_merge_reconciliation(
     return MergeCompletion(
         effect=effect_dto(final_row),
         observation=observation_dto(observation_row),
+        reason=reason,
         completed_by_worker=True,
     )
 
@@ -393,6 +401,8 @@ def deliver_merge_completion(
 ) -> SourceControlEffectDto:
     if not completion.completed_by_worker:
         return completion.effect
+    if completion.effect.state is EffectState.BLOCKED and completion.reason is None:
+        raise SourceControlDependencyUnavailable("Blocked reason is unavailable")
     requirement = dependencies.requirement_delivery
     if requirement is None:
         return completion.effect
@@ -411,7 +421,7 @@ def deliver_merge_completion(
         completion.effect,
         kind=("merged" if completion.effect.state is EffectState.SUCCEEDED else "blocked"),
         binding_id=binding_id,
-        reason_code=completion.effect.last_error_code,
+        reason_code=completion.reason,
         operation=EffectOperation.MERGE_INTEGRATION_MR,
         dependencies=dependencies,
     )
@@ -424,6 +434,8 @@ def deliver_create_completion(
 ) -> SourceControlEffectDto:
     if not completion.completed_by_worker or completion.binding is None:
         return completion.effect
+    if completion.effect.state is EffectState.BLOCKED and completion.reason is None:
+        raise SourceControlDependencyUnavailable("Blocked reason is unavailable")
     requirement = dependencies.requirement_delivery
     if requirement is None:
         return completion.effect
@@ -441,7 +453,7 @@ def deliver_create_completion(
     kind: Literal["ready", "external_drift", "blocked"]
     if completion.effect.state is EffectState.SUCCEEDED:
         kind = "ready"
-    elif completion.effect.last_error_code == SourceControlReason.EXTERNAL_MERGE_DRIFT:
+    elif completion.reason is SourceControlReason.EXTERNAL_MERGE_DRIFT:
         kind = "external_drift"
     else:
         kind = "blocked"
@@ -450,7 +462,7 @@ def deliver_create_completion(
         completion.effect,
         kind=kind,
         binding_id=completion.binding.id,
-        reason_code=completion.effect.last_error_code,
+        reason_code=completion.reason,
         operation=EffectOperation.CREATE_INTEGRATION_MR,
         dependencies=dependencies,
     )

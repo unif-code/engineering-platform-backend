@@ -8,6 +8,7 @@ from control_plane.app.modules.source_control.application._integration_common im
     binding_dto,
     effect_dto,
 )
+from control_plane.app.modules.source_control.application._reasons import effect_reason
 from control_plane.app.modules.source_control.application.dependencies import (
     SourceControlDependencies,
 )
@@ -60,6 +61,7 @@ def replay_pending_integration_callbacks(
         ):
             continue
         kind: Literal["ready", "merged", "blocked", "external_drift"]
+        reason: SourceControlReason | None = None
         if effect.state is EffectState.SUCCEEDED:
             if binding is None:
                 continue
@@ -67,9 +69,12 @@ def replay_pending_integration_callbacks(
                 "ready" if effect.operation is EffectOperation.CREATE_INTEGRATION_MR else "merged"
             )
         elif effect.state is EffectState.BLOCKED:
+            reason = effect_reason(effect)
+            if reason is None:
+                raise SourceControlDependencyUnavailable("Blocked reason is unavailable")
             kind = (
                 "external_drift"
-                if effect.last_error_code == SourceControlReason.EXTERNAL_MERGE_DRIFT
+                if reason is SourceControlReason.EXTERNAL_MERGE_DRIFT
                 else "blocked"
             )
         else:
@@ -83,7 +88,7 @@ def replay_pending_integration_callbacks(
                 effect,
                 kind=kind,
                 binding_id=None if binding is None else binding.id,
-                reason_code=effect.last_error_code,
+                reason_code=(reason if effect.state is EffectState.BLOCKED else None),
                 operation=effect.operation,
                 dependencies=dependencies,
             )

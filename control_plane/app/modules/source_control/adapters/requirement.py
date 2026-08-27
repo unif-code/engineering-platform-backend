@@ -136,7 +136,7 @@ class RequirementFacadeBindingAdapter:
 
     def record_blocked(self, result: BindingBlockedResult) -> None:
         try:
-            reason_code = requirement.RepositoryBindingBlockedReason(result.reason_code)
+            reason_code = requirement.RepositoryBindingBlockedReason(result.reason_code.value)
             with self.engine.begin() as db:
                 requirement.record_repository_binding_blocked(
                     db,

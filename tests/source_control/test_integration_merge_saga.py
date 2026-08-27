@@ -23,6 +23,7 @@ from control_plane.app.modules.source_control.adapters import (
     SqlAlchemySourceControlIntegrationRepository,
     SqlAlchemySourceControlRepository,
 )
+from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
 from control_plane.app.modules.source_control.ports import (
     BindingEligibility,
     BranchSnapshot,
@@ -104,7 +105,7 @@ class MergeEligibility:
         self.seen.append(context)
         return BindingEligibility(
             eligible=self.eligible,
-            reason_code=None if self.eligible else "OWNER_INELIGIBLE",
+            reason_code=(None if self.eligible else SourceControlReason.OWNER_INELIGIBLE),
         )
 
 

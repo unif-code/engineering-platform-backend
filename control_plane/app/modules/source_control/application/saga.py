@@ -3,6 +3,7 @@ from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 
+from control_plane.app.modules.source_control.application._reasons import stored_reason
 from control_plane.app.modules.source_control.application.audit import (
     append_lifecycle_audit,
 )
@@ -20,6 +21,7 @@ from control_plane.app.modules.source_control.domain import (
     branch_effect_coordinates,
     build_task_branch_name,
 )
+from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
 from control_plane.app.modules.source_control.ports import (
     BindingBlockedResult,
     BindingReadyResult,
@@ -36,6 +38,7 @@ from control_plane.app.modules.source_control.ports import (
 
 
 def _effect_dto(row: Any) -> SourceControlEffectDto:
+    reason = stored_reason(row["last_error_code"])
     return SourceControlEffectDto.model_validate(
         {
             "id": str(row["id"]),
@@ -53,7 +56,7 @@ def _effect_dto(row: Any) -> SourceControlEffectDto:
             "attempts": row["attempts"],
             "next_reconcile_at": row["next_reconcile_at"],
             "state": EffectState(row["state"]),
-            "last_error_code": row["last_error_code"],
+            "last_error_code": None if reason is None else reason.value,
             "callback_state": RequirementCallbackState(row["requirement_callback_state"]),
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
@@ -96,10 +99,11 @@ def _existing_effect_result(
     if effect_row is None:
         raise RequirementCallbackUnavailable("Source Control effect is unavailable")
     binding_row = repository.binding_by_work_item(str(effect_row["work_item_id"]))
+    effect = _effect_dto(effect_row)
     return ProcessBindingRequestResult(
-        effect=_effect_dto(effect_row),
+        effect=effect,
         binding=None if binding_row is None else _binding_dto(binding_row),
-        blocked_reason=effect_row["last_error_code"],
+        blocked_reason=effect.last_error_code,
     )
 
 
@@ -148,7 +152,7 @@ def _set_callback_state(
 def _record_blocked(
     context: RequirementBindingContext,
     *,
-    reason_code: str,
+    reason_code: SourceControlReason,
     idempotency_key: str,
     dependencies: SourceControlDependencies,
 ) -> None:
@@ -170,13 +174,13 @@ def _complete_preflight_block(
     context: RequirementBindingContext,
     *,
     message_id: str,
-    reason_code: str,
+    reason_code: SourceControlReason,
     dependencies: SourceControlDependencies,
 ) -> ProcessBindingRequestResult:
     _record_blocked(
         context,
         reason_code=reason_code,
-        idempotency_key=f"source-control:block:{message_id}:{reason_code}",
+        idempotency_key=f"source-control:block:{message_id}:{reason_code.value}",
         dependencies=dependencies,
     )
     with dependencies.engine.begin() as db:
@@ -192,13 +196,13 @@ def _complete_preflight_block(
             target_id=message_id,
             dependencies=dependencies,
             result="DENIED",
-            reason=reason_code,
+            reason=reason_code.value,
             correlation_id=f"source-control:work-item:{context.work_item_id}",
         )
     return ProcessBindingRequestResult(
         effect=None,
         binding=None,
-        blocked_reason=reason_code,
+        blocked_reason=reason_code.value,
     )
 
 
@@ -207,7 +211,7 @@ def _complete_effect_block(
     context: RequirementBindingContext,
     *,
     message_id: str,
-    reason_code: str,
+    reason_code: SourceControlReason,
     dependencies: SourceControlDependencies,
 ) -> ProcessBindingRequestResult:
     completed_at = dependencies.clock.now()
@@ -219,7 +223,7 @@ def _complete_effect_block(
             expected_attempts=effect.attempts,
             values={
                 "state": EffectState.BLOCKED.value,
-                "last_error_code": reason_code,
+                "last_error_code": reason_code.value,
                 "next_reconcile_at": None,
                 "completed_at": completed_at,
                 "updated_at": completed_at,
@@ -235,14 +239,14 @@ def _complete_effect_block(
             target_id=effect.id,
             dependencies=dependencies,
             result="DENIED",
-            reason=reason_code,
+            reason=reason_code.value,
             correlation_id=f"source-control:effect:{effect.id}",
         )
     try:
         _record_blocked(
             context,
             reason_code=reason_code,
-            idempotency_key=(f"source-control:binding-blocked:{effect.id}:{reason_code}"),
+            idempotency_key=(f"source-control:binding-blocked:{effect.id}:{reason_code.value}"),
             dependencies=dependencies,
         )
     except RequirementCallbackUnavailable:
@@ -258,7 +262,7 @@ def _complete_effect_block(
     return ProcessBindingRequestResult(
         effect=blocked,
         binding=None,
-        blocked_reason=reason_code,
+        blocked_reason=reason_code.value,
     )
 
 
@@ -356,10 +360,11 @@ def process_binding_request(
         )
     if claimed is None:
         if effect_row is not None:
+            effect = _effect_dto(effect_row)
             return ProcessBindingRequestResult(
-                effect=_effect_dto(effect_row),
+                effect=effect,
                 binding=None,
-                blocked_reason=effect_row["last_error_code"],
+                blocked_reason=effect.last_error_code,
             )
         raise RequirementCallbackUnavailable("Binding request is already processing")
 
@@ -367,7 +372,7 @@ def process_binding_request(
         return _complete_preflight_block(
             context,
             message_id=message_id,
-            reason_code="OWNER_UNASSIGNED",
+            reason_code=SourceControlReason.OWNER_UNASSIGNED,
             dependencies=dependencies,
         )
     owner = eligibility.evaluate(context)
@@ -375,7 +380,7 @@ def process_binding_request(
         return _complete_preflight_block(
             context,
             message_id=message_id,
-            reason_code=owner.reason_code or "OWNER_INELIGIBLE",
+            reason_code=owner.reason_code or SourceControlReason.OWNER_INELIGIBLE,
             dependencies=dependencies,
         )
     with dependencies.engine.connect() as db:
@@ -391,7 +396,7 @@ def process_binding_request(
         return _complete_preflight_block(
             context,
             message_id=message_id,
-            reason_code="REPOSITORY_NOT_AUTHORIZED",
+            reason_code=SourceControlReason.REPOSITORY_NOT_AUTHORIZED,
             dependencies=dependencies,
         )
     profile = _repository_profile(repository_row)
@@ -402,21 +407,21 @@ def process_binding_request(
         return _complete_preflight_block(
             context,
             message_id=message_id,
-            reason_code="ACCESS_DENIED",
+            reason_code=SourceControlReason.ACCESS_DENIED,
             dependencies=dependencies,
         )
     except GitLabDefaultBranchNotFound:
         return _complete_preflight_block(
             context,
             message_id=message_id,
-            reason_code="REPOSITORY_NOT_FOUND",
+            reason_code=SourceControlReason.REPOSITORY_NOT_FOUND,
             dependencies=dependencies,
         )
     except GitLabProviderUnavailable:
         return _complete_preflight_block(
             context,
             message_id=message_id,
-            reason_code="CONNECTOR_UNAVAILABLE",
+            reason_code=SourceControlReason.CONNECTOR_UNAVAILABLE,
             dependencies=dependencies,
         )
 
@@ -514,7 +519,7 @@ def process_binding_request(
                 expected_attempts=effect.attempts,
                 values={
                     "state": EffectState.UNKNOWN.value,
-                    "last_error_code": "EXTERNAL_RESULT_UNKNOWN",
+                    "last_error_code": SourceControlReason.EXTERNAL_RESULT_UNKNOWN.value,
                     "next_reconcile_at": policy.next_reconcile_at(
                         now=dependencies.clock.now(),
                         attempts=effect.attempts,
@@ -535,16 +540,17 @@ def process_binding_request(
                 target_id=effect.id,
                 dependencies=dependencies,
                 result="UNKNOWN",
-                reason="EXTERNAL_RESULT_UNKNOWN",
+                reason=SourceControlReason.EXTERNAL_RESULT_UNKNOWN.value,
                 correlation_id=f"source-control:effect:{effect.id}",
             )
         effect = _effect_dto(unknown_row)
         try:
             _record_blocked(
                 context,
-                reason_code="RECONCILIATION_PENDING",
+                reason_code=SourceControlReason.RECONCILIATION_PENDING,
                 idempotency_key=(
-                    f"source-control:binding-blocked:{effect.id}:EXTERNAL_RESULT_UNKNOWN"
+                    "source-control:binding-blocked:"
+                    f"{effect.id}:{SourceControlReason.EXTERNAL_RESULT_UNKNOWN.value}"
                 ),
                 dependencies=dependencies,
             )
@@ -561,14 +567,14 @@ def process_binding_request(
         return ProcessBindingRequestResult(
             effect=effect,
             binding=None,
-            blocked_reason="RECONCILIATION_PENDING",
+            blocked_reason=SourceControlReason.RECONCILIATION_PENDING.value,
         )
     except GitLabAccessDenied:
         return _complete_effect_block(
             effect,
             context,
             message_id=message_id,
-            reason_code="ACCESS_DENIED",
+            reason_code=SourceControlReason.ACCESS_DENIED,
             dependencies=dependencies,
         )
     except GitLabProviderUnavailable:
@@ -576,7 +582,7 @@ def process_binding_request(
             effect,
             context,
             message_id=message_id,
-            reason_code="CONNECTOR_UNAVAILABLE",
+            reason_code=SourceControlReason.CONNECTOR_UNAVAILABLE,
             dependencies=dependencies,
         )
     except GitLabBranchConflict:
@@ -584,7 +590,7 @@ def process_binding_request(
             effect,
             context,
             message_id=message_id,
-            reason_code="BINDING_CONFLICT",
+            reason_code=SourceControlReason.BINDING_CONFLICT,
             dependencies=dependencies,
         )
 

@@ -147,30 +147,45 @@ def prove_create_merge_request(
         raise ReconciliationProviderUnknown
     try:
         snapshot = gitlab.get_merge_request(context.profile, iid=iid)
-        source = gitlab.get_branch(context.profile, context.source_branch)
     except (GitLabAccessDenied, GitLabProjectNotFound):
         raise ReconciliationProviderBlocked(SourceControlReason.REPOSITORY_NOT_AUTHORIZED) from None
-    except (
-        GitLabBranchNotFound,
-        GitLabMergeRequestNotFound,
-        GitLabProviderUnavailable,
-        GitLabResultUnknown,
-    ):
+    except (GitLabMergeRequestNotFound, GitLabProviderUnavailable, GitLabResultUnknown):
         raise ReconciliationProviderUnknown from None
     if (
         snapshot.project_id != context.profile.project_id
         or snapshot.iid != iid
         or snapshot.source_branch != context.source_branch
         or snapshot.target_branch != TARGET_BRANCH
-        or source.name != context.source_branch
     ):
         raise ReconciliationProviderBlocked(SourceControlReason.MR_CONFLICT)
-    if snapshot.head_sha != source.commit_sha or snapshot.state == "locked":
+    if snapshot.state != "merged" and any(
+        value is not None
+        for value in (
+            snapshot.merge_commit_sha,
+            snapshot.merge_user_id,
+            snapshot.merged_at,
+        )
+    ):
+        raise ReconciliationProviderUnknown
+    if snapshot.state == "locked":
         raise ReconciliationProviderUnknown
     if snapshot.state == "merged" and (
         snapshot.merge_commit_sha is None or snapshot.merged_at is None
     ):
         raise ReconciliationProviderUnknown
+    if snapshot.state == "opened":
+        try:
+            source = gitlab.get_branch(context.profile, context.source_branch)
+        except (GitLabAccessDenied, GitLabProjectNotFound):
+            raise ReconciliationProviderBlocked(
+                SourceControlReason.REPOSITORY_NOT_AUTHORIZED
+            ) from None
+        except (GitLabBranchNotFound, GitLabProviderUnavailable, GitLabResultUnknown):
+            raise ReconciliationProviderUnknown from None
+        if source.name != context.source_branch:
+            raise ReconciliationProviderBlocked(SourceControlReason.MR_CONFLICT)
+        if snapshot.head_sha != source.commit_sha:
+            raise ReconciliationProviderUnknown
     return CreateProviderProof(
         snapshot=snapshot,
         creation_origin=creation_origin,

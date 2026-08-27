@@ -19,6 +19,7 @@ from control_plane.app.modules.source_control.application._integration_common im
     ProviderPreflightTransient as _ProviderPreflightTransient,
 )
 from control_plane.app.modules.source_control.domain import MergeRequestCreationOrigin
+from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
 from control_plane.app.modules.source_control.ports import (
     GitLabAccessDenied,
     GitLabBranchNotFound,
@@ -41,7 +42,7 @@ class _ProviderProof:
 
 @dataclass(frozen=True, slots=True)
 class _ProviderBlocked(Exception):
-    reason_code: str
+    reason_code: SourceControlReason
 
 
 class _ProviderUnknown(Exception):
@@ -60,21 +61,21 @@ def _read_provider_preflight(
     try:
         project = gitlab.get_project_delivery_profile(profile)
     except GitLabProjectPolicyUnsupported:
-        raise _ProviderPreflightBlocked("PROJECT_PROFILE_UNSUPPORTED") from None
+        raise _ProviderPreflightBlocked(SourceControlReason.PROJECT_PROFILE_UNSUPPORTED) from None
     except GitLabTargetBranchNotProtected:
-        raise _ProviderPreflightBlocked("TARGET_BRANCH_NOT_PROTECTED") from None
+        raise _ProviderPreflightBlocked(SourceControlReason.TARGET_BRANCH_NOT_PROTECTED) from None
     except GitLabBranchNotFound:
-        raise _ProviderPreflightBlocked("TARGET_BRANCH_NOT_FOUND") from None
+        raise _ProviderPreflightBlocked(SourceControlReason.TARGET_BRANCH_NOT_FOUND) from None
     except (GitLabAccessDenied, GitLabProjectNotFound):
-        raise _ProviderPreflightBlocked("REPOSITORY_NOT_AUTHORIZED") from None
+        raise _ProviderPreflightBlocked(SourceControlReason.REPOSITORY_NOT_AUTHORIZED) from None
     except (GitLabProviderUnavailable, GitLabResultUnknown):
         raise _ProviderPreflightTransient from None
     try:
         source = gitlab.get_branch(profile, context.task_branch)
     except GitLabBranchNotFound:
-        raise _ProviderPreflightBlocked("BRANCH_BINDING_MISSING") from None
+        raise _ProviderPreflightBlocked(SourceControlReason.BRANCH_BINDING_MISSING) from None
     except GitLabAccessDenied:
-        raise _ProviderPreflightBlocked("REPOSITORY_NOT_AUTHORIZED") from None
+        raise _ProviderPreflightBlocked(SourceControlReason.REPOSITORY_NOT_AUTHORIZED) from None
     except (GitLabProviderUnavailable, GitLabResultUnknown):
         raise _ProviderPreflightTransient from None
     if (
@@ -84,9 +85,9 @@ def _read_provider_preflight(
         or project.merge_method != "merge"
         or source.name != context.task_branch
     ):
-        raise _ProviderPreflightBlocked("PROJECT_PROFILE_UNSUPPORTED")
+        raise _ProviderPreflightBlocked(SourceControlReason.PROJECT_PROFILE_UNSUPPORTED)
     if source.commit_sha == context.base_commit_sha:
-        raise _ProviderPreflightBlocked("NO_DELIVERY_COMMIT")
+        raise _ProviderPreflightBlocked(SourceControlReason.NO_DELIVERY_COMMIT)
     return _ProviderPreflight(source=source)
 
 
@@ -109,9 +110,9 @@ def _prove_created_or_adopted_merge_request(
     except (GitLabResultUnknown, GitLabProviderUnavailable):
         raise _ProviderUnknown from None
     except (GitLabAccessDenied, GitLabProjectNotFound):
-        raise _ProviderBlocked("REPOSITORY_NOT_AUTHORIZED") from None
+        raise _ProviderBlocked(SourceControlReason.REPOSITORY_NOT_AUTHORIZED) from None
     if len(candidates) > 1:
-        raise _ProviderBlocked("MR_CONFLICT")
+        raise _ProviderBlocked(SourceControlReason.MR_CONFLICT)
     if candidates:
         candidate = candidates[0]
         if (
@@ -119,7 +120,7 @@ def _prove_created_or_adopted_merge_request(
             or candidate.source_branch != admission.task_branch
             or candidate.target_branch != _TARGET_BRANCH
         ):
-            raise _ProviderBlocked("MR_CONFLICT")
+            raise _ProviderBlocked(SourceControlReason.MR_CONFLICT)
         merge_request_iid = candidate.iid
         creation_origin = MergeRequestCreationOrigin.EXTERNAL_ADOPTED
     else:
@@ -140,7 +141,7 @@ def _prove_created_or_adopted_merge_request(
                 ),
             )
         except (GitLabAccessDenied, GitLabProjectNotFound):
-            raise _ProviderBlocked("REPOSITORY_NOT_AUTHORIZED") from None
+            raise _ProviderBlocked(SourceControlReason.REPOSITORY_NOT_AUTHORIZED) from None
         except (GitLabResultUnknown, GitLabProviderUnavailable):
             raise _ProviderUnknown from None
         merge_request_iid = created.iid

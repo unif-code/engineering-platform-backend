@@ -7,6 +7,7 @@ from typing import Any, Literal, Protocol
 from pydantic import BaseModel, ConfigDict
 
 from control_plane.app.modules.audit import AuditEnvelope
+from control_plane.app.modules.source_control.application._reasons import stored_reason
 from control_plane.app.modules.source_control.application.dependencies import (
     SourceControlDependencies,
 )
@@ -22,6 +23,7 @@ from control_plane.app.modules.source_control.domain import (
 )
 from control_plane.app.modules.source_control.domain.reasons import (
     CREATE_PREFLIGHT_REASONS,
+    SourceControlReason,
 )
 from control_plane.app.modules.source_control.ports import (
     BranchSnapshot,
@@ -42,19 +44,6 @@ MERGE_TOPIC: Literal["requirement.integration-merge.requested"] = (
 )
 REQUIREMENT_TYPE_PREFIXES = frozenset({"feat", "fix", "refactor", "chore"})
 PREFLIGHT_OUTCOME_REASONS = CREATE_PREFLIGHT_REASONS
-
-type PreflightReason = Literal[
-    "BRANCH_BINDING_MISSING",
-    "HEAD_SHA_CHANGED",
-    "MR_CONFLICT",
-    "NO_DELIVERY_COMMIT",
-    "OWNER_INELIGIBLE",
-    "OWNER_MISMATCH",
-    "PROJECT_PROFILE_UNSUPPORTED",
-    "REPOSITORY_NOT_AUTHORIZED",
-    "TARGET_BRANCH_NOT_FOUND",
-    "TARGET_BRANCH_NOT_PROTECTED",
-]
 
 
 class CallbackSubject(Protocol):
@@ -86,7 +75,7 @@ class ProviderPreflight:
 
 @dataclass(frozen=True, slots=True)
 class ProviderPreflightBlocked(Exception):
-    reason_code: PreflightReason
+    reason_code: SourceControlReason
 
 
 class ProviderPreflightTransient(Exception):
@@ -149,6 +138,7 @@ def claim_exact_delivery_request(
 
 
 def effect_dto(row: Any) -> SourceControlEffectDto:
+    reason = stored_reason(row["last_error_code"])
     return SourceControlEffectDto.model_validate(
         {
             "id": str(row["id"]),
@@ -166,7 +156,7 @@ def effect_dto(row: Any) -> SourceControlEffectDto:
             "attempts": row["attempts"],
             "next_reconcile_at": row["next_reconcile_at"],
             "state": row["state"],
-            "last_error_code": row["last_error_code"],
+            "last_error_code": None if reason is None else reason.value,
             "callback_state": row["requirement_callback_state"],
             "created_at": row["created_at"],
             "updated_at": row["updated_at"],
