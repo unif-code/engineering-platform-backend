@@ -15,6 +15,9 @@ from control_plane.app.modules.source_control.application.integration import (
     process_integration_merge_request,
     process_integration_mr_request,
 )
+from control_plane.app.modules.source_control.application.integration_reconciliation import (
+    reconcile_due_integration_effects,
+)
 from control_plane.app.modules.source_control.application.reconciliation import (
     process_webhook_inbox,
     reconcile_due_effects,
@@ -43,6 +46,7 @@ __all__ = [
     "process_binding_request",
     "process_integration_merge_request",
     "process_integration_mr_request",
+    "reconcile_due_integration_effects",
     "process_webhook_inbox",
     "reconcile_due_effects",
     "register_workspace_repository",

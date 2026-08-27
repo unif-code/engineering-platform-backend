@@ -94,15 +94,59 @@ def _sign(body: bytes, *, timestamp: int | None = None) -> str:
     return "v1," + base64.b64encode(digest).decode("ascii")
 
 
-def _headers(body: bytes, *, timestamp: int | None = None) -> dict[str, str]:
+def _headers(
+    body: bytes,
+    *,
+    timestamp: int | None = None,
+    event_type: str = "Push Hook",
+) -> dict[str, str]:
     value = timestamp if timestamp is not None else int(NOW.timestamp())
     return {
         "webhook-id": WEBHOOK_ID,
         "webhook-timestamp": str(value),
         "webhook-signature": _sign(body, timestamp=value),
-        "x-gitlab-event": "Push Hook",
+        "x-gitlab-event": event_type,
         "x-gitlab-event-uuid": "provider-event-601",
     }
+
+
+def _mr_body(
+    *,
+    action: str = "update",
+    iid: object = 17,
+    state: str = "opened",
+    source_branch: str = "feat/wi-601-source-control",
+    target_branch: str = "dev",
+    head_sha: str = "c" * 40,
+    old_head_sha: str | None = None,
+    project_id: int = 101,
+    source_project_id: object | None = 101,
+    target_project_id: object | None = 101,
+) -> bytes:
+    attributes: dict[str, object] = {
+        "iid": iid,
+        "action": action,
+        "source_branch": source_branch,
+        "target_branch": target_branch,
+        "state": state,
+        "last_commit": {"id": head_sha},
+        "oldrev": old_head_sha,
+    }
+    if source_project_id is not None:
+        attributes["source_project_id"] = source_project_id
+    if target_project_id is not None:
+        attributes["target_project_id"] = target_project_id
+    return json.dumps(
+        {
+            "object_kind": "merge_request",
+            "project": {"id": project_id},
+            "object_attributes": attributes,
+            "changes": {},
+            "user": {"username": "must-not-be-persisted"},
+            "source": {"private": "must-not-be-persisted"},
+        },
+        separators=(",", ":"),
+    ).encode()
 
 
 def _dependencies(engine: Engine) -> SourceControlDependencies:
@@ -158,6 +202,107 @@ def test_signed_webhook_is_verified_before_deduplicated(
     assert first.id == second.id
     assert first.payload_digest == "sha256:" + hashlib.sha256(body).hexdigest()
     assert first.ref == "refs/heads/feat/wi-601-source-control"
+
+
+@pytest.mark.parametrize(
+    ("action", "state"),
+    [
+        ("open", "opened"),
+        ("update", "opened"),
+        ("merge", "merged"),
+        ("close", "closed"),
+        ("reopen", "opened"),
+    ],
+)
+def test_signed_merge_request_actions_persist_only_safe_summary(
+    isolated_source_control_rw_engine: Engine,
+    action: str,
+    state: str,
+) -> None:
+    dependencies = _dependencies(isolated_source_control_rw_engine)
+    _register(isolated_source_control_rw_engine, dependencies)
+    body = _mr_body(action=action, state=state)
+
+    accepted = ingest_signed_gitlab_webhook(
+        repository_id=REPOSITORY_ID,
+        raw_body=body,
+        headers=_headers(body, event_type="Merge Request Hook"),
+        dependencies=dependencies,
+    )
+
+    assert accepted.state.value == "RECEIVED"
+    assert accepted.mr_iid == 17
+    assert accepted.mr_action == action
+    assert accepted.source_branch == "feat/wi-601-source-control"
+    assert accepted.target_branch == "dev"
+    assert accepted.mr_state == state
+    assert accepted.old_head_sha is None
+    assert accepted.head_sha == "c" * 40
+    assert accepted.ref is None
+    assert accepted.before_sha is None
+    assert accepted.after_sha is None
+    assert accepted.checkout_sha is None
+    assert "must-not-be-persisted" not in repr(accepted)
+
+
+def test_merge_request_empty_changes_and_matching_project_ids_are_valid(
+    isolated_source_control_rw_engine: Engine,
+) -> None:
+    dependencies = _dependencies(isolated_source_control_rw_engine)
+    _register(isolated_source_control_rw_engine, dependencies)
+    body = _mr_body(source_project_id=101, target_project_id="101")
+
+    accepted = ingest_signed_gitlab_webhook(
+        repository_id=REPOSITORY_ID,
+        raw_body=body,
+        headers=_headers(body, event_type="Merge Request Hook"),
+        dependencies=dependencies,
+    )
+
+    assert accepted.old_head_sha is None
+    assert accepted.head_sha == "c" * 40
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        _mr_body(iid=True),
+        _mr_body(source_project_id=None),
+        _mr_body(target_project_id=None),
+        _mr_body(source_project_id=999),
+        _mr_body(target_project_id=999),
+    ],
+)
+def test_merge_request_invalid_identity_shape_is_rejected_after_signature(
+    isolated_source_control_rw_engine: Engine,
+    body: bytes,
+) -> None:
+    dependencies = _dependencies(isolated_source_control_rw_engine)
+    _register(isolated_source_control_rw_engine, dependencies)
+
+    with pytest.raises(WebhookPayloadInvalid):
+        ingest_signed_gitlab_webhook(
+            repository_id=REPOSITORY_ID,
+            raw_body=body,
+            headers=_headers(body, event_type="Merge Request Hook"),
+            dependencies=dependencies,
+        )
+
+
+def test_event_header_is_only_a_consistency_check_for_signed_body(
+    isolated_source_control_rw_engine: Engine,
+) -> None:
+    dependencies = _dependencies(isolated_source_control_rw_engine)
+    _register(isolated_source_control_rw_engine, dependencies)
+    body = _mr_body()
+
+    with pytest.raises(WebhookPayloadInvalid):
+        ingest_signed_gitlab_webhook(
+            repository_id=REPOSITORY_ID,
+            raw_body=body,
+            headers=_headers(body, event_type="Push Hook"),
+            dependencies=dependencies,
+        )
 
 
 @pytest.mark.parametrize(

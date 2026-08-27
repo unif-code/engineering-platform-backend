@@ -70,7 +70,7 @@ def test_fresh_database_upgrade_heads_installs_all_visible_module_heads(
             "0001_workspace_base",
             "0006_auth_v03_routes",
             "0004_req_int_delivery",
-            "0005_sc_int_delivery",
+            "0006_sc_mr_reconcile",
         }
         # Alembic replaces dependency heads in the version table with the revision
         # that depends on them; the organization and workspace heads remain visible
@@ -80,7 +80,7 @@ def test_fresh_database_upgrade_heads_installs_all_visible_module_heads(
             "0010_identity_policy_reauth",
             "0006_auth_v03_routes",
             "0004_req_int_delivery",
-            "0005_sc_int_delivery",
+            "0006_sc_mr_reconcile",
         }
         assert set(inspect(engine).get_table_names(schema="organization")) == {
             "idempotency_record",

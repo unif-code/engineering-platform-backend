@@ -1,15 +1,14 @@
 from dataclasses import dataclass
+from typing import Protocol
 
 from control_plane.app.modules.source_control.application._integration_common import (
     TARGET_BRANCH as _TARGET_BRANCH,
-)
-from control_plane.app.modules.source_control.application._integration_merge_context import (
-    _MergeAdmission,
 )
 from control_plane.app.modules.source_control.application.dependencies import (
     SourceControlDependencies,
 )
 from control_plane.app.modules.source_control.domain import (
+    MergeRequestBindingDto,
     SourceControlDependencyUnavailable,
 )
 from control_plane.app.modules.source_control.ports import (
@@ -24,6 +23,7 @@ from control_plane.app.modules.source_control.ports import (
     GitLabProjectNotFound,
     GitLabProjectPolicyUnsupported,
     GitLabProviderUnavailable,
+    GitLabRepositoryProfile,
     GitLabResultUnknown,
     GitLabTargetBranchNotProtected,
 )
@@ -67,8 +67,16 @@ class _MergeExecutionUnknown(Exception):
     pass
 
 
+class _MergeProviderContext(Protocol):
+    @property
+    def repository_profile(self) -> GitLabRepositoryProfile: ...
+
+    @property
+    def binding(self) -> MergeRequestBindingDto: ...
+
+
 def _read_merge_provider_proof(
-    admission: _MergeAdmission,
+    admission: _MergeProviderContext,
     *,
     dependencies: SourceControlDependencies,
 ) -> _MergeProviderProof:
@@ -125,7 +133,7 @@ def _read_merge_provider_proof(
             admission.binding.source_branch,
         )
     except GitLabBranchNotFound:
-        if merge_request.state != "merged":
+        if merge_request.state not in {"merged", "closed"}:
             raise _MergePreflightBlocked("BRANCH_BINDING_MISSING") from None
         source = None
     except (GitLabAccessDenied, GitLabProjectNotFound):
@@ -164,7 +172,7 @@ def _provider_block_reason(proof: _MergeProviderProof) -> str | None:
 
 
 def _merge_exact_head(
-    admission: _MergeAdmission,
+    admission: _MergeProviderContext,
     *,
     requested_head_sha: str,
     preflight: _MergeProviderProof,

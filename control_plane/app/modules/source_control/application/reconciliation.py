@@ -451,17 +451,27 @@ def process_webhook_inbox(
         inbox = repository.webhook_by_id(inbox_id, for_update=True)
         if inbox is None or inbox["state"] != "RECEIVED":
             return 0
-        ref = inbox["ref"]
-        branch_name = ref.removeprefix("refs/heads/") if isinstance(ref, str) else ""
-        scheduled = (
-            repository.make_unknown_effect_due(
+        if inbox["object_kind"] == "merge_request":
+            scheduled = repository.make_integration_effect_due(
                 repository_id=str(inbox["repository_id"]),
-                branch_name=branch_name,
+                project_id=str(inbox["project_id"]),
+                mr_iid=int(inbox["mr_iid"]),
+                source_branch=str(inbox["source_branch"]),
+                target_branch=str(inbox["target_branch"]),
                 now=now,
             )
-            if branch_name
-            else 0
-        )
+        else:
+            ref = inbox["ref"]
+            branch_name = ref.removeprefix("refs/heads/") if isinstance(ref, str) else ""
+            scheduled = (
+                repository.make_unknown_effect_due(
+                    repository_id=str(inbox["repository_id"]),
+                    branch_name=branch_name,
+                    now=now,
+                )
+                if branch_name
+                else 0
+            )
         repository.complete_webhook(inbox_id, now=now)
         append_lifecycle_audit(
             repository,

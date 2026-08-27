@@ -20,6 +20,9 @@ from control_plane.app.modules.source_control.domain import (
     SourceControlDependencyUnavailable,
     SourceControlEffectDto,
 )
+from control_plane.app.modules.source_control.domain.reasons import (
+    CREATE_PREFLIGHT_REASONS,
+)
 from control_plane.app.modules.source_control.ports import (
     BranchSnapshot,
     GitLabMergeRequestSnapshot,
@@ -38,20 +41,7 @@ MERGE_TOPIC: Literal["requirement.integration-merge.requested"] = (
     "requirement.integration-merge.requested"
 )
 REQUIREMENT_TYPE_PREFIXES = frozenset({"feat", "fix", "refactor", "chore"})
-PREFLIGHT_OUTCOME_REASONS = frozenset(
-    {
-        "BRANCH_BINDING_MISSING",
-        "HEAD_SHA_CHANGED",
-        "MR_CONFLICT",
-        "NO_DELIVERY_COMMIT",
-        "OWNER_INELIGIBLE",
-        "OWNER_MISMATCH",
-        "PROJECT_PROFILE_UNSUPPORTED",
-        "REPOSITORY_NOT_AUTHORIZED",
-        "TARGET_BRANCH_NOT_FOUND",
-        "TARGET_BRANCH_NOT_PROTECTED",
-    }
-)
+PREFLIGHT_OUTCOME_REASONS = CREATE_PREFLIGHT_REASONS
 
 type PreflightReason = Literal[
     "BRANCH_BINDING_MISSING",

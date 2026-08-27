@@ -50,24 +50,11 @@ from control_plane.app.modules.source_control.domain import (
     RequirementCallbackUnavailable,
     SourceControlDependencyUnavailable,
 )
-
-_MERGE_PREFLIGHT_OUTCOME_REASONS = frozenset(
-    {
-        "BRANCH_BINDING_MISSING",
-        "EXTERNAL_MERGE_DRIFT",
-        "HEAD_SHA_CHANGED",
-        "MERGE_ACTOR_INELIGIBLE",
-        "MERGE_CONFLICT",
-        "MR_CHECKS_BLOCKED",
-        "MR_CLOSED",
-        "MR_CONFLICT",
-        "OWNER_MISMATCH",
-        "PROJECT_PROFILE_UNSUPPORTED",
-        "REPOSITORY_NOT_AUTHORIZED",
-        "TARGET_BRANCH_NOT_FOUND",
-        "TARGET_BRANCH_NOT_PROTECTED",
-    }
+from control_plane.app.modules.source_control.domain.reasons import (
+    MERGE_PREFLIGHT_REASONS,
 )
+
+_MERGE_PREFLIGHT_OUTCOME_REASONS = MERGE_PREFLIGHT_REASONS
 
 
 def _process_integration_merge_request(

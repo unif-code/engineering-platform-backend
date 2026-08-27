@@ -352,6 +352,49 @@ def test_integration_tables_columns_and_effect_shape_are_installed(
     assert observations["merge_commit_sha"]["nullable"] is True
 
 
+def test_merge_request_webhook_summary_columns_and_checks_are_installed(
+    source_control_owner_engine: Engine,
+) -> None:
+    inspector = inspect(source_control_owner_engine)
+    columns = {
+        column["name"]: column
+        for column in inspector.get_columns("webhook_inbox", schema="source_control")
+    }
+    constraints = {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints(
+            "webhook_inbox",
+            schema="source_control",
+        )
+    }
+
+    assert {
+        "mr_iid",
+        "mr_action",
+        "source_branch",
+        "target_branch",
+        "mr_state",
+        "old_head_sha",
+        "head_sha",
+    } <= columns.keys()
+    assert all(
+        columns[name]["nullable"] is True
+        for name in (
+            "mr_iid",
+            "mr_action",
+            "source_branch",
+            "target_branch",
+            "mr_state",
+            "old_head_sha",
+            "head_sha",
+        )
+    )
+    assert {
+        "ck_source_control_webhook_mr_shape",
+        "ck_source_control_webhook_mr_refs",
+    } <= constraints
+
+
 def test_mr_binding_and_observation_are_append_only_for_runtime_role(
     isolated_source_control_database: IsolatedSourceControlDatabase,
 ) -> None:
@@ -691,6 +734,137 @@ def test_0005_downgrade_fails_before_ddl_when_integration_facts_exist(
         }
     finally:
         engine.dispose()
+
+
+def test_0006_preserves_historical_push_without_inventing_mr_summary(
+    fresh_source_control_migration_database_url: URL,
+) -> None:
+    config = _config(fresh_source_control_migration_database_url)
+    command.upgrade(config, "0005_sc_int_delivery")
+    engine = create_engine(fresh_source_control_migration_database_url)
+    try:
+        with engine.begin() as db:
+            _insert_effect_graph(db)
+            db.execute(
+                text(
+                    "INSERT INTO source_control.webhook_inbox "
+                    "(id, repository_id, webhook_id, webhook_timestamp, payload_digest, "
+                    "event_type, object_kind, project_id, ref, before_sha, after_sha, "
+                    "checkout_sha, state, processed_at) VALUES "
+                    "('90000000-0000-0000-0000-000000000391', "
+                    "'10000000-0000-0000-0000-000000000301', 'push-391', now(), "
+                    "'sha256:push-391', 'Push Hook', 'push', '101', "
+                    "'refs/heads/feat/wi-391-history', "
+                    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', "
+                    "'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', "
+                    "'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', "
+                    "'PROCESSED', now())"
+                )
+            )
+
+        command.upgrade(config, "0006_sc_mr_reconcile")
+        with engine.connect() as db:
+            summary = db.execute(
+                text(
+                    "SELECT mr_iid, mr_action, source_branch, target_branch, mr_state, "
+                    "old_head_sha, head_sha FROM source_control.webhook_inbox "
+                    "WHERE webhook_id='push-391'"
+                )
+            ).one()
+
+        assert summary == (None, None, None, None, None, None, None)
+        command.downgrade(config, "source_control@0005_sc_int_delivery")
+        assert "mr_iid" not in {
+            column["name"]
+            for column in inspect(engine).get_columns(
+                "webhook_inbox",
+                schema="source_control",
+            )
+        }
+    finally:
+        engine.dispose()
+
+
+def test_0006_downgrade_refuses_to_discard_mr_webhook_summary(
+    fresh_source_control_migration_database_url: URL,
+) -> None:
+    config = _config(fresh_source_control_migration_database_url)
+    command.upgrade(config, "heads")
+    engine = create_engine(fresh_source_control_migration_database_url)
+    try:
+        with engine.begin() as db:
+            _insert_effect_graph(db)
+            db.execute(
+                text(
+                    "INSERT INTO source_control.webhook_inbox "
+                    "(id, repository_id, webhook_id, webhook_timestamp, payload_digest, "
+                    "event_type, object_kind, project_id, state, processed_at, mr_iid, "
+                    "mr_action, source_branch, target_branch, mr_state, head_sha) VALUES "
+                    "('90000000-0000-0000-0000-000000000392', "
+                    "'10000000-0000-0000-0000-000000000301', 'mr-392', now(), "
+                    "'sha256:mr-392', 'Merge Request Hook', 'merge_request', '101', "
+                    "'PROCESSED', now(), 17, 'merge', 'feat/wi-301-source-control', "
+                    "'dev', 'merged', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')"
+                )
+            )
+
+        with pytest.raises(Exception, match="MR webhook summaries"):
+            command.downgrade(config, "source_control@0005_sc_int_delivery")
+
+        assert "mr_iid" in {
+            column["name"]
+            for column in inspect(engine).get_columns(
+                "webhook_inbox",
+                schema="source_control",
+            )
+        }
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("mr_iid", "mr_action", "source_branch", "target_branch", "mr_state", "head_sha"),
+    [
+        (None, "update", "feat/wi-301-source-control", "dev", "opened", "b" * 40),
+        (17, "delete", "feat/wi-301-source-control", "dev", "opened", "b" * 40),
+        (17, "update", "", "dev", "opened", "b" * 40),
+        (17, "update", "feat/wi-301-source-control", "", "opened", "b" * 40),
+        (17, "update", "feat/wi-301-source-control", "dev", "opened", "short"),
+    ],
+)
+def test_database_rejects_invalid_mr_webhook_summary_shape(
+    isolated_source_control_database: IsolatedSourceControlDatabase,
+    mr_iid: int | None,
+    mr_action: str,
+    source_branch: str,
+    target_branch: str,
+    mr_state: str,
+    head_sha: str,
+) -> None:
+    with isolated_source_control_database.owner.begin() as db:
+        _insert_effect_graph(db)
+        with pytest.raises(IntegrityError):
+            db.execute(
+                text(
+                    "INSERT INTO source_control.webhook_inbox "
+                    "(id, repository_id, webhook_id, webhook_timestamp, payload_digest, "
+                    "event_type, object_kind, project_id, state, processed_at, mr_iid, "
+                    "mr_action, source_branch, target_branch, mr_state, head_sha) VALUES "
+                    "('90000000-0000-0000-0000-000000000399', "
+                    "'10000000-0000-0000-0000-000000000301', 'mr-invalid', now(), "
+                    "'sha256:mr-invalid', 'Merge Request Hook', 'merge_request', '101', "
+                    "'PROCESSED', now(), :mr_iid, :mr_action, :source_branch, "
+                    ":target_branch, :mr_state, :head_sha)"
+                ),
+                {
+                    "mr_iid": mr_iid,
+                    "mr_action": mr_action,
+                    "source_branch": source_branch,
+                    "target_branch": target_branch,
+                    "mr_state": mr_state,
+                    "head_sha": head_sha,
+                },
+            )
 
 
 def test_source_control_downgrade_refuses_business_rows_and_preserves_requirement(

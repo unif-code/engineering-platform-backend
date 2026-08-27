@@ -368,6 +368,13 @@ class SqlAlchemySourceControlRepository:
         parameters = {
             "state": "RECEIVED",
             "processed_at": None,
+            "mr_iid": None,
+            "mr_action": None,
+            "source_branch": None,
+            "target_branch": None,
+            "mr_state": None,
+            "old_head_sha": None,
+            "head_sha": None,
             **values,
         }
         return (
@@ -376,12 +383,14 @@ class SqlAlchemySourceControlRepository:
                     "INSERT INTO source_control.webhook_inbox "
                     "(id, repository_id, webhook_id, webhook_timestamp, payload_digest, "
                     "provider_event_uuid, event_type, object_kind, project_id, ref, "
-                    "before_sha, after_sha, checkout_sha, state, received_at, updated_at, "
-                    "processed_at) "
+                    "before_sha, after_sha, checkout_sha, mr_iid, mr_action, "
+                    "source_branch, target_branch, mr_state, old_head_sha, head_sha, "
+                    "state, received_at, updated_at, processed_at) "
                     "VALUES (:id, :repository_id, :webhook_id, :webhook_timestamp, "
                     ":payload_digest, :provider_event_uuid, :event_type, :object_kind, "
                     ":project_id, :ref, :before_sha, :after_sha, :checkout_sha, "
-                    ":state, :now, :now, :processed_at) "
+                    ":mr_iid, :mr_action, :source_branch, :target_branch, :mr_state, "
+                    ":old_head_sha, :head_sha, :state, :now, :now, :processed_at) "
                     "ON CONFLICT (repository_id, webhook_id) DO NOTHING RETURNING *"
                 ),
                 parameters,
@@ -443,6 +452,58 @@ class SqlAlchemySourceControlRepository:
             {
                 "repository_id": repository_id,
                 "branch_name": branch_name,
+                "now": now,
+            },
+        )
+        return result.rowcount
+
+    def make_integration_effect_due(
+        self,
+        *,
+        repository_id: str,
+        project_id: str,
+        mr_iid: int,
+        source_branch: str,
+        target_branch: str,
+        now: datetime,
+    ) -> int:
+        result = self.db.execute(
+            text(
+                "WITH bound_iid AS ("
+                "SELECT id, external_project_id, source_branch, target_branch "
+                "FROM source_control.merge_request_binding "
+                "WHERE repository_id=:repository_id AND merge_request_iid=:mr_iid"
+                "), matching_effects AS ("
+                "SELECT effect.id FROM bound_iid AS binding "
+                "JOIN source_control.source_control_effect AS effect "
+                "ON effect.operation='MERGE_INTEGRATION_MR' "
+                "AND effect.payload ->> 'bindingId'=binding.id::text "
+                "WHERE binding.external_project_id=:project_id "
+                "AND binding.source_branch=:source_branch "
+                "AND binding.target_branch=:target_branch "
+                "AND effect.repository_id=:repository_id AND effect.state='UNKNOWN' "
+                "UNION ALL "
+                "SELECT effect.id "
+                "FROM source_control.repository_branch_binding AS branch_binding "
+                "JOIN source_control.source_control_effect AS effect "
+                "ON effect.operation='CREATE_INTEGRATION_MR' "
+                "AND effect.payload ->> 'branchBindingId'=branch_binding.id::text "
+                "WHERE NOT EXISTS (SELECT 1 FROM bound_iid) "
+                "AND :target_branch='dev' "
+                "AND branch_binding.repository_id=:repository_id "
+                "AND branch_binding.branch_name=:source_branch "
+                "AND effect.repository_id=:repository_id AND effect.state='UNKNOWN'"
+                ") UPDATE source_control.source_control_effect AS effect "
+                "SET next_reconcile_at=:now, updated_at=:now "
+                "FROM matching_effects "
+                "WHERE effect.id=matching_effects.id AND effect.state='UNKNOWN'"
+            ),
+            {
+                "repository_id": repository_id,
+                "project_id": project_id,
+                "mr_iid": mr_iid,
+                "source_branch": source_branch,
+                "target_branch": target_branch,
                 "now": now,
             },
         )

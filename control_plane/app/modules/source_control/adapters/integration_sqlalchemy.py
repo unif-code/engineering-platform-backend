@@ -6,6 +6,11 @@ from typing import Any
 from pydantic import BaseModel
 from sqlalchemy import Connection, text
 
+from control_plane.app.modules.source_control.domain.reasons import (
+    DELIVERY_PREFLIGHT_REASONS,
+    TRANSIENT_DELIVERY_INBOX_REASONS,
+)
+
 _EFFECT_UPDATE_COLUMNS = frozenset(
     {
         "attempts",
@@ -17,26 +22,8 @@ _EFFECT_UPDATE_COLUMNS = frozenset(
         "updated_at",
     }
 )
-_PREFLIGHT_OUTCOME_REASONS = frozenset(
-    {
-        "BRANCH_BINDING_MISSING",
-        "HEAD_SHA_CHANGED",
-        "MERGE_ACTOR_INELIGIBLE",
-        "MERGE_CONFLICT",
-        "MR_CHECKS_BLOCKED",
-        "MR_CLOSED",
-        "MR_CONFLICT",
-        "NO_DELIVERY_COMMIT",
-        "OWNER_INELIGIBLE",
-        "OWNER_MISMATCH",
-        "PROJECT_PROFILE_UNSUPPORTED",
-        "REPOSITORY_NOT_AUTHORIZED",
-        "TARGET_BRANCH_NOT_FOUND",
-        "TARGET_BRANCH_NOT_PROTECTED",
-        "EXTERNAL_MERGE_DRIFT",
-    }
-)
-_TRANSIENT_INBOX_ERRORS = frozenset({"PROVIDER_UNAVAILABLE"})
+_PREFLIGHT_OUTCOME_REASONS = DELIVERY_PREFLIGHT_REASONS
+_TRANSIENT_INBOX_ERRORS = TRANSIENT_DELIVERY_INBOX_REASONS
 
 
 class SqlAlchemySourceControlIntegrationRepository:
