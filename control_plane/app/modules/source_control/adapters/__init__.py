@@ -13,6 +13,9 @@ from control_plane.app.modules.source_control.adapters.integration_sqlalchemy im
 from control_plane.app.modules.source_control.adapters.requirement import (
     RequirementFacadeBindingAdapter,
 )
+from control_plane.app.modules.source_control.adapters.requirement_delivery import (
+    RequirementFacadeDeliveryAdapter,
+)
 from control_plane.app.modules.source_control.adapters.sqlalchemy import (
     SqlAlchemySourceControlRepository,
 )
@@ -23,5 +26,6 @@ __all__ = [
     "HttpxGitLabMergeRequestAdapter",
     "SqlAlchemySourceControlIntegrationRepository",
     "RequirementFacadeBindingAdapter",
+    "RequirementFacadeDeliveryAdapter",
     "SqlAlchemySourceControlRepository",
 ]

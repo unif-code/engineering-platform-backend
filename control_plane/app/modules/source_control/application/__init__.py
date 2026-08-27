@@ -4,6 +4,9 @@ from control_plane.app.modules.source_control.application.commands import (
     register_workspace_repository,
     remove_workspace_repository,
 )
+from control_plane.app.modules.source_control.application.delivery_relay import (
+    relay_integration_delivery_requests,
+)
 from control_plane.app.modules.source_control.application.dependencies import (
     SourceControlDependencies,
 )
@@ -36,6 +39,7 @@ __all__ = [
     "reconcile_due_effects",
     "register_workspace_repository",
     "relay_binding_requests",
+    "relay_integration_delivery_requests",
     "remove_workspace_repository",
     "verify_gitlab_standard_webhook",
 ]

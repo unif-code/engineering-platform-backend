@@ -1,5 +1,15 @@
 """Source Control seams."""
 
+from control_plane.app.modules.source_control.ports.delivery_requirement import (
+    ExternalMergeDriftResult,
+    IntegrationDeliveryBlockedResult,
+    IntegrationMergedResult,
+    IntegrationMrReadyResult,
+    IntegrationReconciliationPendingResult,
+    RelayIntegrationDeliveryRequestsResult,
+    RequirementDeliveryContext,
+    RequirementDeliveryPort,
+)
 from control_plane.app.modules.source_control.ports.gitlab import (
     BranchSnapshot,
     GitLabAccessDenied,
@@ -47,6 +57,7 @@ from control_plane.app.modules.source_control.ports.runtime import ClockPort, Ra
 __all__ = [
     "BranchSnapshot",
     "ClockPort",
+    "ExternalMergeDriftResult",
     "GitLabAccessDenied",
     "GitLabBranchAlreadyExists",
     "GitLabBranchConflict",
@@ -64,13 +75,20 @@ __all__ = [
     "GitLabProjectNotFound",
     "GitLabRepositoryProfile",
     "GitLabResultUnknown",
+    "IntegrationDeliveryBlockedResult",
+    "IntegrationMergedResult",
+    "IntegrationMrReadyResult",
+    "IntegrationReconciliationPendingResult",
     "BindingBlockedResult",
     "BindingEligibility",
     "BindingReadyResult",
     "OwnerEligibilityPort",
     "RandomPort",
+    "RelayIntegrationDeliveryRequestsResult",
     "RequirementBindingContext",
     "RequirementBindingPort",
+    "RequirementDeliveryContext",
+    "RequirementDeliveryPort",
     "SecretReferencePort",
     "SourceControlPolicyPort",
     "SourceControlIntegrationRepository",
