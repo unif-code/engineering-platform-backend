@@ -68,6 +68,15 @@ class SourceControlIntegrationRepository(Protocol):
         for_update: bool = False,
     ) -> Any: ...
 
+    def effect_by_operation_work_item_fingerprint(
+        self,
+        operation: str,
+        work_item_id: str,
+        request_fingerprint: str,
+        *,
+        for_update: bool = False,
+    ) -> Any: ...
+
     def insert_effect(self, **values: Any) -> Any: ...
 
     def transition_effect(

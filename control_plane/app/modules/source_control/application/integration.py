@@ -38,6 +38,9 @@ from control_plane.app.modules.source_control.application._integration_common im
 from control_plane.app.modules.source_control.application._integration_common import (
     effect_dto as _effect_dto,
 )
+from control_plane.app.modules.source_control.application._integration_merge import (
+    _process_integration_merge_request,
+)
 from control_plane.app.modules.source_control.application._integration_provider import (
     _prove_created_or_adopted_merge_request,
     _ProviderBlocked,
@@ -324,4 +327,15 @@ def process_integration_mr_request(
         binding=committed.binding,
         observation=committed.observation,
         blocked_reason=error_code,
+    )
+
+
+def process_integration_merge_request(
+    *,
+    message_id: str,
+    dependencies: SourceControlDependencies,
+) -> ProcessIntegrationRequestResult:
+    return _process_integration_merge_request(
+        message_id=message_id,
+        dependencies=dependencies,
     )
