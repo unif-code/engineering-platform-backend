@@ -11,13 +11,22 @@ from control_plane.app.modules.source_control.application._integration_common im
     ProcessIntegrationRequestResult,
 )
 from control_plane.app.modules.source_control.application._integration_common import (
+    append_audit as _append_audit,
+)
+from control_plane.app.modules.source_control.application._integration_common import (
     binding_dto as _binding_dto,
 )
 from control_plane.app.modules.source_control.application._integration_common import (
     effect_dto as _effect_dto,
 )
 from control_plane.app.modules.source_control.application._integration_common import (
+    observation_digest as _observation_digest,
+)
+from control_plane.app.modules.source_control.application._integration_common import (
     observation_dto as _observation_dto,
+)
+from control_plane.app.modules.source_control.application._integration_common import (
+    snapshot_state as _snapshot_state,
 )
 from control_plane.app.modules.source_control.application.dependencies import (
     SourceControlDependencies,
@@ -26,6 +35,7 @@ from control_plane.app.modules.source_control.domain import (
     EffectOperation,
     EffectState,
     MergeRequestBindingDto,
+    MergeRequestObservationDto,
     RequirementCallbackState,
     RequirementCallbackUnavailable,
     SourceControlDependencyUnavailable,
@@ -33,6 +43,7 @@ from control_plane.app.modules.source_control.domain import (
 )
 from control_plane.app.modules.source_control.ports import (
     ExternalMergeDriftResult,
+    GitLabMergeRequestSnapshot,
     IntegrationDeliveryBlockedResult,
     IntegrationMergedResult,
     IntegrationMrReadyResult,
@@ -185,6 +196,9 @@ def _mark_unknown(
     *,
     message_id: str,
     inbox_attempts: int,
+    operation: EffectOperation = _CREATE_OPERATION,
+    binding: MergeRequestBindingDto | None = None,
+    observation: MergeRequestObservationDto | None = None,
     dependencies: SourceControlDependencies,
 ) -> ProcessIntegrationRequestResult:
     repository_factory = dependencies.delivery_repository_factory
@@ -218,11 +232,18 @@ def _mark_unknown(
         if completed is None:
             raise RequirementCallbackUnavailable("Integration MR inbox lease was lost")
     unknown = _effect_dto(row)
-    unknown = _record_pending(context, unknown, dependencies=dependencies)
+    unknown = _record_effect_callback(
+        context,
+        unknown,
+        kind="pending",
+        binding_id=None if binding is None else binding.id,
+        operation=operation,
+        dependencies=dependencies,
+    )
     return ProcessIntegrationRequestResult(
         effect=unknown,
-        binding=None,
-        observation=None,
+        binding=binding,
+        observation=observation,
         blocked_reason="RECONCILIATION_PENDING",
     )
 
@@ -323,6 +344,9 @@ def _finish_preflight_callback(
     message_id: str,
     inbox_attempts: int,
     reason_code: str,
+    binding_id: str | None = None,
+    kind: Literal["blocked", "external_drift"] = "blocked",
+    idempotency_key: str | None = None,
     dependencies: SourceControlDependencies,
 ) -> bool:
     repository_factory = dependencies.delivery_repository_factory
@@ -340,18 +364,35 @@ def _finish_preflight_callback(
         ):
             raise RequirementCallbackUnavailable("Integration MR inbox lease was lost")
         try:
-            requirement.record_blocked(
-                IntegrationDeliveryBlockedResult(
-                    work_item_id=context.work_item_id,
-                    binding_id=None,
-                    reason_code=reason_code,
-                    expected_revision=context.work_item_revision,
-                    idempotency_key=(
-                        "source-control:integration-blocked:"
-                        f"{message_id}:{context.work_item_id}:{reason_code}"
-                    ),
+            if kind == "external_drift":
+                if binding_id is None:
+                    raise SourceControlDependencyUnavailable(
+                        "External-drift binding is unavailable"
+                    )
+                requirement.record_external_merge_drift(
+                    ExternalMergeDriftResult(
+                        work_item_id=context.work_item_id,
+                        binding_id=binding_id,
+                        expected_revision=context.work_item_revision,
+                        idempotency_key=(
+                            idempotency_key or f"source-control:external-merge-drift:{message_id}"
+                        ),
+                    )
                 )
-            )
+            else:
+                requirement.record_blocked(
+                    IntegrationDeliveryBlockedResult(
+                        work_item_id=context.work_item_id,
+                        binding_id=binding_id,
+                        reason_code=reason_code,
+                        expected_revision=context.work_item_revision,
+                        idempotency_key=(
+                            idempotency_key
+                            or "source-control:integration-blocked:"
+                            f"{message_id}:{context.work_item_id}:{reason_code}"
+                        ),
+                    )
+                )
         except Exception:
             return False
         completed = repository.complete_delivery_request(
@@ -370,6 +411,9 @@ def _complete_preflight_block(
     message_id: str,
     inbox_attempts: int,
     reason_code: str,
+    binding: MergeRequestBindingDto | None = None,
+    observation: MergeRequestObservationDto | None = None,
+    idempotency_key: str | None = None,
     dependencies: SourceControlDependencies,
 ) -> ProcessIntegrationRequestResult:
     repository_factory = dependencies.delivery_repository_factory
@@ -391,19 +435,21 @@ def _complete_preflight_block(
         message_id=message_id,
         inbox_attempts=inbox_attempts,
         reason_code=reason_code,
+        binding_id=None if binding is None else binding.id,
+        idempotency_key=idempotency_key,
         dependencies=dependencies,
     )
     if not callback_succeeded:
         return ProcessIntegrationRequestResult(
             effect=None,
-            binding=None,
-            observation=None,
+            binding=binding,
+            observation=observation,
             blocked_reason=reason_code,
         )
     return ProcessIntegrationRequestResult(
         effect=None,
-        binding=None,
-        observation=None,
+        binding=binding,
+        observation=observation,
         blocked_reason=reason_code,
     )
 
@@ -415,6 +461,11 @@ def _complete_effect_block(
     message_id: str,
     inbox_attempts: int,
     reason_code: str,
+    operation: EffectOperation = _CREATE_OPERATION,
+    binding: MergeRequestBindingDto | None = None,
+    observation: MergeRequestObservationDto | None = None,
+    readback: GitLabMergeRequestSnapshot | None = None,
+    audit_action: str | None = None,
     dependencies: SourceControlDependencies,
 ) -> ProcessIntegrationRequestResult:
     repository_factory = dependencies.delivery_repository_factory
@@ -423,6 +474,21 @@ def _complete_effect_block(
     now = dependencies.clock.now()
     with dependencies.engine.begin() as db:
         repository = repository_factory(db)
+        observation_row = (
+            None
+            if readback is None
+            else repository.append_merge_request_observation(
+                id=str(dependencies.random.uuid4()),
+                binding_id=None if binding is None else binding.id,
+                head_sha=readback.head_sha,
+                state=_snapshot_state(readback).value,
+                merge_commit_sha=readback.merge_commit_sha,
+                external_merge_user_id=readback.merge_user_id,
+                merged_at=readback.merged_at,
+                observation_digest=_observation_digest(readback),
+                observed_at=now,
+            )
+        )
         row = repository.transition_effect(
             effect.id,
             expected_state=effect.state.value,
@@ -435,28 +501,38 @@ def _complete_effect_block(
                 "updated_at": now,
             },
         )
-        if row is None:
-            raise RequirementCallbackUnavailable("Integration MR effect lease was lost")
         completed = repository.complete_delivery_request(
             message_id,
             expected_attempts=inbox_attempts,
             now=now,
         )
-        if completed is None:
-            raise RequirementCallbackUnavailable("Integration MR inbox lease was lost")
+        if row is None or completed is None or (readback is not None and observation_row is None):
+            raise RequirementCallbackUnavailable("Integration MR lease was lost")
+        if audit_action is not None:
+            _append_audit(
+                repository,
+                action=audit_action,
+                target_type="source_control_effect",
+                target_id=effect.id,
+                dependencies=dependencies,
+            )
     blocked = _effect_dto(row)
     blocked = _record_effect_callback(
         context,
         blocked,
-        kind="blocked",
-        binding_id=None,
+        kind=("external_drift" if reason_code == "EXTERNAL_MERGE_DRIFT" else "blocked"),
+        binding_id=None if binding is None else binding.id,
         reason_code=reason_code,
+        operation=operation,
         dependencies=dependencies,
+    )
+    final_observation = (
+        observation if observation_row is None else _observation_dto(observation_row)
     )
     return ProcessIntegrationRequestResult(
         effect=blocked,
-        binding=None,
-        observation=None,
+        binding=binding,
+        observation=final_observation,
         blocked_reason=reason_code,
     )
 
