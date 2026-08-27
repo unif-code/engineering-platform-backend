@@ -17,6 +17,7 @@ from control_plane.app.modules.source_control.ports import (
 
 _CONFLICT_ERROR_CODE = "DELIVERY_REQUEST_CONFLICT"
 _UNAVAILABLE_ERROR_CODE = "SOURCE_CONTROL_UNAVAILABLE"
+_MAX_CONFLICT_RETRY_MINUTES = 24 * 60
 
 
 class _DeliveryRequestMessageConflict(ValueError):
@@ -25,6 +26,12 @@ class _DeliveryRequestMessageConflict(ValueError):
 
 def _payload_hash(row: Any) -> str:
     return str(row["payload_hash"])
+
+
+def _conflict_retry_at(envelope: DeliveryRequestEnvelope, *, now: datetime) -> datetime:
+    exponent = min(envelope.attempts - 1, 11)
+    delay_minutes = min(2**exponent, _MAX_CONFLICT_RETRY_MINUTES)
+    return now + timedelta(minutes=delay_minutes)
 
 
 def _accept_delivery_request(
@@ -109,7 +116,7 @@ def relay_integration_delivery_requests(
                 requirement,
                 envelope,
                 error_code=_CONFLICT_ERROR_CODE,
-                retry_at=now,
+                retry_at=_conflict_retry_at(envelope, now=now),
             )
             released += 1
             continue

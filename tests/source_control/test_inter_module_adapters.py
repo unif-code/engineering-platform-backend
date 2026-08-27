@@ -1,3 +1,4 @@
+import traceback
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -217,6 +218,51 @@ def test_requirement_delivery_adapter_uses_package_root_facade(
 
     assert messages[0].kind is DeliveryRequestKind.CREATE_MR
     assert messages[0].actor_id == "employee-1"
+    engine.dispose()
+
+
+@pytest.mark.parametrize("malformed", ["unknown-kind", "schema-drift"])
+def test_requirement_delivery_adapter_sanitizes_claim_mapping_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    malformed: str,
+) -> None:
+    engine = create_engine("sqlite://")
+    sensitive_input = "test-only-sensitive-provider-payload"
+    message = SimpleNamespace(
+        message_id="30000000-0000-0000-0000-000000000526",
+        payload_hash="sha256:delivery-request",
+        requirement_id="40000000-0000-0000-0000-000000000526",
+        requirement_revision=3,
+        work_item_id="50000000-0000-0000-0000-000000000526",
+        work_item_revision=5,
+        repository_id="gitlab-project-526",
+        actor_id="employee-1",
+        kind=IntegrationDeliveryRequestKind.CREATE_MR,
+        integration_merge_request_binding_id=None,
+        attempts=1,
+    )
+    if malformed == "unknown-kind":
+        message.kind = SimpleNamespace(value=sensitive_input)
+    else:
+        message.requirement_revision = 0
+        message.actor_id = sensitive_input
+    monkeypatch.setattr(
+        requirement_module,
+        "claim_integration_delivery_requests",
+        lambda *_args, **_kwargs: (message,),
+    )
+    adapter = RequirementFacadeDeliveryAdapter(
+        engine=engine,
+        dependencies=SimpleNamespace(clock=FixedClock()),
+    )
+
+    with pytest.raises(RequirementCallbackUnavailable) as raised:
+        adapter.claim_requests(limit=10, lease_until=NOW + timedelta(minutes=1))
+
+    formatted = "".join(traceback.format_exception(raised.value))
+    assert str(raised.value) == "Requirement claim unavailable"
+    assert raised.value.__cause__ is None
+    assert sensitive_input not in formatted
     engine.dispose()
 
 
