@@ -95,6 +95,7 @@ def _ready_requirement(
                 expected_revision=created.work_item.revision,
                 actor=Actor("source-control"),
                 idempotency_key=f"delivery-bind-{key_suffix}",
+                correlation_id=f"source-control:effect:delivery-bind-{key_suffix}",
                 dependencies=dependencies,
             )
     with database.runtime.connect() as db:

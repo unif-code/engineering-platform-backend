@@ -12,6 +12,7 @@ from control_plane.app.modules.requirement.application.common import (
     actor_id,
     audit,
     requirement_dto,
+    validated_correlation_id,
 )
 from control_plane.app.modules.requirement.application.delivery import (
     WorkItemDeliveryConflict,
@@ -387,11 +388,13 @@ def _record_callback(
     expected_revision: int,
     actor: Any,
     idempotency_key: str,
+    correlation_id: str,
     dependencies: RequirementDependencies,
-    command: Callable[[Any, Any, str | None, str, datetime], WorkItemDeliveryResult],
+    command: Callable[[Any, Any, str | None, str, datetime, str], WorkItemDeliveryResult],
 ) -> WorkItemDeliveryResult:
     stable_actor = actor_id(actor)
     stable_binding_id = _normalized_binding_id(binding_id)
+    stable_correlation_id = validated_correlation_id(correlation_id)
     requirement, work_item = _locked_subject(repository, work_item_id=work_item_id)
     material = dependencies.secret_manager.load()
     body: dict[str, object] = {
@@ -418,6 +421,7 @@ def _record_callback(
             stable_binding_id,
             stable_actor,
             dependencies.clock.now(),
+            stable_correlation_id,
         )
         return IdempotentResponse(status_code=200, body=result.model_dump(mode="json"))
 
@@ -447,6 +451,7 @@ def _update_projection(
     actor: str,
     operation: str,
     now: datetime,
+    correlation_id: str,
     dependencies: RequirementDependencies,
     advance_requirement: bool = False,
 ) -> WorkItemDeliveryResult:
@@ -495,6 +500,7 @@ def _update_projection(
             f"reasonCode={blocked_reason.value if blocked_reason else 'none'}; "
             f"revision={updated_work_item['revision']}"
         ),
+        correlation_id=correlation_id,
     )
     return _callback_result(updated_requirement, updated_work_item)
 
@@ -507,6 +513,7 @@ def record_integration_mr_ready(
     expected_revision: int,
     actor: Any,
     idempotency_key: str,
+    correlation_id: str,
     dependencies: RequirementDependencies,
 ) -> WorkItemDeliveryResult:
     def command(
@@ -515,6 +522,7 @@ def record_integration_mr_ready(
         stable_binding: str | None,
         stable_actor: str,
         now: datetime,
+        stable_correlation_id: str,
     ) -> WorkItemDeliveryResult:
         current = IntegrationDeliveryState(work_item["integration_delivery_state"])
         current_binding = work_item["integration_merge_request_binding_id"]
@@ -540,6 +548,7 @@ def record_integration_mr_ready(
             actor=stable_actor,
             operation="mr_ready",
             now=now,
+            correlation_id=stable_correlation_id,
             dependencies=dependencies,
             advance_requirement=True,
         )
@@ -553,6 +562,7 @@ def record_integration_mr_ready(
         expected_revision=expected_revision,
         actor=actor,
         idempotency_key=idempotency_key,
+        correlation_id=correlation_id,
         dependencies=dependencies,
         command=command,
     )
@@ -569,6 +579,7 @@ def _record_delivery_problem(
     expected_revision: int,
     actor: Any,
     idempotency_key: str,
+    correlation_id: str,
     dependencies: RequirementDependencies,
 ) -> WorkItemDeliveryResult:
     def command(
@@ -577,6 +588,7 @@ def _record_delivery_problem(
         stable_binding: str | None,
         stable_actor: str,
         now: datetime,
+        stable_correlation_id: str,
     ) -> WorkItemDeliveryResult:
         current = IntegrationDeliveryState(work_item["integration_delivery_state"])
         current_binding = (
@@ -617,6 +629,7 @@ def _record_delivery_problem(
             actor=stable_actor,
             operation=operation,
             now=now,
+            correlation_id=stable_correlation_id,
             dependencies=dependencies,
         )
 
@@ -629,6 +642,7 @@ def _record_delivery_problem(
         expected_revision=expected_revision,
         actor=actor,
         idempotency_key=idempotency_key,
+        correlation_id=correlation_id,
         dependencies=dependencies,
         command=command,
     )
@@ -643,6 +657,7 @@ def record_integration_delivery_blocked(
     expected_revision: int,
     actor: Any,
     idempotency_key: str,
+    correlation_id: str,
     dependencies: RequirementDependencies,
 ) -> WorkItemDeliveryResult:
     if not isinstance(reason_code, IntegrationDeliveryBlockedReason):
@@ -657,6 +672,7 @@ def record_integration_delivery_blocked(
         expected_revision=expected_revision,
         actor=actor,
         idempotency_key=idempotency_key,
+        correlation_id=correlation_id,
         dependencies=dependencies,
     )
 
@@ -669,6 +685,7 @@ def record_integration_reconciliation_pending(
     expected_revision: int,
     actor: Any,
     idempotency_key: str,
+    correlation_id: str,
     dependencies: RequirementDependencies,
 ) -> WorkItemDeliveryResult:
     return _record_delivery_problem(
@@ -681,6 +698,7 @@ def record_integration_reconciliation_pending(
         expected_revision=expected_revision,
         actor=actor,
         idempotency_key=idempotency_key,
+        correlation_id=correlation_id,
         dependencies=dependencies,
     )
 
@@ -694,6 +712,7 @@ def _record_bound_terminal(
     expected_revision: int,
     actor: Any,
     idempotency_key: str,
+    correlation_id: str,
     dependencies: RequirementDependencies,
 ) -> WorkItemDeliveryResult:
     def command(
@@ -702,6 +721,7 @@ def _record_bound_terminal(
         stable_binding: str | None,
         stable_actor: str,
         now: datetime,
+        stable_correlation_id: str,
     ) -> WorkItemDeliveryResult:
         current_binding = (
             None
@@ -746,6 +766,7 @@ def _record_bound_terminal(
             actor=stable_actor,
             operation=operation,
             now=now,
+            correlation_id=stable_correlation_id,
             dependencies=dependencies,
             advance_requirement=first_external_drift_binding,
         )
@@ -763,6 +784,7 @@ def _record_bound_terminal(
         expected_revision=expected_revision,
         actor=actor,
         idempotency_key=idempotency_key,
+        correlation_id=correlation_id,
         dependencies=dependencies,
         command=command,
     )
@@ -776,6 +798,7 @@ def record_integration_merged(
     expected_revision: int,
     actor: Any,
     idempotency_key: str,
+    correlation_id: str,
     dependencies: RequirementDependencies,
 ) -> WorkItemDeliveryResult:
     return _record_bound_terminal(
@@ -786,6 +809,7 @@ def record_integration_merged(
         expected_revision=expected_revision,
         actor=actor,
         idempotency_key=idempotency_key,
+        correlation_id=correlation_id,
         dependencies=dependencies,
     )
 
@@ -798,6 +822,7 @@ def record_external_merge_drift(
     expected_revision: int,
     actor: Any,
     idempotency_key: str,
+    correlation_id: str,
     dependencies: RequirementDependencies,
 ) -> WorkItemDeliveryResult:
     return _record_bound_terminal(
@@ -808,5 +833,6 @@ def record_external_merge_drift(
         expected_revision=expected_revision,
         actor=actor,
         idempotency_key=idempotency_key,
+        correlation_id=correlation_id,
         dependencies=dependencies,
     )

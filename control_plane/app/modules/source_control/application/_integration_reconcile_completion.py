@@ -117,6 +117,7 @@ def return_reconciliation_unknown(
                 action="source_control.integration_reconciliation.unknown",
                 target_type="source_control_effect",
                 target_id=effect.id,
+                correlation_id=f"source-control:effect:{effect.id}",
                 dependencies=dependencies,
             )
             return effect_dto(row)
@@ -175,6 +176,7 @@ def complete_reconciliation_block(
             action="source_control.integration_reconciliation.blocked",
             target_type="source_control_effect",
             target_id=effect.id,
+            correlation_id=f"source-control:effect:{effect.id}",
             dependencies=dependencies,
         )
     return EffectCompletion(effect_dto(row), reason, True)
@@ -300,6 +302,7 @@ def complete_create_reconciliation(
             ),
             target_type="source_control_effect",
             target_id=effect.id,
+            correlation_id=f"source-control:effect:{effect.id}",
             dependencies=dependencies,
         )
     return CreateCompletion(
@@ -387,6 +390,7 @@ def complete_merge_reconciliation(
             ),
             target_type="source_control_effect",
             target_id=effect.id,
+            correlation_id=f"source-control:effect:{effect.id}",
             dependencies=dependencies,
         )
     return MergeCompletion(

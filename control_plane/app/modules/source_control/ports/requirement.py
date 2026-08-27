@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict
 
 from control_plane.app.modules.source_control.domain import BindingRequestEnvelope
 from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
+from control_plane.app.modules.source_control.ports._callback import _CorrelatedCallbackResult
 
 
 class RequirementBindingContext(BaseModel):
@@ -29,7 +30,7 @@ class BindingEligibility(BaseModel):
     reason_code: SourceControlReason | None = None
 
 
-class BindingReadyResult(BaseModel):
+class BindingReadyResult(_CorrelatedCallbackResult):
     model_config = ConfigDict(frozen=True)
 
     work_item_id: str
@@ -40,7 +41,7 @@ class BindingReadyResult(BaseModel):
     idempotency_key: str
 
 
-class BindingBlockedResult(BaseModel):
+class BindingBlockedResult(_CorrelatedCallbackResult):
     model_config = ConfigDict(frozen=True)
 
     work_item_id: str

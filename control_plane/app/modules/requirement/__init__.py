@@ -413,6 +413,7 @@ def record_repository_binding(
     expected_revision: int,
     actor: Any,
     idempotency_key: str,
+    correlation_id: str,
     dependencies: RequirementDependencies,
 ) -> WorkItemDto:
     return _record_repository_binding(
@@ -424,6 +425,7 @@ def record_repository_binding(
         expected_revision=expected_revision,
         actor=actor,
         idempotency_key=idempotency_key,
+        correlation_id=correlation_id,
         dependencies=dependencies,
     )
 
@@ -437,6 +439,7 @@ def record_repository_binding_blocked(
     expected_revision: int,
     actor: Any,
     idempotency_key: str,
+    correlation_id: str,
     dependencies: RequirementDependencies,
 ) -> WorkItemDto:
     return _record_repository_binding_blocked(
@@ -447,6 +450,7 @@ def record_repository_binding_blocked(
         expected_revision=expected_revision,
         actor=actor,
         idempotency_key=idempotency_key,
+        correlation_id=correlation_id,
         dependencies=dependencies,
     )
 
@@ -459,6 +463,7 @@ def record_integration_mr_ready(
     expected_revision: int,
     actor: Any,
     idempotency_key: str,
+    correlation_id: str,
     dependencies: RequirementDependencies,
 ) -> WorkItemDeliveryResult:
     return _record_integration_mr_ready(
@@ -468,6 +473,7 @@ def record_integration_mr_ready(
         expected_revision=expected_revision,
         actor=actor,
         idempotency_key=idempotency_key,
+        correlation_id=correlation_id,
         dependencies=dependencies,
     )
 
@@ -481,6 +487,7 @@ def record_integration_delivery_blocked(
     expected_revision: int,
     actor: Any,
     idempotency_key: str,
+    correlation_id: str,
     dependencies: RequirementDependencies,
 ) -> WorkItemDeliveryResult:
     return _record_integration_delivery_blocked(
@@ -491,6 +498,7 @@ def record_integration_delivery_blocked(
         expected_revision=expected_revision,
         actor=actor,
         idempotency_key=idempotency_key,
+        correlation_id=correlation_id,
         dependencies=dependencies,
     )
 
@@ -503,6 +511,7 @@ def record_integration_reconciliation_pending(
     expected_revision: int,
     actor: Any,
     idempotency_key: str,
+    correlation_id: str,
     dependencies: RequirementDependencies,
 ) -> WorkItemDeliveryResult:
     return _record_integration_reconciliation_pending(
@@ -512,6 +521,7 @@ def record_integration_reconciliation_pending(
         expected_revision=expected_revision,
         actor=actor,
         idempotency_key=idempotency_key,
+        correlation_id=correlation_id,
         dependencies=dependencies,
     )
 
@@ -524,6 +534,7 @@ def record_integration_merged(
     expected_revision: int,
     actor: Any,
     idempotency_key: str,
+    correlation_id: str,
     dependencies: RequirementDependencies,
 ) -> WorkItemDeliveryResult:
     return _record_integration_merged(
@@ -533,6 +544,7 @@ def record_integration_merged(
         expected_revision=expected_revision,
         actor=actor,
         idempotency_key=idempotency_key,
+        correlation_id=correlation_id,
         dependencies=dependencies,
     )
 
@@ -545,6 +557,7 @@ def record_external_merge_drift(
     expected_revision: int,
     actor: Any,
     idempotency_key: str,
+    correlation_id: str,
     dependencies: RequirementDependencies,
 ) -> WorkItemDeliveryResult:
     return _record_external_merge_drift(
@@ -554,6 +567,7 @@ def record_external_merge_drift(
         expected_revision=expected_revision,
         actor=actor,
         idempotency_key=idempotency_key,
+        correlation_id=correlation_id,
         dependencies=dependencies,
     )
 

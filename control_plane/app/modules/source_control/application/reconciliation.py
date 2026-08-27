@@ -77,6 +77,7 @@ def _deliver_terminal_callback(
                     task_branch=binding.branch_name,
                     expected_revision=context.work_item_revision,
                     idempotency_key=f"source-control:binding-ready:{effect.id}",
+                    correlation_id=f"source-control:effect:{effect.id}",
                 )
             )
         elif effect.state is EffectState.BLOCKED:
@@ -90,6 +91,7 @@ def _deliver_terminal_callback(
                     reason_code=_safe_blocked_reason(reason),
                     expected_revision=context.work_item_revision,
                     idempotency_key=(f"source-control:binding-blocked:{effect.id}:{reason.value}"),
+                    correlation_id=f"source-control:effect:{effect.id}",
                 )
             )
         else:

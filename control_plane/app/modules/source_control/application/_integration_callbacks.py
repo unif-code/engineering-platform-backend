@@ -100,6 +100,7 @@ def _record_effect_callback(
                         binding_id=binding_id,
                         expected_revision=context.work_item_revision,
                         idempotency_key=f"source-control:mr-ready:{locked.id}",
+                        correlation_id=f"source-control:effect:{locked.id}",
                     )
                 )
             elif kind == "merged":
@@ -110,6 +111,7 @@ def _record_effect_callback(
                         binding_id=binding_id,
                         expected_revision=context.work_item_revision,
                         idempotency_key=f"source-control:integration-merged:{locked.id}",
+                        correlation_id=f"source-control:effect:{locked.id}",
                     )
                 )
             elif kind == "blocked":
@@ -123,6 +125,7 @@ def _record_effect_callback(
                         idempotency_key=(
                             f"source-control:integration-blocked:{locked.id}:{reason_code.value}"
                         ),
+                        correlation_id=f"source-control:effect:{locked.id}",
                     )
                 )
             elif kind == "pending":
@@ -132,6 +135,7 @@ def _record_effect_callback(
                         binding_id=binding_id,
                         expected_revision=context.work_item_revision,
                         idempotency_key=f"source-control:integration-pending:{locked.id}",
+                        correlation_id=f"source-control:effect:{locked.id}",
                     )
                 )
             else:
@@ -142,6 +146,7 @@ def _record_effect_callback(
                         binding_id=binding_id,
                         expected_revision=context.work_item_revision,
                         idempotency_key=(f"source-control:external-merge-drift:{locked.id}"),
+                        correlation_id=f"source-control:effect:{locked.id}",
                     )
                 )
         except Exception:
@@ -384,6 +389,7 @@ def _finish_preflight_callback(
                         idempotency_key=(
                             idempotency_key or f"source-control:external-merge-drift:{message_id}"
                         ),
+                        correlation_id=f"source-control:inbox:{message_id}",
                     )
                 )
             else:
@@ -398,10 +404,20 @@ def _finish_preflight_callback(
                             or "source-control:integration-blocked:"
                             f"{message_id}:{context.work_item_id}:{reason_code.value}"
                         ),
+                        correlation_id=f"source-control:inbox:{message_id}",
                     )
                 )
         except Exception:
             return False
+        correlation_id = f"source-control:inbox:{message_id}"
+        _append_audit(
+            repository,
+            action=f"source_control.integration_delivery.{kind}",
+            target_type="delivery_request_inbox",
+            target_id=message_id,
+            correlation_id=correlation_id,
+            dependencies=dependencies,
+        )
         completed = repository.complete_delivery_request(
             message_id,
             expected_attempts=inbox_attempts,
@@ -521,6 +537,7 @@ def _complete_effect_block(
                 action=audit_action,
                 target_type="source_control_effect",
                 target_id=effect.id,
+                correlation_id=f"source-control:effect:{effect.id}",
                 dependencies=dependencies,
             )
     blocked = _effect_dto(row)

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from typing import cast
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy import create_engine
 
 import control_plane.app.modules.authorization as authorization_module
@@ -34,6 +35,8 @@ from control_plane.app.modules.source_control.adapters import (
 from control_plane.app.modules.source_control.domain import DeliveryRequestKind
 from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
 from control_plane.app.modules.source_control.ports import (
+    BindingBlockedResult,
+    BindingReadyResult,
     ExternalMergeDriftResult,
     IntegrationDeliveryBlockedResult,
     IntegrationMergedResult,
@@ -183,6 +186,62 @@ def test_requirement_adapter_sanitizes_acknowledgement_failure(
         adapter.acknowledge_request("30000000-0000-0000-0000-000000000521")
 
     assert "provider detail" not in str(raised.value)
+    engine.dispose()
+
+
+def test_requirement_binding_adapter_forwards_stable_callback_correlation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    engine = create_engine("sqlite://")
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def capture(name: str) -> Callable[..., None]:
+        def callback(*_args: object, **kwargs: object) -> None:
+            calls.append((name, kwargs))
+
+        return callback
+
+    monkeypatch.setattr(requirement_module, "record_repository_binding", capture("ready"))
+    monkeypatch.setattr(
+        requirement_module,
+        "record_repository_binding_blocked",
+        capture("blocked"),
+    )
+    adapter = RequirementFacadeBindingAdapter(
+        engine=engine,
+        dependencies=object(),
+        clock=FixedClock(),
+    )
+    work_item_id = "50000000-0000-0000-0000-000000000525"
+    ready_correlation = "source-control:effect:70000000-0000-0000-0000-000000000525"
+    blocked_correlation = f"source-control:work-item:{work_item_id}"
+
+    adapter.record_ready(
+        BindingReadyResult(
+            work_item_id=work_item_id,
+            repository_id="gitlab-project-525",
+            base_commit_sha="a" * 40,
+            task_branch="task/525",
+            expected_revision=5,
+            idempotency_key="source-control:binding-ready:525",
+            correlation_id=ready_correlation,
+        )
+    )
+    adapter.record_blocked(
+        BindingBlockedResult(
+            work_item_id=work_item_id,
+            repository_id="gitlab-project-525",
+            reason_code=SourceControlReason.OWNER_INELIGIBLE,
+            expected_revision=5,
+            idempotency_key="source-control:binding-blocked:525",
+            correlation_id=blocked_correlation,
+        )
+    )
+
+    assert [(name, kwargs["correlation_id"]) for name, kwargs in calls] == [
+        ("ready", ready_correlation),
+        ("blocked", blocked_correlation),
+    ]
     engine.dispose()
 
 
@@ -340,6 +399,7 @@ def test_requirement_delivery_adapter_calls_public_callbacks_with_stable_results
     work_item_id = "50000000-0000-0000-0000-000000000524"
     expected_revision = 5
     idempotency_key = "effect:524"
+    correlation_id = "source-control:effect:70000000-0000-0000-0000-000000000524"
 
     adapter.record_mr_ready(
         IntegrationMrReadyResult(
@@ -347,6 +407,7 @@ def test_requirement_delivery_adapter_calls_public_callbacks_with_stable_results
             expected_revision=expected_revision,
             idempotency_key=idempotency_key,
             binding_id="70000000-0000-0000-0000-000000000524",
+            correlation_id=correlation_id,
         )
     )
     adapter.record_blocked(
@@ -356,6 +417,7 @@ def test_requirement_delivery_adapter_calls_public_callbacks_with_stable_results
             idempotency_key=idempotency_key,
             binding_id=None,
             reason_code=SourceControlReason.MR_CONFLICT,
+            correlation_id=correlation_id,
         )
     )
     adapter.record_pending(
@@ -364,6 +426,7 @@ def test_requirement_delivery_adapter_calls_public_callbacks_with_stable_results
             expected_revision=expected_revision,
             idempotency_key=idempotency_key,
             binding_id=None,
+            correlation_id=correlation_id,
         )
     )
     adapter.record_merged(
@@ -372,6 +435,7 @@ def test_requirement_delivery_adapter_calls_public_callbacks_with_stable_results
             expected_revision=expected_revision,
             idempotency_key=idempotency_key,
             binding_id="70000000-0000-0000-0000-000000000524",
+            correlation_id=correlation_id,
         )
     )
     adapter.record_external_merge_drift(
@@ -380,6 +444,7 @@ def test_requirement_delivery_adapter_calls_public_callbacks_with_stable_results
             expected_revision=expected_revision,
             idempotency_key=idempotency_key,
             binding_id="70000000-0000-0000-0000-000000000524",
+            correlation_id=correlation_id,
         )
     )
 
@@ -395,7 +460,71 @@ def test_requirement_delivery_adapter_calls_public_callbacks_with_stable_results
         cast(SimpleNamespace, kwargs["actor"]).account_id == "source-control-worker"
         for _, kwargs in calls
     )
+    assert all(kwargs["correlation_id"] == correlation_id for _, kwargs in calls)
     engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        lambda: BindingReadyResult(
+            work_item_id="work-blank",
+            repository_id="repository-blank",
+            base_commit_sha="a" * 40,
+            task_branch="task/blank",
+            expected_revision=1,
+            idempotency_key="ready-blank",
+            correlation_id=" ",
+        ),
+        lambda: BindingBlockedResult(
+            work_item_id="work-blank",
+            repository_id="repository-blank",
+            reason_code=SourceControlReason.OWNER_INELIGIBLE,
+            expected_revision=1,
+            idempotency_key="blocked-blank",
+            correlation_id=" ",
+        ),
+        lambda: IntegrationMrReadyResult(
+            work_item_id="work-blank",
+            binding_id="70000000-0000-0000-0000-000000000526",
+            expected_revision=1,
+            idempotency_key="mr-ready-blank",
+            correlation_id=" ",
+        ),
+        lambda: IntegrationDeliveryBlockedResult(
+            work_item_id="work-blank",
+            binding_id=None,
+            reason_code=SourceControlReason.MR_CONFLICT,
+            expected_revision=1,
+            idempotency_key="delivery-blocked-blank",
+            correlation_id=" ",
+        ),
+        lambda: IntegrationReconciliationPendingResult(
+            work_item_id="work-blank",
+            binding_id=None,
+            expected_revision=1,
+            idempotency_key="pending-blank",
+            correlation_id=" ",
+        ),
+        lambda: IntegrationMergedResult(
+            work_item_id="work-blank",
+            binding_id="70000000-0000-0000-0000-000000000526",
+            expected_revision=1,
+            idempotency_key="merged-blank",
+            correlation_id=" ",
+        ),
+        lambda: ExternalMergeDriftResult(
+            work_item_id="work-blank",
+            binding_id="70000000-0000-0000-0000-000000000526",
+            expected_revision=1,
+            idempotency_key="drift-blank",
+            correlation_id=" ",
+        ),
+    ],
+)
+def test_callback_port_results_reject_blank_correlation(factory: Callable[[], object]) -> None:
+    with pytest.raises(ValidationError):
+        factory()
 
 
 def test_requirement_delivery_adapter_sanitizes_public_facade_failures(

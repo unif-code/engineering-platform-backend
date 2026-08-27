@@ -149,6 +149,7 @@ class RequirementFacadeDeliveryAdapter:
                     expected_revision=result.expected_revision,
                     actor=self.actor,
                     idempotency_key=result.idempotency_key,
+                    correlation_id=result.correlation_id,
                     dependencies=self.dependencies,
                 )
         except Exception:
@@ -168,6 +169,7 @@ class RequirementFacadeDeliveryAdapter:
                     expected_revision=result.expected_revision,
                     actor=self.actor,
                     idempotency_key=result.idempotency_key,
+                    correlation_id=result.correlation_id,
                     dependencies=self.dependencies,
                 )
         except Exception:
@@ -185,6 +187,7 @@ class RequirementFacadeDeliveryAdapter:
                     expected_revision=result.expected_revision,
                     actor=self.actor,
                     idempotency_key=result.idempotency_key,
+                    correlation_id=result.correlation_id,
                     dependencies=self.dependencies,
                 )
         except Exception:
@@ -202,6 +205,7 @@ class RequirementFacadeDeliveryAdapter:
                     expected_revision=result.expected_revision,
                     actor=self.actor,
                     idempotency_key=result.idempotency_key,
+                    correlation_id=result.correlation_id,
                     dependencies=self.dependencies,
                 )
         except Exception:
@@ -219,6 +223,7 @@ class RequirementFacadeDeliveryAdapter:
                     expected_revision=result.expected_revision,
                     actor=self.actor,
                     idempotency_key=result.idempotency_key,
+                    correlation_id=result.correlation_id,
                     dependencies=self.dependencies,
                 )
         except Exception:

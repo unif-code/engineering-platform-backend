@@ -204,6 +204,7 @@ def _acquire_in_flight_effect(
                     action="source_control.integration_mr.planned",
                     target_type="source_control_effect",
                     target_id=str(effect_row["id"]),
+                    correlation_id=f"source-control:effect:{effect_row['id']}",
                     dependencies=dependencies,
                 )
     except IntegrityError:
@@ -248,6 +249,7 @@ def _acquire_in_flight_effect(
             action="source_control.integration_mr.in_flight",
             target_type="source_control_effect",
             target_id=effect.id,
+            correlation_id=f"source-control:effect:{effect.id}",
             dependencies=dependencies,
         )
     return _AcquiredEffect(
@@ -329,6 +331,7 @@ def _commit_final_facts(
             action=f"source_control.integration_mr.{final_state.value.lower()}",
             target_type="source_control_effect",
             target_id=effect.id,
+            correlation_id=f"source-control:effect:{effect.id}",
             dependencies=dependencies,
         )
     return _CommittedFacts(

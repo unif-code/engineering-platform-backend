@@ -145,6 +145,7 @@ def _acquire_merge_effect(
                 action="source_control.integration_merge.planned",
                 target_type="source_control_effect",
                 target_id=str(row["id"]),
+                correlation_id=f"source-control:effect:{row['id']}",
                 dependencies=dependencies,
             )
     try:
@@ -180,6 +181,7 @@ def _acquire_merge_effect(
             action="source_control.integration_merge.in_flight",
             target_type="source_control_effect",
             target_id=effect.id,
+            correlation_id=f"source-control:effect:{effect.id}",
             dependencies=dependencies,
         )
     return _effect_dto(in_flight)

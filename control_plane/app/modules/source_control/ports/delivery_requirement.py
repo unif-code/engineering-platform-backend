@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from control_plane.app.modules.source_control.domain import DeliveryRequestEnvelope
 from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
+from control_plane.app.modules.source_control.ports._callback import _CorrelatedCallbackResult
 
 
 class RequirementDeliveryContext(BaseModel):
@@ -28,7 +29,7 @@ class RequirementDeliveryContext(BaseModel):
     request_actor_id: str
 
 
-class IntegrationMrReadyResult(BaseModel):
+class IntegrationMrReadyResult(_CorrelatedCallbackResult):
     model_config = ConfigDict(frozen=True)
 
     work_item_id: str
@@ -37,7 +38,7 @@ class IntegrationMrReadyResult(BaseModel):
     idempotency_key: str
 
 
-class IntegrationDeliveryBlockedResult(BaseModel):
+class IntegrationDeliveryBlockedResult(_CorrelatedCallbackResult):
     model_config = ConfigDict(frozen=True)
 
     work_item_id: str
@@ -47,7 +48,7 @@ class IntegrationDeliveryBlockedResult(BaseModel):
     idempotency_key: str
 
 
-class IntegrationReconciliationPendingResult(BaseModel):
+class IntegrationReconciliationPendingResult(_CorrelatedCallbackResult):
     model_config = ConfigDict(frozen=True)
 
     work_item_id: str
@@ -56,7 +57,7 @@ class IntegrationReconciliationPendingResult(BaseModel):
     idempotency_key: str
 
 
-class IntegrationMergedResult(BaseModel):
+class IntegrationMergedResult(_CorrelatedCallbackResult):
     model_config = ConfigDict(frozen=True)
 
     work_item_id: str
@@ -65,7 +66,7 @@ class IntegrationMergedResult(BaseModel):
     idempotency_key: str
 
 
-class ExternalMergeDriftResult(BaseModel):
+class ExternalMergeDriftResult(_CorrelatedCallbackResult):
     model_config = ConfigDict(frozen=True)
 
     work_item_id: str

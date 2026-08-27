@@ -135,6 +135,7 @@ def test_http_and_internal_worker_complete_the_real_postgresql_approval_path(
             expected_revision=1,
             actor=Actor("SYSTEM"),
             idempotency_key="e2e-approved-binding-blocked",
+            correlation_id=f"source-control:work-item:{work_item_id}",
             dependencies=dependencies,
         )
     blocked_details = client.get(f"/api/v1/requirements/{requirement_id}")
@@ -153,6 +154,7 @@ def test_http_and_internal_worker_complete_the_real_postgresql_approval_path(
             expected_revision=blocked.revision,
             actor=Actor("SYSTEM"),
             idempotency_key="e2e-approved-binding-ready",
+            correlation_id="source-control:effect:e2e-approved-binding-ready",
             dependencies=dependencies,
         )
     assert bound.state.value == "READY"

@@ -15,6 +15,7 @@ from control_plane.app.modules.requirement.domain import (
     GateType,
     IntegrationDeliveryBlockedReason,
     IntegrationDeliveryState,
+    InvalidRequirementInput,
     RecordState,
     RepositoryBindingBlockedReason,
     RepositoryState,
@@ -33,6 +34,12 @@ def actor_id(actor: Any) -> str:
     value = getattr(actor, "account_id", None) or getattr(actor, "employee_id", None)
     if not isinstance(value, str) or not value:
         raise ValueError("Requirement actor requires a stable identifier")
+    return value
+
+
+def validated_correlation_id(value: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise InvalidRequirementInput("correlation ID is invalid")
     return value
 
 
@@ -170,8 +177,14 @@ def audit(
     target_type: str,
     target_id: str,
     reason: str,
+    correlation_id: str | None = None,
 ) -> None:
     now = dependencies.clock.now()
+    stable_correlation_id = (
+        current_request_id() or str(dependencies.random.uuid4())
+        if correlation_id is None
+        else validated_correlation_id(correlation_id)
+    )
     record_in_transaction(
         repository.db,
         AuditEnvelope(
@@ -184,7 +197,7 @@ def audit(
             target_id=target_id,
             result="SUCCESS",
             reason=reason,
-            correlation_id=current_request_id() or str(dependencies.random.uuid4()),
+            correlation_id=stable_correlation_id,
         ),
         dependencies.audit,
     )

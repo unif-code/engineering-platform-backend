@@ -393,11 +393,16 @@ def test_duplicate_processing_reuses_effect_number_name_and_binding(
         ).scalar_one()
 
     assert second == first
+    assert first.effect is not None
     assert first.binding is not None
     assert effect_count == 1
     assert binding_count == 1
     assert gitlab.created == [(first.binding.branch_name, "a" * 40)]
     assert len(requirement.ready) == 2
+    assert all(
+        callback.correlation_id == f"source-control:effect:{first.effect.id}"
+        for callback in requirement.ready
+    )
 
 
 def test_timeout_never_creates_binding(
@@ -422,6 +427,7 @@ def test_timeout_never_creates_binding(
     assert result.binding is None
     assert binding_count == 0
     assert requirement.blocked[0].reason_code == "RECONCILIATION_PENDING"
+    assert requirement.blocked[0].correlation_id == f"source-control:effect:{result.effect.id}"
 
 
 def test_unexpected_process_crash_leaves_in_flight_effect_with_recovery_due_time(
@@ -496,6 +502,7 @@ def test_create_access_denial_blocks_without_creating_binding(
     assert result.binding is None
     assert result.blocked_reason == "ACCESS_DENIED"
     assert requirement.blocked[0].reason_code == "ACCESS_DENIED"
+    assert requirement.blocked[0].correlation_id == f"source-control:effect:{result.effect.id}"
     assert result.effect.next_reconcile_at is None
 
 
@@ -528,6 +535,9 @@ def test_owner_guard_blocks_without_gitlab_calls(
     assert result.blocked_reason == reason
     assert gitlab.calls == []
     assert requirement.blocked[0].reason_code == reason
+    assert requirement.blocked[0].correlation_id == (
+        f"source-control:work-item:{requirement.context.work_item_id}"
+    )
 
 
 @pytest.mark.parametrize("failure", ["removed", "context-mismatch"])

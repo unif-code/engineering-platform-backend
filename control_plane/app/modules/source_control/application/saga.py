@@ -155,6 +155,7 @@ def _record_blocked(
     *,
     reason_code: SourceControlReason,
     idempotency_key: str,
+    correlation_id: str,
     dependencies: SourceControlDependencies,
 ) -> None:
     requirement = dependencies.requirement
@@ -167,6 +168,7 @@ def _record_blocked(
             reason_code=reason_code,
             expected_revision=context.work_item_revision,
             idempotency_key=idempotency_key,
+            correlation_id=correlation_id,
         )
     )
 
@@ -182,6 +184,7 @@ def _complete_preflight_block(
         context,
         reason_code=reason_code,
         idempotency_key=f"source-control:block:{message_id}:{reason_code.value}",
+        correlation_id=f"source-control:work-item:{context.work_item_id}",
         dependencies=dependencies,
     )
     with dependencies.engine.begin() as db:
@@ -248,6 +251,7 @@ def _complete_effect_block(
             context,
             reason_code=reason_code,
             idempotency_key=(f"source-control:binding-blocked:{effect.id}:{reason_code.value}"),
+            correlation_id=f"source-control:effect:{effect.id}",
             dependencies=dependencies,
         )
     except RequirementCallbackUnavailable:
@@ -285,6 +289,7 @@ def _replay_existing_binding(
                 task_branch=binding.branch_name,
                 expected_revision=context.work_item_revision,
                 idempotency_key=f"source-control:binding-ready:{effect.id}",
+                correlation_id=f"source-control:effect:{effect.id}",
             )
         )
     except RequirementCallbackUnavailable:
@@ -556,6 +561,7 @@ def _process_binding_request(
                     "source-control:binding-blocked:"
                     f"{effect.id}:{SourceControlReason.EXTERNAL_RESULT_UNKNOWN.value}"
                 ),
+                correlation_id=f"source-control:effect:{effect.id}",
                 dependencies=dependencies,
             )
         except RequirementCallbackUnavailable:

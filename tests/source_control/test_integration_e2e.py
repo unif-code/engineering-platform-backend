@@ -344,7 +344,8 @@ def _requirement_callback_facts(
                 "SELECT action, target_id, correlation_id FROM audit.audit_event "
                 "WHERE target_id=:work_item_id "
                 "AND action IN ('requirement.integration_delivery.mr_ready', "
-                "'requirement.integration_delivery.merged') ORDER BY action"
+                "'requirement.integration_delivery.merged', "
+                "'requirement.repository_binding.recorded') ORDER BY action"
             ),
             {"work_item_id": work_item_id},
         ).all()
@@ -580,8 +581,13 @@ def test_human_integration_mr_flow_converges_through_only_public_batch_facades(
     assert [(action, target_id) for action, target_id, _correlation in callback_events] == [
         ("requirement.integration_delivery.merged", created.work_item.id),
         ("requirement.integration_delivery.mr_ready", created.work_item.id),
+        ("requirement.repository_binding.recorded", created.work_item.id),
     ]
-    assert all(correlation for _action, _target_id, correlation in callback_events)
+    assert {action: correlation for action, _target_id, correlation in callback_events} == {
+        "requirement.integration_delivery.merged": f"source-control:effect:{merge_effect_id}",
+        "requirement.integration_delivery.mr_ready": f"source-control:effect:{create_effect_id}",
+        "requirement.repository_binding.recorded": f"source-control:effect:{branch_effect_id}",
+    }
     assert callback_records == (
         (
             "requirement_record_integration_merged",
