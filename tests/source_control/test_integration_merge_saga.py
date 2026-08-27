@@ -26,12 +26,16 @@ from control_plane.app.modules.source_control.adapters import (
 from control_plane.app.modules.source_control.ports import (
     BindingEligibility,
     BranchSnapshot,
+    GitLabAccessDenied,
     GitLabBranchNotFound,
     GitLabMergeRequestBlocked,
     GitLabMergeRequestHeadChanged,
+    GitLabMergeRequestNotFound,
     GitLabMergeRequestSnapshot,
+    GitLabProjectNotFound,
     GitLabProviderUnavailable,
     GitLabResultUnknown,
+    IntegrationDeliveryBlockedResult,
     IntegrationMergedResult,
     RequirementBindingContext,
     RequirementDeliveryContext,
@@ -126,6 +130,13 @@ class MergeRequirementDelivery(FakeRequirementDelivery):
                 "integration_delivery_state": "INTEGRATED",
             }
         )
+
+
+class CommitThenRaiseBlockedMergeRequirement(MergeRequirementDelivery):
+    def record_blocked(self, result: IntegrationDeliveryBlockedResult) -> None:
+        super().record_blocked(result)
+        if self.blocked_attempts == 1:
+            raise RequirementCallbackUnavailable("Requirement callback commit acknowledgement lost")
 
 
 class CommitThenRaiseMergedRequirement:
@@ -223,6 +234,7 @@ class FakeMergeGitLab:
         self.merge_happened_before_error = False
         self.get_after_merge_error: Exception | None = None
         self.source_after_merge_error: Exception | None = None
+        self.provider_default_branch = "main"
 
     def get_project_delivery_profile(self, _repository: object) -> Any:
         from control_plane.app.modules.source_control.ports import (
@@ -235,7 +247,7 @@ class FakeMergeGitLab:
         return GitLabProjectDeliveryProfile(
             project_id="101",
             project_path="platform/backend",
-            default_branch="main",
+            default_branch=self.provider_default_branch,
             merge_method="merge",
         )
 
@@ -350,8 +362,13 @@ def _binding_context() -> RequirementBindingContext:
     )
 
 
-def _seed_merge_request(engine: Engine, *, historical_head: str = HEAD_SHA) -> None:
-    _seed_source_control(engine)
+def _seed_merge_request(
+    engine: Engine,
+    *,
+    historical_head: str = HEAD_SHA,
+    default_branch: str = "main",
+) -> None:
+    _seed_source_control(engine, default_branch=default_branch)
     with engine.begin() as db:
         repository = SqlAlchemySourceControlIntegrationRepository(db)
         repository.insert_effect(
@@ -450,6 +467,8 @@ def _dependencies(
     engine: Engine,
     *,
     requirement: MergeRequirementDelivery | None = None,
+    audit: FakeAudit | None = None,
+    clock: FixedClock | MutableClock | None = None,
     delivery_repository_factory: SourceControlIntegrationRepositoryFactory = (
         SqlAlchemySourceControlIntegrationRepository
     ),
@@ -468,8 +487,8 @@ def _dependencies(
             engine=engine,
             requirement=FakeRequirementBinding(_binding_context()),
             eligibility=eligibility,
-            audit=FakeAudit(),
-            clock=FixedClock(),
+            audit=audit or FakeAudit(),
+            clock=clock or FixedClock(),
             random=FixedRandom(),
             policy=FixedPolicy(),
             delivery_repository_factory=delivery_repository_factory,
@@ -920,7 +939,8 @@ def test_merged_provider_fact_waits_for_effect_tri_state_before_drift_callback(
             frozen_head="e" * 40,
             effect_id="83000000-0000-0000-0000-000000000802",
         )
-    dependencies, requirement, _eligibility, gitlab = _dependencies(engine)
+    audit = FakeAudit()
+    dependencies, requirement, _eligibility, gitlab = _dependencies(engine, audit=audit)
     gitlab._merged = True
 
     result = process_integration_merge_request(
@@ -934,7 +954,81 @@ def test_merged_provider_fact_waits_for_effect_tri_state_before_drift_callback(
     assert requirement.external_drift == []
     assert requirement.blocked[0].reason_code == "MR_CONFLICT"
     assert result.observation is not None
-    assert result.observation.state.value == "OPEN"
+    assert result.observation.state.value == "MERGED"
+    assert result.observation.merge_commit_sha == MERGE_COMMIT_SHA
+    assert [entry.action for entry in audit.entries] == [
+        "source_control.integration_merge.provider_fact_conflict"
+    ]
+    with engine.connect() as db:
+        observation_count = db.execute(
+            text(
+                "SELECT count(*) FROM source_control.merge_request_observation "
+                "WHERE binding_id=CAST(:binding_id AS uuid)"
+            ),
+            {"binding_id": MR_BINDING_ID},
+        ).scalar_one()
+    assert observation_count == 2
+
+
+def test_proven_merge_conflict_callback_ack_loss_replays_without_duplicate_observation(
+    isolated_source_control_database: Any,
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_merge_request(engine)
+    _seed_planned_merge_effect(
+        engine,
+        frozen_head=HEAD_SHA,
+        request_fingerprint="sha256:different-merge-request",
+    )
+    requirement = CommitThenRaiseBlockedMergeRequirement(_delivery_context())
+    audit = FakeAudit()
+    clock = MutableClock(NOW)
+    dependencies, _returned_requirement, _eligibility, gitlab = _dependencies(
+        engine,
+        requirement=requirement,
+        audit=audit,
+        clock=clock,
+    )
+    gitlab._merged = True
+
+    first = process_integration_merge_request(
+        message_id=MERGE_MESSAGE_ID,
+        dependencies=dependencies,
+    )
+    provider_calls = tuple(gitlab.calls)
+    clock.current = NOW + timedelta(minutes=3)
+    second = process_integration_merge_request(
+        message_id=MERGE_MESSAGE_ID,
+        dependencies=dependencies,
+    )
+
+    with engine.connect() as db:
+        repository = SqlAlchemySourceControlIntegrationRepository(db)
+        inbox = repository.delivery_request(MERGE_MESSAGE_ID)
+        observations = (
+            db.execute(
+                text(
+                    "SELECT state FROM source_control.merge_request_observation "
+                    "WHERE binding_id=CAST(:binding_id AS uuid) ORDER BY observed_at, id"
+                ),
+                {"binding_id": MR_BINDING_ID},
+            )
+            .scalars()
+            .all()
+        )
+    assert first.observation is not None
+    assert first.observation.state.value == "MERGED"
+    assert second == first
+    assert observations == ["OPEN", "MERGED"]
+    assert inbox is not None
+    assert inbox["state"] == "PROCESSED"
+    assert requirement.blocked_attempts == 2
+    assert len(requirement.blocked) == 1
+    assert tuple(gitlab.calls) == provider_calls
+    assert gitlab.merge_calls == []
+    assert [entry.action for entry in audit.entries] == [
+        "source_control.integration_merge.provider_fact_conflict"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -1034,6 +1128,53 @@ def test_deep_project_profile_dev_missing_is_target_not_source_failure(
     assert requirement.blocked[0].reason_code == "TARGET_BRANCH_NOT_FOUND"
 
 
+@pytest.mark.parametrize(
+    ("platform_default_branch", "provider_default_branch"),
+    [
+        ("master", "master"),
+        ("master", "main"),
+        ("main", "master"),
+    ],
+    ids=("both-non-main", "platform-non-main", "provider-non-main"),
+)
+def test_non_main_platform_or_provider_default_is_unsupported(
+    isolated_source_control_database: Any,
+    platform_default_branch: str,
+    provider_default_branch: str,
+) -> None:
+    engine = isolated_source_control_database.runtime
+    if platform_default_branch != "main":
+        with isolated_source_control_database.owner.begin() as db:
+            db.execute(
+                text(
+                    "ALTER TABLE source_control.workspace_repository "
+                    "DROP CONSTRAINT ck_source_control_default_branch"
+                )
+            )
+    _seed_merge_request(engine, default_branch=platform_default_branch)
+    dependencies, requirement, _eligibility, gitlab = _dependencies(engine)
+    gitlab.provider_default_branch = provider_default_branch
+
+    result = process_integration_merge_request(
+        message_id=MERGE_MESSAGE_ID,
+        dependencies=dependencies,
+    )
+
+    with engine.connect() as db:
+        effect_count = db.execute(
+            text(
+                "SELECT count(*) FROM source_control.source_control_effect "
+                "WHERE operation='MERGE_INTEGRATION_MR'"
+            )
+        ).scalar_one()
+    assert result.effect is None
+    assert result.blocked_reason == "PROJECT_PROFILE_UNSUPPORTED"
+    assert gitlab.calls == ["profile"]
+    assert gitlab.merge_calls == []
+    assert requirement.blocked[0].reason_code == "PROJECT_PROFILE_UNSUPPORTED"
+    assert effect_count == 0
+
+
 @pytest.mark.parametrize("missing_field", ["merge_commit_sha", "merged_at"])
 def test_incomplete_merged_preflight_fact_releases_inbox_without_observation(
     isolated_source_control_database: Any,
@@ -1116,8 +1257,11 @@ def test_merge_request_coordinate_mismatch_is_conflict_without_put(
     [
         (GitLabMergeRequestHeadChanged("head changed"), "HEAD_SHA_CHANGED"),
         (GitLabMergeRequestBlocked("merge rejected"), "MERGE_CONFLICT"),
+        (GitLabAccessDenied("merge denied"), "REPOSITORY_NOT_AUTHORIZED"),
+        (GitLabProjectNotFound("project missing"), "REPOSITORY_NOT_AUTHORIZED"),
+        (GitLabMergeRequestNotFound("merge request missing"), "MR_CLOSED"),
     ],
-    ids=("409", "405-or-422"),
+    ids=("409", "405-or-422", "403", "project-404", "mr-404"),
 )
 def test_stable_put_rejection_blocks_the_frozen_effect(
     isolated_source_control_database: Any,
@@ -1134,12 +1278,25 @@ def test_stable_put_rejection_blocks_the_frozen_effect(
         dependencies=dependencies,
     )
 
+    with engine.connect() as db:
+        repository = SqlAlchemySourceControlIntegrationRepository(db)
+        effect = repository.effect_by_operation_subject(
+            EffectOperation.MERGE_INTEGRATION_MR.value,
+            f"mr:{MR_BINDING_ID}:{HEAD_SHA}",
+        )
+        inbox = repository.delivery_request(MERGE_MESSAGE_ID)
+
     assert result.effect is not None
     assert result.effect.state is EffectState.BLOCKED
     assert result.effect.last_error_code == reason_code
     assert result.blocked_reason == reason_code
     assert gitlab.merge_calls == [(17, HEAD_SHA)]
     assert requirement.blocked[0].binding_id == MR_BINDING_ID
+    assert effect is not None
+    assert effect["state"] == EffectState.BLOCKED.value
+    assert effect["last_error_code"] == reason_code
+    assert inbox is not None
+    assert inbox["state"] == "PROCESSED"
 
 
 @pytest.mark.parametrize(

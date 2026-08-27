@@ -317,6 +317,63 @@ def _commit_external_merge_drift(
     )
 
 
+def _commit_proven_merge_conflict(
+    admission: _MergeAdmission,
+    readback: GitLabMergeRequestSnapshot,
+    *,
+    message_id: str,
+    inbox_attempts: int,
+    dependencies: SourceControlDependencies,
+) -> ProcessIntegrationRequestResult:
+    repository_factory = dependencies.delivery_repository_factory
+    if repository_factory is None:
+        raise SourceControlDependencyUnavailable("Integration repository unavailable")
+    now = dependencies.clock.now()
+    with dependencies.engine.begin() as db:
+        repository = repository_factory(db)
+        observation_row = repository.append_merge_request_observation(
+            id=str(dependencies.random.uuid4()),
+            binding_id=admission.binding.id,
+            head_sha=readback.head_sha,
+            state=_snapshot_state(readback).value,
+            merge_commit_sha=readback.merge_commit_sha,
+            external_merge_user_id=readback.merge_user_id,
+            merged_at=readback.merged_at,
+            observation_digest=_observation_digest(readback),
+            observed_at=now,
+        )
+        marked = repository.record_preflight_outcome(
+            message_id,
+            expected_attempts=inbox_attempts,
+            reason_code="MR_CONFLICT",
+            now=now,
+        )
+        if observation_row is None or marked is None:
+            raise RequirementCallbackUnavailable("Integration merge conflict lease was lost")
+        _append_audit(
+            repository,
+            action="source_control.integration_merge.provider_fact_conflict",
+            target_type="merge_request_binding",
+            target_id=admission.binding.id,
+            dependencies=dependencies,
+        )
+    _finish_preflight_callback(
+        admission.context,
+        message_id=message_id,
+        inbox_attempts=inbox_attempts,
+        reason_code="MR_CONFLICT",
+        binding_id=admission.binding.id,
+        idempotency_key=f"source-control:integration-merge-blocked:{message_id}:MR_CONFLICT",
+        dependencies=dependencies,
+    )
+    return ProcessIntegrationRequestResult(
+        effect=None,
+        binding=admission.binding,
+        observation=_observation_dto(observation_row),
+        blocked_reason="MR_CONFLICT",
+    )
+
+
 def _commit_merge_success(
     admission: _MergeAdmission,
     effect: SourceControlEffectDto,

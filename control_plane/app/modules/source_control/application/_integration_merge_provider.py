@@ -91,6 +91,8 @@ def _read_merge_provider_proof(
     if (
         project.project_id != profile.project_id
         or project.project_path != profile.project_path
+        or profile.default_branch != "main"
+        or project.default_branch != "main"
         or project.default_branch != profile.default_branch
         or project.merge_method != "merge"
     ):
@@ -181,6 +183,10 @@ def _merge_exact_head(
         raise _MergeExecutionBlocked("HEAD_SHA_CHANGED") from None
     except GitLabMergeRequestBlocked:
         raise _MergeExecutionBlocked("MERGE_CONFLICT") from None
+    except (GitLabAccessDenied, GitLabProjectNotFound):
+        raise _MergeExecutionBlocked("REPOSITORY_NOT_AUTHORIZED") from None
+    except GitLabMergeRequestNotFound:
+        raise _MergeExecutionBlocked("MR_CLOSED") from None
     except (GitLabResultUnknown, GitLabProviderUnavailable):
         raise _MergeExecutionUnknown from None
     try:

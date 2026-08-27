@@ -15,6 +15,7 @@ from control_plane.app.modules.source_control.application._integration_common im
 )
 from control_plane.app.modules.source_control.application._integration_merge_completion import (
     _commit_external_merge_drift,
+    _commit_proven_merge_conflict,
     _complete_merge_effect_block,
     _complete_merge_preflight_block,
     _complete_merge_success,
@@ -119,6 +120,23 @@ def _process_integration_merge_request(
         if claimed is None:
             raise RequirementCallbackUnavailable("Delivery request is unavailable") from None
         admission = _read_merge_admission(inbox, dependencies=dependencies)
+        if admission.blocked_reason is None:
+            try:
+                collision_proof = _read_merge_provider_proof(
+                    admission,
+                    dependencies=dependencies,
+                )
+            except (_MergePreflightBlocked, _MergePreflightTransient):
+                pass
+            else:
+                if collision_proof.merge_request.state == "merged":
+                    return _commit_proven_merge_conflict(
+                        admission,
+                        collision_proof.merge_request,
+                        message_id=message_id,
+                        inbox_attempts=claimed["attempts"],
+                        dependencies=dependencies,
+                    )
         return _complete_merge_preflight_block(
             admission,
             message_id=message_id,
@@ -179,6 +197,14 @@ def _process_integration_merge_request(
             dependencies=dependencies,
         )
     except _EffectCollision:
+        if proof.merge_request.state == "merged":
+            return _commit_proven_merge_conflict(
+                admission,
+                proof.merge_request,
+                message_id=message_id,
+                inbox_attempts=claimed["attempts"],
+                dependencies=dependencies,
+            )
         return _complete_merge_preflight_block(
             admission,
             message_id=message_id,
@@ -254,6 +280,14 @@ def _process_integration_merge_request(
             dependencies=dependencies,
         )
     except _EffectCollision:
+        if proof.merge_request.state == "merged":
+            return _commit_proven_merge_conflict(
+                admission,
+                proof.merge_request,
+                message_id=message_id,
+                inbox_attempts=claimed["attempts"],
+                dependencies=dependencies,
+            )
         return _complete_merge_preflight_block(
             admission,
             message_id=message_id,

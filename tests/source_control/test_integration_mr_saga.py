@@ -9,6 +9,7 @@ from uuid import UUID
 import pytest
 from sqlalchemy import Connection, Engine, text
 
+from control_plane.app.modules.audit import AuditEnvelope
 from control_plane.app.modules.requirement import get_requirement
 from control_plane.app.modules.source_control import (
     EffectOperation,
@@ -98,8 +99,11 @@ class FixedRandom:
 
 
 class FakeAudit:
-    def append_in_transaction(self, _db: object, _envelope: object) -> None:
-        return None
+    def __init__(self) -> None:
+        self.entries: list[AuditEnvelope] = []
+
+    def append_in_transaction(self, _db: object, envelope: AuditEnvelope) -> None:
+        self.entries.append(envelope)
 
 
 class FixedPolicy:
@@ -532,7 +536,7 @@ def _binding_context() -> RequirementBindingContext:
     )
 
 
-def _seed_source_control(engine: Engine) -> None:
+def _seed_source_control(engine: Engine, *, default_branch: str = "main") -> None:
     with engine.begin() as db:
         branch = SqlAlchemySourceControlRepository(db)
         delivery = SqlAlchemySourceControlIntegrationRepository(db)
@@ -542,7 +546,7 @@ def _seed_source_control(engine: Engine) -> None:
             provider="GITLAB",
             project_id="101",
             project_path="platform/backend",
-            default_branch="main",
+            default_branch=default_branch,
             connection_ref="gitlab-dev",
             credential_secret_ref="secret-ref:credential",
             webhook_signing_secret_ref="secret-ref:webhook",
