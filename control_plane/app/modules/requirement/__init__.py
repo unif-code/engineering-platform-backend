@@ -29,6 +29,9 @@ from control_plane.app.modules.requirement.application import (
 from control_plane.app.modules.requirement.application import (
     create_requirement as _create_requirement,
 )
+from control_plane.app.modules.requirement.application import (
+    create_sdd_artifact as _create_sdd_artifact,
+)
 from control_plane.app.modules.requirement.application import decide_baseline as _decide_baseline
 from control_plane.app.modules.requirement.application import (
     get_integration_delivery_context as _get_integration_delivery_context,
@@ -38,6 +41,9 @@ from control_plane.app.modules.requirement.application import (
 )
 from control_plane.app.modules.requirement.application import (
     get_requirement as _get_requirement,
+)
+from control_plane.app.modules.requirement.application import (
+    get_sdd_artifact as _get_sdd_artifact,
 )
 from control_plane.app.modules.requirement.application import (
     list_requirements as _list_requirements,
@@ -91,6 +97,7 @@ from control_plane.app.modules.requirement.domain import (
     BaselineConfirmationResult,
     BaselineDecisionResult,
     CreateRequirementResult,
+    CreateSddArtifactResult,
     DecisionDto,
     DecisionOutcome,
     ExecutorType,
@@ -127,6 +134,8 @@ from control_plane.app.modules.requirement.domain import (
     RequirementPage,
     RequirementState,
     RequirementType,
+    SddArtifactNotFound,
+    SddArtifactVersionDto,
     SddBaselineDto,
     SddBaselineNotFound,
     StaleBaselineSubject,
@@ -170,6 +179,45 @@ def create_requirement(
         actor=actor,
         idempotency_key=idempotency_key,
         dependencies=dependencies,
+    )
+
+
+def create_sdd_artifact(
+    db: Connection,
+    *,
+    requirement_id: str,
+    artifact_id: str | None,
+    content: str,
+    expected_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    dependencies: RequirementDependencies,
+) -> CreateSddArtifactResult:
+    return _create_sdd_artifact(
+        dependencies.repository_factory(db),
+        requirement_id=requirement_id,
+        artifact_id=artifact_id,
+        content=content,
+        expected_revision=expected_revision,
+        actor=actor,
+        idempotency_key=idempotency_key,
+        dependencies=dependencies,
+    )
+
+
+def get_sdd_artifact(
+    db: Connection,
+    *,
+    requirement_id: str,
+    artifact_id: str,
+    artifact_version: int,
+    dependencies: RequirementDependencies,
+) -> SddArtifactVersionDto:
+    return _get_sdd_artifact(
+        dependencies.repository_factory(db),
+        requirement_id=requirement_id,
+        artifact_id=artifact_id,
+        artifact_version=artifact_version,
     )
 
 
@@ -650,6 +698,7 @@ __all__ = [
     "BaselineConfirmationResult",
     "BaselineDecisionResult",
     "CreateRequirementResult",
+    "CreateSddArtifactResult",
     "DecisionDto",
     "DecisionOutcome",
     "ExecutorType",
@@ -690,6 +739,8 @@ __all__ = [
     "RequirementState",
     "RequirementType",
     "SddBaselineDto",
+    "SddArtifactNotFound",
+    "SddArtifactVersionDto",
     "SddBaselineNotFound",
     "StaleBaselineSubject",
     "StaleRequirementRevision",
@@ -707,9 +758,11 @@ __all__ = [
     "claim_integration_delivery_requests",
     "claim_repository_binding_requests",
     "create_requirement",
+    "create_sdd_artifact",
     "decide_baseline",
     "derive_work_item_state",
     "get_requirement",
+    "get_sdd_artifact",
     "get_integration_delivery_context",
     "get_repository_binding_context",
     "list_requirements",

@@ -58,6 +58,10 @@ class ArtifactUnavailable(RequirementError):
     pass
 
 
+class SddArtifactNotFound(RequirementError):
+    pass
+
+
 class SddBaselineNotFound(RequirementError):
     pass
 

@@ -80,6 +80,7 @@ from control_plane.app.modules.requirement import RequirementDependencies
 from control_plane.app.modules.requirement.adapters import (
     ComposedAutomaticAssignmentGuard,
     SqlAlchemyRequirementRepository,
+    SqlAlchemySddArtifactReader,
     V03RouteSnapshotCatalog,
 )
 from control_plane.app.modules.requirement.api import (
@@ -326,7 +327,7 @@ def requirement_dependencies() -> RequirementDependencies:
             source_control_dependencies=source_control_dependencies(),
         ),
         secret_manager=FileSecretManager(SecuritySettings()),
-        artifacts=None,
+        artifacts=SqlAlchemySddArtifactReader(requirement_runtime_engine()),
         gate_policies=None,
         reviewer_guard=None,
     )

@@ -54,8 +54,10 @@ __all__ = [
     "claim_integration_delivery_requests",
     "claim_repository_binding_requests",
     "create_requirement",
+    "create_sdd_artifact",
     "decide_baseline",
     "get_requirement",
+    "get_sdd_artifact",
     "get_repository_binding_context",
     "get_integration_delivery_context",
     "list_requirements",
@@ -75,3 +77,7 @@ __all__ = [
     "start_work_item",
     "submit_baseline_confirmation",
 ]
+from control_plane.app.modules.requirement.application.artifacts import (
+    create_sdd_artifact,
+    get_sdd_artifact,
+)

@@ -192,6 +192,13 @@ class SddArtifactVersionDto(BaseModel):
     created_at: datetime
 
 
+class CreateSddArtifactResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    requirement: RequirementDto
+    artifact: SddArtifactVersionDto
+
+
 class RepositoryBindingRequestMessage(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -311,7 +318,9 @@ class GateInstanceDto(BaseModel):
     artifact_hash: str
     route_snapshot_version: int
     route_snapshot_hash: str
+    policy_code: str
     policy_version: int
+    policy_snapshot_hash: str
     state: GateState
     revision: int
     created_at: datetime

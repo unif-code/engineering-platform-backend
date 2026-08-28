@@ -70,6 +70,8 @@ class GatePolicySnapshot(BaseModel):
 
     version: int
     default_reviewer_id: str
+    policy_code: str = "REQUIREMENT_BASELINE_WORKSPACE_OWNER"
+    snapshot_hash: str = "sha256:bdfadcc2d2c32fdb9fdf327d45a231cd2e5cb9bf3028f4e09d527fdb50dd8ea2"
 
 
 class GatePolicyPort(Protocol):

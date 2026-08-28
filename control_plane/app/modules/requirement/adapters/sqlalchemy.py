@@ -790,11 +790,13 @@ class SqlAlchemyRequirementRepository:
                     "INSERT INTO requirement.gate_instance "
                     "(id, gate_type, requirement_id, requirement_version, sdd_baseline_id, "
                     "artifact_id, artifact_version, artifact_hash, route_snapshot_version, "
-                    "route_snapshot_hash, policy_version, state, revision, created_at) VALUES "
+                    "route_snapshot_hash, policy_code, policy_version, "
+                    "policy_snapshot_hash, state, revision, created_at) VALUES "
                     "(:id, :gate_type, :requirement_id, :requirement_version, "
                     ":sdd_baseline_id, :artifact_id, :artifact_version, :artifact_hash, "
-                    ":route_snapshot_version, :route_snapshot_hash, :policy_version, "
-                    ":state, :revision, :now) RETURNING *"
+                    ":route_snapshot_version, :route_snapshot_hash, :policy_code, "
+                    ":policy_version, :policy_snapshot_hash, :state, :revision, :now) "
+                    "RETURNING *"
                 ),
                 values,
             )
