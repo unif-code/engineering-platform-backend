@@ -18,10 +18,20 @@ from control_plane.app.modules.requirement import (
     record_repository_binding_blocked,
     start_requirement_preparation,
 )
+from control_plane.app.modules.requirement.adapters import SqlAlchemySddArtifactReader
 from tests.requirement.conftest import IsolatedRequirementDatabase
 from tests.requirement.test_api import SAME_ORIGIN, PrincipalHolder, _client, _create_via_api
 from tests.requirement.test_baseline_gate import _gate_dependencies
 from tests.requirement.test_commands import Actor
+
+
+def _versioned_headers(key: str, etag: str, *, request_id: str) -> dict[str, str]:
+    return {
+        **SAME_ORIGIN,
+        "Idempotency-Key": key,
+        "If-Match": etag,
+        "X-Request-ID": request_id,
+    }
 
 
 def _prepare(
@@ -200,6 +210,249 @@ def test_http_and_internal_worker_complete_the_real_postgresql_approval_path(
             {"gate_id": gate_id, "requirement_id": requirement_id},
         ).one()
     assert facts == (1, 1)
+
+
+def test_v04_http_journey_preserves_versions_and_readies_only_bound_work_items(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    dependencies = replace(
+        _gate_dependencies(),
+        artifacts=SqlAlchemySddArtifactReader(isolated_requirement_database.runtime),
+    )
+    client, holder, _guard, _resolved = _client(
+        isolated_requirement_database,
+        dependencies=dependencies,
+    )
+    requirement_id, initial_work_item_id, prepared_etag = _prepare(
+        client,
+        holder,
+        isolated_requirement_database,
+        dependencies,
+        key="e2e-v04",
+    )
+    with isolated_requirement_database.runtime.begin() as db:
+        initial_bound = record_repository_binding(
+            db,
+            work_item_id=initial_work_item_id,
+            repository_id="repository-1",
+            base_commit_sha="e" * 40,
+            task_branch="work-items/e2e-v04-initial",
+            expected_revision=1,
+            actor=Actor("SYSTEM"),
+            idempotency_key="e2e-v04-initial-binding",
+            correlation_id="source-control:effect:e2e-v04-initial",
+            dependencies=dependencies,
+        )
+    assert initial_bound.state.value == "DRAFT"
+
+    artifact_v1 = client.post(
+        f"/api/v1/requirements/{requirement_id}/sdd-artifacts",
+        json={"content": "# SDD v1\r\n\r\nFirst review."},
+        headers=_versioned_headers(
+            "e2e-v04-artifact-v1",
+            prepared_etag,
+            request_id="req-e2ev04artifactv1",
+        ),
+    )
+    artifact_v1_replay = client.post(
+        f"/api/v1/requirements/{requirement_id}/sdd-artifacts",
+        json={"content": "# SDD v1\r\n\r\nFirst review."},
+        headers=_versioned_headers(
+            "e2e-v04-artifact-v1",
+            prepared_etag,
+            request_id="req-e2ev04artifactv1replay",
+        ),
+    )
+    assert artifact_v1.status_code == artifact_v1_replay.status_code == 201
+    assert artifact_v1_replay.json() == artifact_v1.json()
+    artifact_id = artifact_v1.json()["artifact"]["artifactId"]
+
+    added = client.post(
+        f"/api/v1/requirements/{requirement_id}/work-items",
+        json={"repositoryId": "repository-2"},
+        headers=_versioned_headers(
+            "e2e-v04-add-work-item",
+            artifact_v1.headers["etag"],
+            request_id="req-e2ev04workitemadd",
+        ),
+    )
+    assert added.status_code == 201, added.text
+    second_work_item_id = added.json()["workItem"]["id"]
+    assigned = client.post(
+        f"/api/v1/requirements/{requirement_id}/work-items/{second_work_item_id}:assign",
+        json={"humanOwnerId": "employee-2", "reason": "Split the backend implementation."},
+        headers=_versioned_headers(
+            "e2e-v04-assign-work-item",
+            '"v1"',
+            request_id="req-e2ev04workitemassign",
+        ),
+    )
+    assert assigned.status_code == 200, assigned.text
+    assert assigned.json()["workItem"]["humanOwnerId"] == "employee-2"
+
+    baseline_v1 = client.post(
+        f"/api/v1/requirements/{requirement_id}/sdd-baselines",
+        json={"artifactId": artifact_id, "artifactVersion": "1"},
+        headers=_versioned_headers(
+            "e2e-v04-baseline-v1",
+            added.headers["etag"],
+            request_id="req-e2ev04baselinev1",
+        ),
+    )
+    assert baseline_v1.status_code == 201, baseline_v1.text
+    gate_v1 = client.post(
+        f"/api/v1/requirements/{requirement_id}/baseline-confirmations",
+        json={"sddBaselineId": baseline_v1.json()["baseline"]["id"]},
+        headers=_versioned_headers(
+            "e2e-v04-gate-v1",
+            baseline_v1.headers["etag"],
+            request_id="req-e2ev04gatev1",
+        ),
+    )
+    assert gate_v1.status_code == 201, gate_v1.text
+    holder.value = Actor("reviewer-1")
+    changes_requested = _decision(
+        client,
+        requirement_id,
+        gate_v1.json()["gate"]["id"],
+        gate_v1.headers["etag"],
+        key="e2e-v04-v1",
+        outcome=DecisionOutcome.CHANGES_REQUESTED,
+        request_id="req-e2ev04changesrequested",
+    )
+    assert changes_requested.status_code == 200, changes_requested.text
+    assert changes_requested.json()["requirement"]["state"] == "PREPARING"
+
+    holder.value = Actor("employee-1")
+    artifact_v2 = client.post(
+        f"/api/v1/requirements/{requirement_id}/sdd-artifacts",
+        json={"artifactId": artifact_id, "content": "# SDD v2\n\nReview feedback fixed.\n"},
+        headers=_versioned_headers(
+            "e2e-v04-artifact-v2",
+            changes_requested.headers["etag"],
+            request_id="req-e2ev04artifactv2",
+        ),
+    )
+    assert artifact_v2.status_code == 201, artifact_v2.text
+    assert artifact_v2.json()["artifact"]["version"] == 2
+    baseline_v2 = client.post(
+        f"/api/v1/requirements/{requirement_id}/sdd-baselines",
+        json={"artifactId": artifact_id, "artifactVersion": "2"},
+        headers=_versioned_headers(
+            "e2e-v04-baseline-v2",
+            artifact_v2.headers["etag"],
+            request_id="req-e2ev04baselinev2",
+        ),
+    )
+    assert baseline_v2.status_code == 201, baseline_v2.text
+    gate_v2 = client.post(
+        f"/api/v1/requirements/{requirement_id}/baseline-confirmations",
+        json={"sddBaselineId": baseline_v2.json()["baseline"]["id"]},
+        headers=_versioned_headers(
+            "e2e-v04-gate-v2",
+            baseline_v2.headers["etag"],
+            request_id="req-e2ev04gatev2",
+        ),
+    )
+    assert gate_v2.status_code == 201, gate_v2.text
+
+    holder.value = Actor("reviewer-1")
+    reassigned = client.post(
+        f"/api/v1/requirements/{requirement_id}/baseline-gates/"
+        f"{gate_v2.json()['gate']['id']}:reassign",
+        json={"reviewerId": "reviewer-2", "reason": "Use the second qualified reviewer."},
+        headers=_versioned_headers(
+            "e2e-v04-gate-reassign",
+            '"v1"',
+            request_id="req-e2ev04gatereassign",
+        ),
+    )
+    assert reassigned.status_code == 200, reassigned.text
+    assert reassigned.headers["etag"] == '"v2"'
+    stale_reassignment = client.post(
+        f"/api/v1/requirements/{requirement_id}/baseline-gates/"
+        f"{gate_v2.json()['gate']['id']}:reassign",
+        json={"reviewerId": "reviewer-3", "reason": "A stale overwrite must lose."},
+        headers=_versioned_headers(
+            "e2e-v04-gate-reassign-stale",
+            '"v1"',
+            request_id="req-e2ev04gatereassignstale",
+        ),
+    )
+    assert stale_reassignment.status_code == 409
+
+    holder.value = Actor("reviewer-2")
+    approved = _decision(
+        client,
+        requirement_id,
+        gate_v2.json()["gate"]["id"],
+        gate_v2.headers["etag"],
+        key="e2e-v04-v2",
+        outcome=DecisionOutcome.APPROVED,
+        request_id="req-e2ev04approved",
+    )
+    assert approved.status_code == 200, approved.text
+
+    details = client.get(f"/api/v1/requirements/{requirement_id}")
+    assert details.status_code == 200
+    assert details.json()["requirement"]["state"] == "READY"
+    items = {item["id"]: item for item in details.json()["workItems"]}
+    assert items[initial_work_item_id]["state"] == "READY"
+    assert items[initial_work_item_id]["repositoryState"] == "BOUND"
+    assert items[second_work_item_id]["state"] == "DRAFT"
+    assert items[second_work_item_id]["repositoryState"] == "WAITING_REPOSITORY"
+    assert details.json()["currentSddBaseline"]["artifactVersion"] == "2"
+    assert details.json()["currentGate"]["id"] == gate_v2.json()["gate"]["id"]
+    assert details.json()["currentGateAssignment"]["currentReviewerId"] == "reviewer-2"
+    assert details.json()["currentDecision"]["outcome"] == "APPROVED"
+
+    with isolated_requirement_database.owner.connect() as db:
+        immutable_facts = db.execute(
+            text(
+                "SELECT "
+                "(SELECT count(*) FROM requirement.sdd_artifact_version "
+                "WHERE requirement_id=:requirement_id), "
+                "(SELECT count(*) FROM requirement.sdd_baseline "
+                "WHERE requirement_id=:requirement_id), "
+                "(SELECT count(*) FROM requirement.gate_instance "
+                "WHERE requirement_id=:requirement_id), "
+                "(SELECT count(*) FROM requirement.decision AS decision "
+                "JOIN requirement.gate_instance AS gate "
+                "ON gate.id=decision.gate_instance_id "
+                "WHERE gate.requirement_id=:requirement_id), "
+                "(SELECT string_agg(decision.outcome, ',' ORDER BY gate.artifact_version::integer) "
+                "FROM requirement.decision AS decision "
+                "JOIN requirement.gate_instance AS gate "
+                "ON gate.id=decision.gate_instance_id "
+                "WHERE gate.requirement_id=:requirement_id)"
+            ),
+            {"requirement_id": requirement_id},
+        ).one()
+        correlated_actions = db.execute(
+            text(
+                "SELECT request_id, action FROM audit.audit_event "
+                "WHERE request_id = ANY(:request_ids) ORDER BY request_id, action"
+            ),
+            {
+                "request_ids": [
+                    "req-e2ev04artifactv1",
+                    "req-e2ev04workitemadd",
+                    "req-e2ev04workitemassign",
+                    "req-e2ev04changesrequested",
+                    "req-e2ev04gatereassign",
+                    "req-e2ev04approved",
+                ]
+            },
+        ).all()
+    assert immutable_facts == (2, 2, 2, 2, "CHANGES_REQUESTED,APPROVED")
+    assert {str(row.request_id) for row in correlated_actions} == {
+        "req-e2ev04artifactv1",
+        "req-e2ev04workitemadd",
+        "req-e2ev04workitemassign",
+        "req-e2ev04changesrequested",
+        "req-e2ev04gatereassign",
+        "req-e2ev04approved",
+    }
 
 
 @pytest.mark.parametrize(

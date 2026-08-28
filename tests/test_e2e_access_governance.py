@@ -223,6 +223,7 @@ def e2e_runtime(
             db.execute(
                 text(
                     "TRUNCATE requirement.decision, requirement.gate_assignment, "
+                    "requirement.work_item_assignment, requirement.sdd_artifact_version, "
                     "source_control.merge_request_observation, "
                     "source_control.merge_request_binding, "
                     "source_control.delivery_request_inbox, "
@@ -252,6 +253,7 @@ def e2e_runtime(
                 db.execute(
                     text(
                         "TRUNCATE requirement.decision, requirement.gate_assignment, "
+                        "requirement.work_item_assignment, requirement.sdd_artifact_version, "
                         "source_control.merge_request_observation, "
                         "source_control.merge_request_binding, "
                         "source_control.delivery_request_inbox, "
@@ -640,6 +642,14 @@ def test_access_governance_closes_the_real_cli_http_grant_and_audit_loop(
             ),
             {"workspace_id": workspace_id, "account_id": admin_principal.account_id},
         )
+        db.execute(
+            text(
+                "INSERT INTO workspace.members_projection "
+                "(workspace_id, account_id, source, computed_at) "
+                "VALUES (:workspace_id, :account_id, 'DIRECT_REPORT', now())"
+            ),
+            {"workspace_id": workspace_id, "account_id": member_id},
+        )
     requirement_grant = admin.post(
         "/api/v1/admin/grants",
         json={
@@ -674,6 +684,35 @@ def test_access_governance_closes_the_real_cli_http_grant_and_audit_loop(
         },
     )
     assert code_change_grant.status_code == 201
+
+    v04_workspace_grants = (
+        (admin_principal.account_id, "requirement.read"),
+        (admin_principal.account_id, "work_item.create"),
+        (admin_principal.account_id, "work_item.assign"),
+        (admin_principal.account_id, "requirement.baseline.submit"),
+        (admin_principal.account_id, "requirement.baseline.assign"),
+        (admin_principal.account_id, "requirement.baseline.decide"),
+        (member_id, "code.change"),
+        (member_id, "requirement.baseline.decide"),
+    )
+    for index, (principal_id, capability) in enumerate(v04_workspace_grants, start=1):
+        v04_grant = admin.post(
+            "/api/v1/admin/grants",
+            json={
+                "principalId": principal_id,
+                "capability": capability,
+                "scopeType": "WORKSPACE",
+                "scopeId": workspace_id,
+                "source": "MANUAL",
+                "reason": "V0.4 production SDD human-gate acceptance",
+            },
+            headers={
+                **SAME_ORIGIN,
+                "Idempotency-Key": f"e2e-v04-grant-{index:02d}",
+                "X-Request-ID": f"req-e2ev04grant{index:02d}",
+            },
+        )
+        assert v04_grant.status_code == 201, v04_grant.text
 
     repository_stdout, repository_stderr = StringIO(), StringIO()
     repository_exit = source_control_repository.main(
@@ -1003,6 +1042,202 @@ def test_access_governance_closes_the_real_cli_http_grant_and_audit_loop(
     assert reconciled_facts.effect_state == "SUCCEEDED"
     assert reconciled_facts.binding_count == 1
 
+    requirement_id = requirement_payload["requirement"]["id"]
+    initial_work_item_id = requirement_payload["workItem"]["id"]
+    prepared_details = admin.get(f"/api/v1/requirements/{requirement_id}")
+    assert prepared_details.status_code == 200, prepared_details.text
+    prepared_requirement = prepared_details.json()["requirement"]
+    assert prepared_requirement["state"] == "PREPARING"
+
+    artifact_v1 = admin.post(
+        f"/api/v1/requirements/{requirement_id}/sdd-artifacts",
+        json={"content": "# Production SDD v1\r\n\r\nInitial human review."},
+        headers={
+            **SAME_ORIGIN,
+            "Idempotency-Key": "e2e-v04-artifact-v1",
+            "If-Match": f'"v{prepared_requirement["revision"]}"',
+            "X-Request-ID": "req-e2ev04artifactv1",
+        },
+    )
+    assert artifact_v1.status_code == 201, artifact_v1.text
+    artifact_id = artifact_v1.json()["artifact"]["artifactId"]
+
+    added_work_item = admin.post(
+        f"/api/v1/requirements/{requirement_id}/work-items",
+        json={"repositoryId": repository_id},
+        headers={
+            **SAME_ORIGIN,
+            "Idempotency-Key": "e2e-v04-add-work-item",
+            "If-Match": artifact_v1.headers["etag"],
+            "X-Request-ID": "req-e2ev04workitemadd",
+        },
+    )
+    assert added_work_item.status_code == 201, added_work_item.text
+    second_work_item_id = added_work_item.json()["workItem"]["id"]
+    assigned_work_item = admin.post(
+        f"/api/v1/requirements/{requirement_id}/work-items/{second_work_item_id}:assign",
+        json={
+            "humanOwnerId": member_id,
+            "reason": "Delegate the second repository-scoped implementation slice.",
+        },
+        headers={
+            **SAME_ORIGIN,
+            "Idempotency-Key": "e2e-v04-assign-work-item",
+            "If-Match": '"v1"',
+            "X-Request-ID": "req-e2ev04workitemassign",
+        },
+    )
+    assert assigned_work_item.status_code == 200, assigned_work_item.text
+    assert assigned_work_item.json()["workItem"]["humanOwnerId"] == member_id
+
+    baseline_v1 = admin.post(
+        f"/api/v1/requirements/{requirement_id}/sdd-baselines",
+        json={"artifactId": artifact_id, "artifactVersion": "1"},
+        headers={
+            **SAME_ORIGIN,
+            "Idempotency-Key": "e2e-v04-baseline-v1",
+            "If-Match": added_work_item.headers["etag"],
+            "X-Request-ID": "req-e2ev04baselinev1",
+        },
+    )
+    assert baseline_v1.status_code == 201, baseline_v1.text
+    gate_v1 = admin.post(
+        f"/api/v1/requirements/{requirement_id}/baseline-confirmations",
+        json={"sddBaselineId": baseline_v1.json()["baseline"]["id"]},
+        headers={
+            **SAME_ORIGIN,
+            "Idempotency-Key": "e2e-v04-gate-v1",
+            "If-Match": baseline_v1.headers["etag"],
+            "X-Request-ID": "req-e2ev04gatev1",
+        },
+    )
+    assert gate_v1.status_code == 201, gate_v1.text
+    changes_requested = admin.post(
+        f"/api/v1/requirements/{requirement_id}/baseline-decisions",
+        json={
+            "gateId": gate_v1.json()["gate"]["id"],
+            "outcome": "CHANGES_REQUESTED",
+            "reason": "The first SDD version needs a bounded revision.",
+        },
+        headers={
+            **SAME_ORIGIN,
+            "Idempotency-Key": "e2e-v04-changes-requested",
+            "If-Match": gate_v1.headers["etag"],
+            "X-Request-ID": "req-e2ev04changesrequested",
+        },
+    )
+    assert changes_requested.status_code == 200, changes_requested.text
+    assert changes_requested.json()["requirement"]["state"] == "PREPARING"
+
+    artifact_v2 = admin.post(
+        f"/api/v1/requirements/{requirement_id}/sdd-artifacts",
+        json={
+            "artifactId": artifact_id,
+            "content": "# Production SDD v2\n\nHuman review feedback resolved.\n",
+        },
+        headers={
+            **SAME_ORIGIN,
+            "Idempotency-Key": "e2e-v04-artifact-v2",
+            "If-Match": changes_requested.headers["etag"],
+            "X-Request-ID": "req-e2ev04artifactv2",
+        },
+    )
+    assert artifact_v2.status_code == 201, artifact_v2.text
+    assert artifact_v2.json()["artifact"]["version"] == 2
+    baseline_v2 = admin.post(
+        f"/api/v1/requirements/{requirement_id}/sdd-baselines",
+        json={"artifactId": artifact_id, "artifactVersion": "2"},
+        headers={
+            **SAME_ORIGIN,
+            "Idempotency-Key": "e2e-v04-baseline-v2",
+            "If-Match": artifact_v2.headers["etag"],
+            "X-Request-ID": "req-e2ev04baselinev2",
+        },
+    )
+    assert baseline_v2.status_code == 201, baseline_v2.text
+    gate_v2 = admin.post(
+        f"/api/v1/requirements/{requirement_id}/baseline-confirmations",
+        json={"sddBaselineId": baseline_v2.json()["baseline"]["id"]},
+        headers={
+            **SAME_ORIGIN,
+            "Idempotency-Key": "e2e-v04-gate-v2",
+            "If-Match": baseline_v2.headers["etag"],
+            "X-Request-ID": "req-e2ev04gatev2",
+        },
+    )
+    assert gate_v2.status_code == 201, gate_v2.text
+
+    reassigned_gate = admin.post(
+        f"/api/v1/requirements/{requirement_id}/baseline-gates/"
+        f"{gate_v2.json()['gate']['id']}:reassign",
+        json={
+            "reviewerId": member_id,
+            "reason": "Delegate final approval to an eligible Workspace reviewer.",
+        },
+        headers={
+            **SAME_ORIGIN,
+            "Idempotency-Key": "e2e-v04-reassign-gate",
+            "If-Match": '"v1"',
+            "X-Request-ID": "req-e2ev04gatereassign",
+        },
+    )
+    assert reassigned_gate.status_code == 200, reassigned_gate.text
+    assert reassigned_gate.headers["etag"] == '"v2"'
+    approved = member.post(
+        f"/api/v1/requirements/{requirement_id}/baseline-decisions",
+        json={
+            "gateId": gate_v2.json()["gate"]["id"],
+            "outcome": "APPROVED",
+            "reason": "The revised SDD is ready for governed implementation.",
+        },
+        headers={
+            **SAME_ORIGIN,
+            "Idempotency-Key": "e2e-v04-approve",
+            "If-Match": gate_v2.headers["etag"],
+            "X-Request-ID": "req-e2ev04approved",
+        },
+    )
+    assert approved.status_code == 200, approved.text
+
+    details = admin.get(f"/api/v1/requirements/{requirement_id}")
+    assert details.status_code == 200, details.text
+    details_payload = details.json()
+    assert details_payload["requirement"]["state"] == "READY"
+    work_items = {item["id"]: item for item in details_payload["workItems"]}
+    assert (
+        work_items[initial_work_item_id]["state"],
+        work_items[initial_work_item_id]["assignmentState"],
+        work_items[initial_work_item_id]["repositoryState"],
+    ) == ("READY", "ASSIGNED", "BOUND")
+    assert (
+        work_items[second_work_item_id]["state"],
+        work_items[second_work_item_id]["assignmentState"],
+        work_items[second_work_item_id]["repositoryState"],
+    ) == ("DRAFT", "ASSIGNED", "WAITING_REPOSITORY")
+    assert details_payload["currentSddBaseline"]["artifactVersion"] == "2"
+    assert details_payload["currentGate"]["id"] == gate_v2.json()["gate"]["id"]
+    assert details_payload["currentGateAssignment"]["currentReviewerId"] == member_id
+    assert details_payload["currentDecision"]["outcome"] == "APPROVED"
+
+    with owner.connect() as db:
+        immutable_v04_facts = db.execute(
+            text(
+                "SELECT "
+                "(SELECT count(*) FROM requirement.sdd_artifact_version "
+                "WHERE requirement_id=:requirement_id), "
+                "(SELECT count(*) FROM requirement.sdd_baseline "
+                "WHERE requirement_id=:requirement_id), "
+                "(SELECT count(*) FROM requirement.gate_instance "
+                "WHERE requirement_id=:requirement_id), "
+                "(SELECT count(*) FROM requirement.decision AS decision "
+                "JOIN requirement.gate_instance AS gate "
+                "ON gate.id=decision.gate_instance_id "
+                "WHERE gate.requirement_id=:requirement_id)"
+            ),
+            {"requirement_id": requirement_id},
+        ).one()
+    assert immutable_v04_facts == (2, 2, 2, 2)
+
     expected = {
         "req-e2eadmintemp": ("identity.temp_credential.consumed",),
         "req-e2eadminpassword": (
@@ -1044,6 +1279,14 @@ def test_access_governance_closes_the_real_cli_http_grant_and_audit_loop(
         "req-e2erepositorydenied": ("authorization.decision",),
         "req-e2erequirementgrant": ("authorization.grant.created",),
         "req-e2ecodechangegrant": ("authorization.grant.created",),
+        "req-e2ev04grant01": ("authorization.grant.created",),
+        "req-e2ev04grant02": ("authorization.grant.created",),
+        "req-e2ev04grant03": ("authorization.grant.created",),
+        "req-e2ev04grant04": ("authorization.grant.created",),
+        "req-e2ev04grant05": ("authorization.grant.created",),
+        "req-e2ev04grant06": ("authorization.grant.created",),
+        "req-e2ev04grant07": ("authorization.grant.created",),
+        "req-e2ev04grant08": ("authorization.grant.created",),
         "req-e2erequirementcreate": (
             "requirement.created",
             "requirement.work_item.initialized",
@@ -1052,6 +1295,17 @@ def test_access_governance_closes_the_real_cli_http_grant_and_audit_loop(
             "requirement.created",
             "requirement.work_item.initialized",
         ),
+        "req-e2ev04artifactv1": ("requirement.sdd_artifact.created",),
+        "req-e2ev04workitemadd": ("requirement.work_item.added",),
+        "req-e2ev04workitemassign": ("requirement.work_item.assigned",),
+        "req-e2ev04baselinev1": ("requirement.sdd_baseline.registered",),
+        "req-e2ev04gatev1": ("requirement.baseline_confirmation.submitted",),
+        "req-e2ev04changesrequested": ("requirement.baseline_confirmation.decided",),
+        "req-e2ev04artifactv2": ("requirement.sdd_artifact.created",),
+        "req-e2ev04baselinev2": ("requirement.sdd_baseline.registered",),
+        "req-e2ev04gatev2": ("requirement.baseline_confirmation.submitted",),
+        "req-e2ev04gatereassign": ("requirement.baseline_gate.reassigned",),
+        "req-e2ev04approved": ("requirement.baseline_confirmation.decided",),
     }
     assert _audit_actions(owner) == expected
     for audit_query_index, (request_id, actions) in enumerate(expected.items(), start=1):
@@ -1177,6 +1431,6 @@ def test_bootstrap_cli_recovers_same_command_after_authorization_outage(
     assert facts == (1, 3, 1, 3)
 
 
-def test_release_version_is_0_3_0() -> None:
-    assert __version__ == "0.3.0"
-    assert bootstrap.create_app().openapi()["info"]["version"] == "0.3.0"
+def test_release_version_is_0_4_0() -> None:
+    assert __version__ == "0.4.0"
+    assert bootstrap.create_app().openapi()["info"]["version"] == "0.4.0"

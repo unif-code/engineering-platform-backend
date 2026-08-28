@@ -1303,7 +1303,7 @@ def _decide_baseline_once(
     try:
         reviewer_eligible = reviewer_guard.can_decide(
             actor_id=stable_actor,
-            workspace_id=requirement["workspace_id"],
+            workspace_id=str(requirement["workspace_id"]),
         )
     except RequirementError:
         raise
