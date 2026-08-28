@@ -46,6 +46,14 @@ class StaleWorkItemRevision(RequirementError):
     pass
 
 
+class WorkItemAssigneeIneligible(RequirementError):
+    pass
+
+
+class WorkItemAssignmentConflict(RequirementError):
+    pass
+
+
 class RepositoryBindingConflict(RequirementError):
     pass
 

@@ -22,6 +22,7 @@ from control_plane.app.modules.requirement import (
 )
 from control_plane.app.modules.requirement.adapters import (
     ComposedAutomaticAssignmentGuard,
+    SqlAlchemySddArtifactReader,
 )
 from control_plane.app.modules.requirement.api import (
     RequirementHttpRuntime,
@@ -90,7 +91,7 @@ def test_bootstrap_exposes_only_v03_requirement_endpoints_with_fail_closed_depen
         repository_id="repository-1",
         required_capabilities=route.required_capabilities,
     )
-    assert dependencies.artifacts is None
+    assert isinstance(dependencies.artifacts, SqlAlchemySddArtifactReader)
     assert dependencies.gate_policies is None
     assert dependencies.reviewer_guard is None
 

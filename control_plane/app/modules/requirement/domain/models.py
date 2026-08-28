@@ -199,6 +199,21 @@ class CreateSddArtifactResult(BaseModel):
     artifact: SddArtifactVersionDto
 
 
+class AddWorkItemResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    requirement: RequirementDto
+    work_item: WorkItemDto
+    assignment: WorkItemAssignmentDto | None
+
+
+class AssignWorkItemResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    work_item: WorkItemDto
+    assignment: WorkItemAssignmentDto
+
+
 class RepositoryBindingRequestMessage(BaseModel):
     model_config = ConfigDict(frozen=True)
 

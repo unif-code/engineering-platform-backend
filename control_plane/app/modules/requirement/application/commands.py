@@ -1156,6 +1156,11 @@ def _decide_baseline_once(
     )
     if updated is None:
         raise StaleRequirementRevision(requirement_id)
+    repository.reconcile_planned_work_item_states(
+        requirement_id,
+        requirement_state=target.value,
+        now=now,
+    )
     audit(
         repository,
         dependencies=dependencies,

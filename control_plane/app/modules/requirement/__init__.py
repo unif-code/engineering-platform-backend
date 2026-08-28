@@ -20,6 +20,10 @@ from control_plane.app.modules.requirement.application import (
 from control_plane.app.modules.requirement.application import (
     acknowledge_repository_binding_request as _acknowledge_repository_binding_request,
 )
+from control_plane.app.modules.requirement.application import add_work_item as _add_work_item
+from control_plane.app.modules.requirement.application import (
+    assign_work_item as _assign_work_item,
+)
 from control_plane.app.modules.requirement.application import (
     claim_integration_delivery_requests as _claim_integration_delivery_requests,
 )
@@ -92,8 +96,10 @@ from control_plane.app.modules.requirement.application import (
     submit_baseline_confirmation as _submit_baseline_confirmation,
 )
 from control_plane.app.modules.requirement.domain import (
+    AddWorkItemResult,
     ArtifactUnavailable,
     AssignmentState,
+    AssignWorkItemResult,
     BaselineConfirmationResult,
     BaselineDecisionResult,
     CreateRequirementResult,
@@ -141,6 +147,8 @@ from control_plane.app.modules.requirement.domain import (
     StaleBaselineSubject,
     StaleRequirementRevision,
     StaleWorkItemRevision,
+    WorkItemAssigneeIneligible,
+    WorkItemAssignmentConflict,
     WorkItemDto,
     WorkItemNotFound,
     WorkItemState,
@@ -176,6 +184,52 @@ def create_requirement(
         description=description,
         acceptance_criteria=acceptance_criteria,
         initial_repository_id=initial_repository_id,
+        actor=actor,
+        idempotency_key=idempotency_key,
+        dependencies=dependencies,
+    )
+
+
+def add_work_item(
+    db: Connection,
+    *,
+    requirement_id: str,
+    repository_id: str,
+    expected_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    dependencies: RequirementDependencies,
+) -> AddWorkItemResult:
+    return _add_work_item(
+        dependencies.repository_factory(db),
+        requirement_id=requirement_id,
+        repository_id=repository_id,
+        expected_revision=expected_revision,
+        actor=actor,
+        idempotency_key=idempotency_key,
+        dependencies=dependencies,
+    )
+
+
+def assign_work_item(
+    db: Connection,
+    *,
+    requirement_id: str,
+    work_item_id: str,
+    human_owner_id: str,
+    reason: str,
+    expected_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    dependencies: RequirementDependencies,
+) -> AssignWorkItemResult:
+    return _assign_work_item(
+        dependencies.repository_factory(db),
+        requirement_id=requirement_id,
+        work_item_id=work_item_id,
+        human_owner_id=human_owner_id,
+        reason=reason,
+        expected_revision=expected_revision,
         actor=actor,
         idempotency_key=idempotency_key,
         dependencies=dependencies,
@@ -691,6 +745,8 @@ def decide_baseline(
 
 __all__ = [
     "AssignmentState",
+    "AddWorkItemResult",
+    "AssignWorkItemResult",
     "ArtifactSnapshot",
     "ArtifactState",
     "ArtifactTrust",
@@ -746,6 +802,8 @@ __all__ = [
     "StaleRequirementRevision",
     "StaleWorkItemRevision",
     "WorkItemDto",
+    "WorkItemAssigneeIneligible",
+    "WorkItemAssignmentConflict",
     "WorkItemActorDenied",
     "WorkItemDeliveryConflict",
     "WorkItemDeliveryDto",
@@ -754,6 +812,8 @@ __all__ = [
     "WorkItemState",
     "RepositoryBindingRequestMessage",
     "acknowledge_repository_binding_request",
+    "add_work_item",
+    "assign_work_item",
     "acknowledge_integration_delivery_request",
     "claim_integration_delivery_requests",
     "claim_repository_binding_requests",

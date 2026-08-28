@@ -367,6 +367,73 @@ class SqlAlchemyRequirementRepository:
             .one_or_none()
         )
 
+    def update_requirement_plan(
+        self,
+        requirement_id: str,
+        *,
+        expected_revision: int,
+        required_work_item_set_hash: str,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.requirement SET "
+                    "requirement_version=requirement_version + 1, "
+                    "required_work_item_set_version=required_work_item_set_version + 1, "
+                    "required_work_item_set_hash=:required_work_item_set_hash, "
+                    "current_sdd_baseline_id=NULL, revision=revision + 1, updated_at=:now "
+                    "WHERE id=:id AND revision=:expected_revision AND state='PREPARING' "
+                    "RETURNING *"
+                ),
+                {
+                    "id": requirement_id,
+                    "expected_revision": expected_revision,
+                    "required_work_item_set_hash": required_work_item_set_hash,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def assign_work_item_projection(
+        self,
+        work_item_id: str,
+        *,
+        expected_revision: int,
+        human_owner_id: str,
+        repository_state: str,
+        repository_blocked_reason_code: str | None,
+        repository_blocked_at: datetime | None,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.work_item SET human_owner_id=:human_owner_id, "
+                    "executor_id=:human_owner_id, assignment_state='ASSIGNED', "
+                    "repository_state=:repository_state, "
+                    "repository_blocked_reason_code=:repository_blocked_reason_code, "
+                    "repository_blocked_at=:repository_blocked_at, "
+                    "revision=revision + 1, updated_at=:now "
+                    "WHERE id=:id AND revision=:expected_revision "
+                    "AND integration_delivery_state='NOT_STARTED' RETURNING *"
+                ),
+                {
+                    "id": work_item_id,
+                    "expected_revision": expected_revision,
+                    "human_owner_id": human_owner_id,
+                    "repository_state": repository_state,
+                    "repository_blocked_reason_code": repository_blocked_reason_code,
+                    "repository_blocked_at": repository_blocked_at,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
     def bind_work_item(
         self,
         work_item_id: str,
@@ -473,6 +540,37 @@ class SqlAlchemyRequirementRepository:
                 ),
                 {"requirement_id": requirement_id},
             ).scalars()
+        )
+
+    def reconcile_planned_work_item_states(
+        self,
+        requirement_id: str,
+        *,
+        requirement_state: str,
+        now: datetime,
+    ) -> list[Any]:
+        target = (
+            "CASE "
+            "WHEN :requirement_state='READY' "
+            "AND assignment_state='ASSIGNED' AND repository_state='BOUND' THEN 'READY' "
+            "WHEN :requirement_state='CANCELED' THEN 'CANCELED' "
+            "ELSE 'DRAFT' END"
+        )
+        return list(
+            self.db.execute(
+                text(
+                    "UPDATE requirement.work_item SET "
+                    f"state={target}, revision=revision + 1, updated_at=:now "
+                    "WHERE requirement_id=:requirement_id "
+                    "AND integration_delivery_state='NOT_STARTED' "
+                    f"AND state IS DISTINCT FROM ({target}) RETURNING *"
+                ),
+                {
+                    "requirement_id": requirement_id,
+                    "requirement_state": requirement_state,
+                    "now": now,
+                },
+            ).mappings()
         )
 
     def insert_outbox(self, **values: Any) -> Any:

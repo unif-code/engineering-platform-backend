@@ -26,7 +26,9 @@ from control_plane.app.modules.requirement import (
     RequirementState,
     StaleBaselineSubject,
     StaleRequirementRevision,
+    WorkItemState,
     decide_baseline,
+    record_repository_binding,
     register_sdd_baseline,
     start_requirement_preparation,
     submit_baseline_confirmation,
@@ -177,6 +179,66 @@ def test_approved_sdd_gate_advances_requirement_to_ready_without_readying_work_i
         "DECIDED",
     )
     assert work_item == ("DRAFT", "WAITING_REPOSITORY")
+
+
+def test_approved_sdd_gate_promotes_only_assigned_and_bound_work_item(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    created, prepared = _prepare(isolated_requirement_database)
+    dependencies = _gate_dependencies()
+    with isolated_requirement_database.runtime.begin() as db:
+        bound = record_repository_binding(
+            db,
+            work_item_id=created.work_item.id,
+            repository_id="repository-1",
+            base_commit_sha="a" * 40,
+            task_branch="work-items/gated-ready",
+            expected_revision=created.work_item.revision,
+            actor=Actor("SYSTEM"),
+            idempotency_key="gated-ready-binding",
+            correlation_id="source-control:effect:gated-ready-binding",
+            dependencies=dependencies,
+        )
+    assert bound.state is WorkItemState.DRAFT
+    with isolated_requirement_database.runtime.begin() as db:
+        baseline = register_sdd_baseline(
+            db,
+            requirement_id=created.requirement.id,
+            artifact_id="sdd-1",
+            artifact_version="version-1",
+            expected_revision=prepared.revision,
+            actor=Actor("employee-1"),
+            idempotency_key="gated-ready-register",
+            dependencies=dependencies,
+        )
+    with isolated_requirement_database.runtime.begin() as db:
+        confirmation = submit_baseline_confirmation(
+            db,
+            requirement_id=created.requirement.id,
+            sdd_baseline_id=baseline.baseline.id,
+            expected_revision=baseline.requirement.revision,
+            actor=Actor("employee-1"),
+            idempotency_key="gated-ready-submit",
+            dependencies=dependencies,
+        )
+    with isolated_requirement_database.runtime.begin() as db:
+        decide_baseline(
+            db,
+            requirement_id=created.requirement.id,
+            gate_id=confirmation.gate.id,
+            outcome=DecisionOutcome.APPROVED,
+            reason="Bound plan is executable.",
+            expected_revision=confirmation.requirement.revision,
+            actor=Actor("reviewer-1"),
+            idempotency_key="gated-ready-decide",
+            dependencies=dependencies,
+        )
+    with isolated_requirement_database.owner.connect() as db:
+        work_item = db.execute(
+            text("SELECT state, revision FROM requirement.work_item WHERE id=:id"),
+            {"id": created.work_item.id},
+        ).one()
+    assert work_item == ("READY", bound.revision + 1)
 
 
 @pytest.mark.parametrize(
@@ -762,16 +824,17 @@ def test_changed_artifact_hash_is_rejected_and_new_version_creates_a_new_gate(
 
 
 @pytest.mark.parametrize(
-    ("outcome", "expected"),
+    ("outcome", "expected", "expected_work_item_state"),
     [
-        (DecisionOutcome.CHANGES_REQUESTED, RequirementState.PREPARING),
-        (DecisionOutcome.REJECTED, RequirementState.CANCELED),
+        (DecisionOutcome.CHANGES_REQUESTED, RequirementState.PREPARING, "DRAFT"),
+        (DecisionOutcome.REJECTED, RequirementState.CANCELED, "CANCELED"),
     ],
 )
 def test_non_approval_decisions_follow_the_first_batch_state_machine(
     isolated_requirement_database: IsolatedRequirementDatabase,
     outcome: DecisionOutcome,
     expected: RequirementState,
+    expected_work_item_state: str,
 ) -> None:
     created, prepared = _prepare(isolated_requirement_database)
     dependencies = _gate_dependencies()
@@ -809,4 +872,11 @@ def test_non_approval_decisions_follow_the_first_batch_state_machine(
             dependencies=dependencies,
         )
 
+    with isolated_requirement_database.owner.connect() as db:
+        work_item_state = db.execute(
+            text("SELECT state FROM requirement.work_item WHERE id=:id"),
+            {"id": created.work_item.id},
+        ).scalar_one()
+
     assert result.requirement.state is expected
+    assert work_item_state == expected_work_item_state

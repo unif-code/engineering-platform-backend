@@ -102,6 +102,27 @@ class RequirementRepository(Protocol):
         now: datetime,
     ) -> Any: ...
 
+    def update_requirement_plan(
+        self,
+        requirement_id: str,
+        *,
+        expected_revision: int,
+        required_work_item_set_hash: str,
+        now: datetime,
+    ) -> Any: ...
+
+    def assign_work_item_projection(
+        self,
+        work_item_id: str,
+        *,
+        expected_revision: int,
+        human_owner_id: str,
+        repository_state: str,
+        repository_blocked_reason_code: str | None,
+        repository_blocked_at: datetime | None,
+        now: datetime,
+    ) -> Any: ...
+
     def repository_binding_context(self, work_item_id: str) -> Any: ...
 
     def integration_delivery_context(self, work_item_id: str) -> Any: ...
@@ -139,6 +160,14 @@ class RequirementRepository(Protocol):
     ) -> Any: ...
 
     def required_work_item_states(self, requirement_id: str) -> tuple[str, ...]: ...
+
+    def reconcile_planned_work_item_states(
+        self,
+        requirement_id: str,
+        *,
+        requirement_state: str,
+        now: datetime,
+    ) -> list[Any]: ...
 
     def insert_outbox(self, **values: Any) -> Any: ...
 

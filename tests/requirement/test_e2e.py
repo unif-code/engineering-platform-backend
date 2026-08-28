@@ -157,7 +157,7 @@ def test_http_and_internal_worker_complete_the_real_postgresql_approval_path(
             correlation_id="source-control:effect:e2e-approved-binding-ready",
             dependencies=dependencies,
         )
-    assert bound.state.value == "READY"
+    assert bound.state.value == "DRAFT"
     gate_id, gate_etag = _submit_gate(
         client,
         requirement_id,

@@ -3,7 +3,9 @@ from control_plane.app.modules.requirement.domain.delivery import (
     transition_integration_mr_ready,
 )
 from control_plane.app.modules.requirement.domain.models import (
+    AddWorkItemResult,
     AssignmentState,
+    AssignWorkItemResult,
     BaselineConfirmationResult,
     BaselineDecisionResult,
     CreateRequirementResult,
@@ -57,6 +59,8 @@ from control_plane.app.modules.requirement.domain.transitions import (
     StaleBaselineSubject,
     StaleRequirementRevision,
     StaleWorkItemRevision,
+    WorkItemAssigneeIneligible,
+    WorkItemAssignmentConflict,
     WorkItemNotFound,
     derive_work_item_state,
     transition_requirement,
@@ -64,6 +68,8 @@ from control_plane.app.modules.requirement.domain.transitions import (
 
 __all__ = [
     "AssignmentState",
+    "AddWorkItemResult",
+    "AssignWorkItemResult",
     "ArtifactUnavailable",
     "BaselineConfirmationResult",
     "BaselineDecisionResult",
@@ -113,6 +119,8 @@ __all__ = [
     "StaleRequirementRevision",
     "StaleWorkItemRevision",
     "WorkItemDto",
+    "WorkItemAssigneeIneligible",
+    "WorkItemAssignmentConflict",
     "WorkItemAssignmentDto",
     "WorkItemNotFound",
     "WorkItemState",
