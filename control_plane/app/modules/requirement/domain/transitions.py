@@ -110,9 +110,14 @@ def transition_requirement(
 
 
 def derive_work_item_state(
+    requirement: RequirementState,
     assignment: AssignmentState,
     repository: RepositoryState,
 ) -> WorkItemState:
-    if assignment is AssignmentState.ASSIGNED and repository is RepositoryState.BOUND:
+    if (
+        requirement is RequirementState.READY
+        and assignment is AssignmentState.ASSIGNED
+        and repository is RepositoryState.BOUND
+    ):
         return WorkItemState.READY
     return WorkItemState.DRAFT

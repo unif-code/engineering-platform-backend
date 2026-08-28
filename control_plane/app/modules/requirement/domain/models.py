@@ -125,6 +125,7 @@ class RequirementDto(BaseModel):
     initial_repository_id: str
     route_snapshot_version: int
     route_snapshot_hash: str
+    route_snapshot: dict[str, object] = Field(default_factory=dict)
     state: RequirementState
     record_state: RecordState
     requirement_version: int
@@ -161,6 +162,34 @@ class WorkItemDto(BaseModel):
     revision: int
     created_at: datetime
     updated_at: datetime
+
+
+class WorkItemAssignmentDto(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    work_item_id: str
+    assignee_id: str
+    assigned_by: str
+    reason: str
+    revision: int
+    assigned_at: datetime
+    superseded_at: datetime | None
+
+
+class SddArtifactVersionDto(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    artifact_id: str
+    version: int
+    requirement_id: str
+    sha256: str
+    state: str
+    media_type: str
+    trust: str
+    content: str
+    created_by: str
+    created_at: datetime
 
 
 class RepositoryBindingRequestMessage(BaseModel):

@@ -21,6 +21,8 @@ class RouteSnapshot(BaseModel):
     version: int
     snapshot_hash: str
     required_capabilities: tuple[str, ...]
+    requirement_type: RequirementType | None = None
+    steps: tuple[str, ...] = ()
 
 
 class RouteSnapshotPort(Protocol):

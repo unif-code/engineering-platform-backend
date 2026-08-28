@@ -64,6 +64,44 @@ class RequirementRepository(Protocol):
         for_update: bool = False,
     ) -> Any: ...
 
+    def insert_sdd_artifact_version(self, **values: Any) -> Any: ...
+
+    def sdd_artifact_version(
+        self,
+        requirement_id: str,
+        artifact_id: str,
+        version: int,
+    ) -> Any: ...
+
+    def sdd_artifact_version_by_identity(
+        self,
+        artifact_id: str,
+        version: int,
+    ) -> Any: ...
+
+    def latest_sdd_artifact_version(
+        self,
+        requirement_id: str,
+        artifact_id: str,
+    ) -> Any: ...
+
+    def insert_work_item_assignment(self, **values: Any) -> Any: ...
+
+    def current_work_item_assignment(
+        self,
+        work_item_id: str,
+        *,
+        for_update: bool = False,
+    ) -> Any: ...
+
+    def supersede_work_item_assignment(
+        self,
+        assignment_id: str,
+        *,
+        expected_revision: int,
+        now: datetime,
+    ) -> Any: ...
+
     def repository_binding_context(self, work_item_id: str) -> Any: ...
 
     def integration_delivery_context(self, work_item_id: str) -> Any: ...

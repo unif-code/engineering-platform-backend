@@ -63,14 +63,14 @@ def test_fresh_upgrade_installs_requirement_and_all_visible_heads(
             "0001_organization_base",
             "0001_workspace_base",
             "0006_auth_v03_routes",
-            "0004_req_int_delivery",
+            "0005_req_sdd_human_gate",
             "0006_sc_mr_reconcile",
         }
         assert installed_heads == {
             "0008_audit_requirement_grant",
             "0010_identity_policy_reauth",
             "0006_auth_v03_routes",
-            "0004_req_int_delivery",
+            "0005_req_sdd_human_gate",
             "0006_sc_mr_reconcile",
         }
         assert set(inspect(engine).get_table_names(schema="requirement")) == {
@@ -80,8 +80,10 @@ def test_fresh_upgrade_installs_requirement_and_all_visible_heads(
             "idempotency_record",
             "outbox_message",
             "requirement",
+            "sdd_artifact_version",
             "sdd_baseline",
             "work_item",
+            "work_item_assignment",
         }
     finally:
         engine.dispose()
@@ -156,8 +158,10 @@ def test_all_migrations_round_trip_with_requirement_schema(
             "idempotency_record",
             "outbox_message",
             "requirement",
+            "sdd_artifact_version",
             "sdd_baseline",
             "work_item",
+            "work_item_assignment",
         }
     finally:
         engine.dispose()
@@ -176,11 +180,14 @@ def test_requirement_delivery_facts_prevent_requirement_downgrade(
                     "INSERT INTO requirement.requirement "
                     "(id, workspace_id, type, title, description, acceptance_criteria, "
                     "created_by, initial_repository_id, route_snapshot_version, "
-                    "route_snapshot_hash, state, record_state, requirement_version, "
+                    "route_snapshot_hash, route_snapshot, state, record_state, "
+                    "requirement_version, "
                     "required_work_item_set_version, required_work_item_set_hash, revision) VALUES "
                     "('10000000-0000-0000-0000-000000000301', "
                     "'20000000-0000-0000-0000-000000000301', 'feat', 'Title', 'Description', "
                     "'[\"accepted\"]', 'employee-1', 'repository-1', 1, 'sha256:route', "
+                    '\'{"requirementType":"feat","requiredCapabilities":'
+                    '["code.change"],"version": 1}\', '
                     "'IN_PROGRESS', 'ACTIVE', 1, 1, 'sha256:set', 1)"
                 )
             )

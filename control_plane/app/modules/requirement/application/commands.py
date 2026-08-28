@@ -162,6 +162,12 @@ def _create_requirement_once(
         initial_repository_id=initial_repository_id,
         route_snapshot_version=route.version,
         route_snapshot_hash=route.snapshot_hash,
+        route_snapshot={
+            "requirementType": requirement_type.value,
+            "requiredCapabilities": list(route.required_capabilities),
+            "steps": list(route.steps),
+            "version": route.version,
+        },
         state=RequirementState.CREATED.value,
         record_state=RecordState.ACTIVE.value,
         requirement_version=1,
@@ -185,6 +191,16 @@ def _create_requirement_once(
         revision=1,
         now=now,
     )
+    if owner_id is not None:
+        repository.insert_work_item_assignment(
+            id=work_item_id,
+            work_item_id=work_item_id,
+            assignee_id=owner_id,
+            assigned_by=stable_actor,
+            reason="V0.4_INITIAL_ASSIGNMENT",
+            revision=1,
+            now=now,
+        )
     repository.insert_outbox(
         id=str(dependencies.random.uuid4()),
         topic="requirement.repository-binding.requested",
@@ -505,7 +521,11 @@ def _record_repository_binding_once(
         raise RepositoryBindingConflict("WorkItem already has a different repository binding")
     if row["revision"] != expected_revision:
         raise StaleWorkItemRevision(work_item_id)
+    requirement = repository.requirement_by_id(str(row["requirement_id"]))
+    if requirement is None:
+        raise RequirementNotFound(str(row["requirement_id"]))
     state = derive_work_item_state(
+        RequirementState(requirement["state"]),
         AssignmentState(row["assignment_state"]),
         RepositoryState.BOUND,
     )

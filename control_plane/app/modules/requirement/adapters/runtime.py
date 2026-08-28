@@ -27,6 +27,63 @@ class V03RouteSnapshotCatalog:
             version=self._VERSION,
             snapshot_hash=f"sha256:{hashlib.sha256(canonical).hexdigest()}",
             required_capabilities=self._CAPABILITIES,
+            requirement_type=requirement_type,
+        )
+
+
+class V04RouteSnapshotCatalog:
+    """Code-owned V0.4 delivery routes frozen into each Requirement."""
+
+    _VERSION = 2
+    _CAPABILITIES = ("code.change",)
+    _STEPS = {
+        RequirementType.FEAT: (
+            "brainstorming",
+            "writing-plans",
+            "test-driven-development",
+            "verification-before-completion",
+            "requesting-code-review",
+        ),
+        RequirementType.FIX: (
+            "systematic-debugging",
+            "test-driven-development",
+            "verification-before-completion",
+            "requesting-code-review",
+        ),
+        RequirementType.REFACTOR: (
+            "writing-plans",
+            "test-driven-development",
+            "verification-before-completion",
+            "requesting-code-review",
+        ),
+        RequirementType.CHORE: (
+            "writing-plans",
+            "test-driven-development",
+            "verification-before-completion",
+            "requesting-code-review",
+        ),
+    }
+
+    def current(self, requirement_type: RequirementType) -> RouteSnapshot:
+        steps = self._STEPS[requirement_type]
+        payload = {
+            "requirementType": requirement_type.value,
+            "requiredCapabilities": list(self._CAPABILITIES),
+            "steps": list(steps),
+            "version": self._VERSION,
+        }
+        canonical = json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        return RouteSnapshot(
+            version=self._VERSION,
+            snapshot_hash=f"sha256:{hashlib.sha256(canonical).hexdigest()}",
+            required_capabilities=self._CAPABILITIES,
+            requirement_type=requirement_type,
+            steps=steps,
         )
 
 

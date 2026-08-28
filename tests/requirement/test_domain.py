@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
+from control_plane.app.modules.requirement.adapters import V04RouteSnapshotCatalog
 from control_plane.app.modules.requirement.domain import (
     AssignmentState,
     InvalidRequirementTransition,
@@ -56,20 +57,63 @@ def test_requirement_rejects_skipped_reopened_and_terminal_transitions(
 
 
 @pytest.mark.parametrize(
-    ("assignment", "repository", "expected"),
+    ("requirement", "assignment", "repository", "expected"),
     [
-        (AssignmentState.UNASSIGNED, RepositoryState.WAITING_REPOSITORY, WorkItemState.DRAFT),
-        (AssignmentState.UNASSIGNED, RepositoryState.BOUND, WorkItemState.DRAFT),
-        (AssignmentState.ASSIGNED, RepositoryState.WAITING_REPOSITORY, WorkItemState.DRAFT),
-        (AssignmentState.ASSIGNED, RepositoryState.BOUND, WorkItemState.READY),
+        (
+            RequirementState.PREPARING,
+            AssignmentState.ASSIGNED,
+            RepositoryState.BOUND,
+            WorkItemState.DRAFT,
+        ),
+        (
+            RequirementState.READY,
+            AssignmentState.UNASSIGNED,
+            RepositoryState.BOUND,
+            WorkItemState.DRAFT,
+        ),
+        (
+            RequirementState.READY,
+            AssignmentState.ASSIGNED,
+            RepositoryState.WAITING_REPOSITORY,
+            WorkItemState.DRAFT,
+        ),
+        (
+            RequirementState.READY,
+            AssignmentState.ASSIGNED,
+            RepositoryState.BOUND,
+            WorkItemState.READY,
+        ),
     ],
 )
-def test_work_item_is_ready_only_when_assignment_and_repository_are_ready(
+def test_work_item_is_ready_only_after_the_requirement_gate_and_local_guards_are_ready(
+    requirement: RequirementState,
     assignment: AssignmentState,
     repository: RepositoryState,
     expected: WorkItemState,
 ) -> None:
-    assert derive_work_item_state(assignment, repository) is expected
+    assert derive_work_item_state(requirement, assignment, repository) is expected
+
+
+def test_v04_route_snapshot_freezes_ordered_delivery_steps_and_capabilities() -> None:
+    catalog = V04RouteSnapshotCatalog()
+
+    feature = catalog.current(RequirementType.FEAT)
+    fix = catalog.current(RequirementType.FIX)
+
+    assert feature.version == 2
+    assert feature.requirement_type is RequirementType.FEAT
+    assert feature.required_capabilities == ("code.change",)
+    assert feature.steps == (
+        "brainstorming",
+        "writing-plans",
+        "test-driven-development",
+        "verification-before-completion",
+        "requesting-code-review",
+    )
+    assert feature.snapshot_hash.startswith("sha256:")
+    assert catalog.current(RequirementType.FEAT) == feature
+    assert fix.steps[0] == "systematic-debugging"
+    assert fix.snapshot_hash != feature.snapshot_hash
 
 
 def test_requirement_dto_is_an_immutable_domain_snapshot() -> None:
@@ -85,6 +129,11 @@ def test_requirement_dto_is_an_immutable_domain_snapshot() -> None:
         initial_repository_id="gitlab-project-1",
         route_snapshot_version=1,
         route_snapshot_hash="sha256:route-1",
+        route_snapshot={
+            "requirementType": "feat",
+            "requiredCapabilities": ["code.change"],
+            "version": 1,
+        },
         state=RequirementState.CREATED,
         record_state=RecordState.ACTIVE,
         requirement_version=1,

@@ -22,7 +22,9 @@ from control_plane.app.modules.requirement.domain import (
     RequirementDto,
     RequirementState,
     RequirementType,
+    SddArtifactVersionDto,
     SddBaselineDto,
+    WorkItemAssignmentDto,
     WorkItemDto,
     WorkItemState,
 )
@@ -55,6 +57,7 @@ def requirement_dto(row: Any) -> RequirementDto:
         initial_repository_id=row["initial_repository_id"],
         route_snapshot_version=row["route_snapshot_version"],
         route_snapshot_hash=row["route_snapshot_hash"],
+        route_snapshot=dict(row["route_snapshot"]),
         state=RequirementState(row["state"]),
         record_state=RecordState(row["record_state"]),
         requirement_version=row["requirement_version"],
@@ -105,6 +108,34 @@ def work_item_dto(row: Any) -> WorkItemDto:
         revision=row["revision"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+    )
+
+
+def work_item_assignment_dto(row: Any) -> WorkItemAssignmentDto:
+    return WorkItemAssignmentDto(
+        id=str(row["id"]),
+        work_item_id=str(row["work_item_id"]),
+        assignee_id=row["assignee_id"],
+        assigned_by=row["assigned_by"],
+        reason=row["reason"],
+        revision=row["revision"],
+        assigned_at=row["assigned_at"],
+        superseded_at=row["superseded_at"],
+    )
+
+
+def sdd_artifact_version_dto(row: Any) -> SddArtifactVersionDto:
+    return SddArtifactVersionDto(
+        artifact_id=str(row["artifact_id"]),
+        version=row["version"],
+        requirement_id=str(row["requirement_id"]),
+        sha256=row["sha256"],
+        state=row["state"],
+        media_type=row["media_type"],
+        trust=row["trust"],
+        content=row["content"],
+        created_by=row["created_by"],
+        created_at=row["created_at"],
     )
 
 

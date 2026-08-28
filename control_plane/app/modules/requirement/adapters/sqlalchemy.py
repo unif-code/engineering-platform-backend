@@ -98,12 +98,21 @@ class SqlAlchemyRequirementRepository:
         return result.rowcount == 1
 
     def insert_requirement(self, **values: Any) -> Any:
+        route_snapshot = values.get(
+            "route_snapshot",
+            {
+                "requirementType": values["type"],
+                "requiredCapabilities": ["code.change"],
+                "version": values["route_snapshot_version"],
+            },
+        )
         parameters = {
             **values,
             "acceptance_criteria": json.dumps(
                 values["acceptance_criteria"],
                 separators=(",", ":"),
             ),
+            "route_snapshot": json.dumps(route_snapshot, separators=(",", ":")),
         }
         return (
             self.db.execute(
@@ -111,12 +120,14 @@ class SqlAlchemyRequirementRepository:
                     "INSERT INTO requirement.requirement "
                     "(id, workspace_id, type, title, description, acceptance_criteria, "
                     "created_by, initial_repository_id, route_snapshot_version, "
-                    "route_snapshot_hash, state, record_state, requirement_version, "
+                    "route_snapshot_hash, route_snapshot, state, record_state, "
+                    "requirement_version, "
                     "required_work_item_set_version, required_work_item_set_hash, revision, "
                     "created_at, updated_at) VALUES "
                     "(:id, :workspace_id, :type, :title, :description, "
                     "CAST(:acceptance_criteria AS JSONB), :created_by, :initial_repository_id, "
-                    ":route_snapshot_version, :route_snapshot_hash, :state, :record_state, "
+                    ":route_snapshot_version, :route_snapshot_hash, "
+                    "CAST(:route_snapshot AS JSONB), :state, :record_state, "
                     ":requirement_version, :required_work_item_set_version, "
                     ":required_work_item_set_hash, :revision, :now, :now) RETURNING *"
                 ),
@@ -221,6 +232,136 @@ class SqlAlchemyRequirementRepository:
             self.db.execute(
                 text(f"SELECT * FROM requirement.work_item WHERE id=:id{suffix}"),
                 {"id": work_item_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def insert_sdd_artifact_version(self, **values: Any) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "INSERT INTO requirement.sdd_artifact_version "
+                    "(artifact_id, version, requirement_id, sha256, state, media_type, "
+                    "trust, content, created_by, created_at) VALUES "
+                    "(:artifact_id, :version, :requirement_id, :sha256, :state, "
+                    ":media_type, :trust, :content, :created_by, :now) RETURNING *"
+                ),
+                values,
+            )
+            .mappings()
+            .one()
+        )
+
+    def sdd_artifact_version(
+        self,
+        requirement_id: str,
+        artifact_id: str,
+        version: int,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "SELECT * FROM requirement.sdd_artifact_version "
+                    "WHERE requirement_id=:requirement_id "
+                    "AND artifact_id=:artifact_id AND version=:version"
+                ),
+                {
+                    "requirement_id": requirement_id,
+                    "artifact_id": artifact_id,
+                    "version": version,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def sdd_artifact_version_by_identity(self, artifact_id: str, version: int) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "SELECT * FROM requirement.sdd_artifact_version "
+                    "WHERE artifact_id=:artifact_id AND version=:version"
+                ),
+                {"artifact_id": artifact_id, "version": version},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def latest_sdd_artifact_version(
+        self,
+        requirement_id: str,
+        artifact_id: str,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "SELECT * FROM requirement.sdd_artifact_version "
+                    "WHERE requirement_id=:requirement_id AND artifact_id=:artifact_id "
+                    "ORDER BY version DESC LIMIT 1"
+                ),
+                {"requirement_id": requirement_id, "artifact_id": artifact_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def insert_work_item_assignment(self, **values: Any) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "INSERT INTO requirement.work_item_assignment "
+                    "(id, work_item_id, assignee_id, assigned_by, reason, revision, "
+                    "assigned_at) VALUES "
+                    "(:id, :work_item_id, :assignee_id, :assigned_by, :reason, :revision, "
+                    ":now) RETURNING *"
+                ),
+                values,
+            )
+            .mappings()
+            .one()
+        )
+
+    def current_work_item_assignment(
+        self,
+        work_item_id: str,
+        *,
+        for_update: bool = False,
+    ) -> Any:
+        suffix = " FOR UPDATE" if for_update else ""
+        return (
+            self.db.execute(
+                text(
+                    "SELECT * FROM requirement.work_item_assignment "
+                    "WHERE work_item_id=:work_item_id AND superseded_at IS NULL"
+                    f"{suffix}"
+                ),
+                {"work_item_id": work_item_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def supersede_work_item_assignment(
+        self,
+        assignment_id: str,
+        *,
+        expected_revision: int,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.work_item_assignment SET superseded_at=:now "
+                    "WHERE id=:id AND revision=:expected_revision "
+                    "AND superseded_at IS NULL RETURNING *"
+                ),
+                {
+                    "id": assignment_id,
+                    "expected_revision": expected_revision,
+                    "now": now,
+                },
             )
             .mappings()
             .one_or_none()
