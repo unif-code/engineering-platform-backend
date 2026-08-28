@@ -53,6 +53,9 @@ from control_plane.app.modules.requirement.application import (
     list_requirements as _list_requirements,
 )
 from control_plane.app.modules.requirement.application import (
+    reassign_baseline_gate as _reassign_baseline_gate,
+)
+from control_plane.app.modules.requirement.application import (
     record_external_merge_drift as _record_external_merge_drift,
 )
 from control_plane.app.modules.requirement.application import (
@@ -108,9 +111,11 @@ from control_plane.app.modules.requirement.domain import (
     DecisionOutcome,
     ExecutorType,
     GateAlreadyDecided,
+    GateAssignmentConflict,
     GateAssignmentDto,
     GateInstanceDto,
     GateNotFound,
+    GateReassignmentResult,
     GateReviewerIneligible,
     GateReviewerMismatch,
     GateState,
@@ -145,6 +150,7 @@ from control_plane.app.modules.requirement.domain import (
     SddBaselineDto,
     SddBaselineNotFound,
     StaleBaselineSubject,
+    StaleGateRevision,
     StaleRequirementRevision,
     StaleWorkItemRevision,
     WorkItemAssigneeIneligible,
@@ -718,6 +724,31 @@ def submit_baseline_confirmation(
     )
 
 
+def reassign_baseline_gate(
+    db: Connection,
+    *,
+    requirement_id: str,
+    gate_id: str,
+    reviewer_id: str,
+    reason: str,
+    expected_gate_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    dependencies: RequirementDependencies,
+) -> GateReassignmentResult:
+    return _reassign_baseline_gate(
+        dependencies.repository_factory(db),
+        requirement_id=requirement_id,
+        gate_id=gate_id,
+        reviewer_id=reviewer_id,
+        reason=reason,
+        expected_gate_revision=expected_gate_revision,
+        actor=actor,
+        idempotency_key=idempotency_key,
+        dependencies=dependencies,
+    )
+
+
 def decide_baseline(
     db: Connection,
     *,
@@ -760,6 +791,8 @@ __all__ = [
     "ExecutorType",
     "GateAlreadyDecided",
     "GateAssignmentDto",
+    "GateAssignmentConflict",
+    "GateReassignmentResult",
     "GateInstanceDto",
     "GateNotFound",
     "GatePolicySnapshot",
@@ -799,6 +832,7 @@ __all__ = [
     "SddArtifactVersionDto",
     "SddBaselineNotFound",
     "StaleBaselineSubject",
+    "StaleGateRevision",
     "StaleRequirementRevision",
     "StaleWorkItemRevision",
     "WorkItemDto",
@@ -828,6 +862,7 @@ __all__ = [
     "list_requirements",
     "record_repository_binding",
     "record_repository_binding_blocked",
+    "reassign_baseline_gate",
     "record_external_merge_drift",
     "record_integration_delivery_blocked",
     "record_integration_merged",

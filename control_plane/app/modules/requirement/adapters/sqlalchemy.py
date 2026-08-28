@@ -957,6 +957,63 @@ class SqlAlchemyRequirementRepository:
             .one_or_none()
         )
 
+    def current_work_item_assignments(self, requirement_id: str) -> list[Any]:
+        return list(
+            self.db.execute(
+                text(
+                    "SELECT assignment.* FROM requirement.work_item_assignment AS assignment "
+                    "JOIN requirement.work_item AS item ON item.id=assignment.work_item_id "
+                    "WHERE item.requirement_id=:requirement_id "
+                    "AND assignment.superseded_at IS NULL "
+                    "ORDER BY item.created_at, item.id"
+                ),
+                {"requirement_id": requirement_id},
+            ).mappings()
+        )
+
+    def supersede_gate_assignment(
+        self,
+        assignment_id: str,
+        *,
+        expected_revision: int,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.gate_assignment SET superseded_at=:now "
+                    "WHERE id=:id AND revision=:expected_revision "
+                    "AND superseded_at IS NULL RETURNING *"
+                ),
+                {
+                    "id": assignment_id,
+                    "expected_revision": expected_revision,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def reassign_gate(
+        self,
+        gate_id: str,
+        *,
+        expected_revision: int,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.gate_instance SET revision=revision + 1 "
+                    "WHERE id=:id AND revision=:expected_revision AND state='OPEN' "
+                    "RETURNING *"
+                ),
+                {"id": gate_id, "expected_revision": expected_revision},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
     def insert_decision(self, **values: Any) -> Any:
         return (
             self.db.execute(
@@ -971,6 +1028,16 @@ class SqlAlchemyRequirementRepository:
             )
             .mappings()
             .one()
+        )
+
+    def decision_by_gate_id(self, gate_id: str) -> Any:
+        return (
+            self.db.execute(
+                text("SELECT * FROM requirement.decision WHERE gate_instance_id=:gate_id"),
+                {"gate_id": gate_id},
+            )
+            .mappings()
+            .one_or_none()
         )
 
     def close_gate(

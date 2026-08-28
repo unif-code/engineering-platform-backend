@@ -94,6 +94,14 @@ class GateReviewerIneligible(RequirementError):
     pass
 
 
+class StaleGateRevision(RequirementError):
+    pass
+
+
+class GateAssignmentConflict(RequirementError):
+    pass
+
+
 _FIRST_BATCH_TRANSITIONS = {
     RequirementState.CREATED: {RequirementState.PREPARING, RequirementState.CANCELED},
     RequirementState.PREPARING: {

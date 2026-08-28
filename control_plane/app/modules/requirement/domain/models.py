@@ -284,13 +284,6 @@ class CreateRequirementResult(BaseModel):
     work_item: WorkItemDto
 
 
-class RequirementDetailsDto(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    requirement: RequirementDto
-    work_items: tuple[WorkItemDto, ...]
-
-
 class RequirementPage(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -381,3 +374,22 @@ class BaselineDecisionResult(BaseModel):
     requirement: RequirementDto
     gate: GateInstanceDto
     decision: DecisionDto
+
+
+class GateReassignmentResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    gate: GateInstanceDto
+    assignment: GateAssignmentDto
+
+
+class RequirementDetailsDto(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    requirement: RequirementDto
+    work_items: tuple[WorkItemDto, ...]
+    work_item_assignments: tuple[WorkItemAssignmentDto, ...] = ()
+    current_sdd_baseline: SddBaselineDto | None = None
+    current_gate: GateInstanceDto | None = None
+    current_gate_assignment: GateAssignmentDto | None = None
+    current_decision: DecisionDto | None = None

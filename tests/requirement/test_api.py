@@ -22,7 +22,9 @@ from control_plane.app.modules.requirement import (
 )
 from control_plane.app.modules.requirement.adapters import (
     ComposedAutomaticAssignmentGuard,
+    ComposedGateReviewerGuard,
     SqlAlchemySddArtifactReader,
+    WorkspaceOwnerGatePolicy,
 )
 from control_plane.app.modules.requirement.api import (
     RequirementHttpRuntime,
@@ -92,8 +94,8 @@ def test_bootstrap_exposes_only_v03_requirement_endpoints_with_fail_closed_depen
         required_capabilities=route.required_capabilities,
     )
     assert isinstance(dependencies.artifacts, SqlAlchemySddArtifactReader)
-    assert dependencies.gate_policies is None
-    assert dependencies.reviewer_guard is None
+    assert isinstance(dependencies.gate_policies, WorkspaceOwnerGatePolicy)
+    assert isinstance(dependencies.reviewer_guard, ComposedGateReviewerGuard)
 
 
 def _dormant_requirement_app() -> FastAPI:

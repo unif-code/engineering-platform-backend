@@ -25,9 +25,12 @@ from control_plane.app.modules.requirement import (
     RequirementDto,
     RequirementState,
     StaleBaselineSubject,
+    StaleGateRevision,
     StaleRequirementRevision,
     WorkItemState,
     decide_baseline,
+    get_requirement,
+    reassign_baseline_gate,
     record_repository_binding,
     register_sdd_baseline,
     start_requirement_preparation,
@@ -60,10 +63,21 @@ class StaticArtifacts:
         )
 
 
+@dataclass(frozen=True, slots=True)
 class StaticGatePolicies:
+    version: int = 7
+    default_reviewer_id: str = "reviewer-1"
+    policy_code: str = "REQUIREMENT_BASELINE_WORKSPACE_OWNER"
+    snapshot_hash: str = "sha256:bdfadcc2d2c32fdb9fdf327d45a231cd2e5cb9bf3028f4e09d527fdb50dd8ea2"
+
     def requirement_baseline(self, *, workspace_id: str) -> GatePolicySnapshot:
         del workspace_id
-        return GatePolicySnapshot(version=7, default_reviewer_id="reviewer-1")
+        return GatePolicySnapshot(
+            version=self.version,
+            default_reviewer_id=self.default_reviewer_id,
+            policy_code=self.policy_code,
+            snapshot_hash=self.snapshot_hash,
+        )
 
 
 class FailingArtifacts:
@@ -181,6 +195,48 @@ def test_approved_sdd_gate_advances_requirement_to_ready_without_readying_work_i
     assert work_item == ("DRAFT", "WAITING_REPOSITORY")
 
 
+@pytest.mark.parametrize(
+    "gate_policies",
+    [
+        StaticGatePolicies(policy_code=" "),
+        StaticGatePolicies(snapshot_hash="sha256:not-a-canonical-digest"),
+    ],
+)
+def test_invalid_gate_policy_snapshot_fails_closed_before_gate_is_saved(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+    gate_policies: StaticGatePolicies,
+) -> None:
+    created, prepared = _prepare(isolated_requirement_database)
+    dependencies = replace(_gate_dependencies(), gate_policies=gate_policies)
+    with isolated_requirement_database.runtime.begin() as db:
+        baseline = register_sdd_baseline(
+            db,
+            requirement_id=created.requirement.id,
+            artifact_id="sdd-1",
+            artifact_version="version-1",
+            expected_revision=prepared.revision,
+            actor=Actor("employee-1"),
+            idempotency_key="invalid-policy-register",
+            dependencies=dependencies,
+        )
+
+    with pytest.raises(RequirementDependencyUnavailable):
+        with isolated_requirement_database.runtime.begin() as db:
+            submit_baseline_confirmation(
+                db,
+                requirement_id=created.requirement.id,
+                sdd_baseline_id=baseline.baseline.id,
+                expected_revision=baseline.requirement.revision,
+                actor=Actor("employee-1"),
+                idempotency_key=f"invalid-policy-{gate_policies.policy_code}",
+                dependencies=dependencies,
+            )
+
+    with isolated_requirement_database.owner.connect() as db:
+        gate_count = db.execute(text("SELECT count(*) FROM requirement.gate_instance")).scalar_one()
+    assert gate_count == 0
+
+
 def test_approved_sdd_gate_promotes_only_assigned_and_bound_work_item(
     isolated_requirement_database: IsolatedRequirementDatabase,
 ) -> None:
@@ -239,6 +295,131 @@ def test_approved_sdd_gate_promotes_only_assigned_and_bound_work_item(
             {"id": created.work_item.id},
         ).one()
     assert work_item == ("READY", bound.revision + 1)
+
+
+def test_gate_reassignment_supersedes_history_and_only_current_reviewer_can_decide(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    created, prepared = _prepare(isolated_requirement_database)
+    dependencies = _gate_dependencies()
+    with isolated_requirement_database.runtime.begin() as db:
+        baseline = register_sdd_baseline(
+            db,
+            requirement_id=created.requirement.id,
+            artifact_id="sdd-1",
+            artifact_version="version-1",
+            expected_revision=prepared.revision,
+            actor=Actor("employee-1"),
+            idempotency_key="gate-reassign-register",
+            dependencies=dependencies,
+        )
+    with isolated_requirement_database.runtime.begin() as db:
+        confirmation = submit_baseline_confirmation(
+            db,
+            requirement_id=created.requirement.id,
+            sdd_baseline_id=baseline.baseline.id,
+            expected_revision=baseline.requirement.revision,
+            actor=Actor("employee-1"),
+            idempotency_key="gate-reassign-submit",
+            dependencies=dependencies,
+        )
+    with isolated_requirement_database.runtime.begin() as db:
+        reassigned = reassign_baseline_gate(
+            db,
+            requirement_id=created.requirement.id,
+            gate_id=confirmation.gate.id,
+            reviewer_id="reviewer-2",
+            reason="Current owner delegated this review.",
+            expected_gate_revision=confirmation.gate.revision,
+            actor=Actor("reviewer-1"),
+            idempotency_key="gate-reassign-reviewer-2",
+            dependencies=dependencies,
+        )
+    with isolated_requirement_database.runtime.begin() as db:
+        replay = reassign_baseline_gate(
+            db,
+            requirement_id=created.requirement.id,
+            gate_id=confirmation.gate.id,
+            reviewer_id="reviewer-2",
+            reason="Current owner delegated this review.",
+            expected_gate_revision=confirmation.gate.revision,
+            actor=Actor("reviewer-1"),
+            idempotency_key="gate-reassign-reviewer-2",
+            dependencies=dependencies,
+        )
+    assert replay == reassigned
+    assert reassigned.gate.revision == confirmation.gate.revision + 1
+    assert reassigned.assignment.default_reviewer_id == "reviewer-1"
+    assert reassigned.assignment.current_reviewer_id == "reviewer-2"
+    assert reassigned.assignment.revision == 2
+
+    with isolated_requirement_database.runtime.begin() as db:
+        with pytest.raises(StaleGateRevision):
+            reassign_baseline_gate(
+                db,
+                requirement_id=created.requirement.id,
+                gate_id=confirmation.gate.id,
+                reviewer_id="reviewer-3",
+                reason="Stale reassignment.",
+                expected_gate_revision=confirmation.gate.revision,
+                actor=Actor("reviewer-1"),
+                idempotency_key="gate-reassign-stale",
+                dependencies=dependencies,
+            )
+    with isolated_requirement_database.runtime.begin() as db:
+        with pytest.raises(GateReviewerMismatch):
+            decide_baseline(
+                db,
+                requirement_id=created.requirement.id,
+                gate_id=confirmation.gate.id,
+                outcome=DecisionOutcome.APPROVED,
+                reason="Old assignee must no longer decide.",
+                expected_revision=confirmation.requirement.revision,
+                actor=Actor("reviewer-1"),
+                idempotency_key="gate-reassign-old-reviewer",
+                dependencies=dependencies,
+            )
+    with isolated_requirement_database.runtime.begin() as db:
+        decided = decide_baseline(
+            db,
+            requirement_id=created.requirement.id,
+            gate_id=confirmation.gate.id,
+            outcome=DecisionOutcome.APPROVED,
+            reason="Current assignee approved.",
+            expected_revision=confirmation.requirement.revision,
+            actor=Actor("reviewer-2"),
+            idempotency_key="gate-reassign-current-reviewer",
+            dependencies=dependencies,
+        )
+    with isolated_requirement_database.owner.connect() as db:
+        history = db.execute(
+            text(
+                "SELECT current_reviewer_id, revision, superseded_at IS NULL "
+                "FROM requirement.gate_assignment "
+                "WHERE gate_instance_id=:id ORDER BY revision"
+            ),
+            {"id": confirmation.gate.id},
+        ).all()
+    with isolated_requirement_database.runtime.connect() as db:
+        details = get_requirement(
+            db,
+            requirement_id=created.requirement.id,
+            dependencies=dependencies,
+        )
+    assert decided.requirement.state is RequirementState.READY
+    assert [tuple(row) for row in history] == [
+        ("reviewer-1", 1, False),
+        ("reviewer-2", 2, True),
+    ]
+    assert details.current_sdd_baseline is not None
+    assert details.current_sdd_baseline.id == baseline.baseline.id
+    assert details.current_gate is not None
+    assert details.current_gate.id == confirmation.gate.id
+    assert details.current_gate_assignment is not None
+    assert details.current_gate_assignment.current_reviewer_id == "reviewer-2"
+    assert details.current_decision is not None
+    assert details.current_decision.reviewer_id == "reviewer-2"
+    assert [item.assignee_id for item in details.work_item_assignments] == ["employee-1"]
 
 
 @pytest.mark.parametrize(

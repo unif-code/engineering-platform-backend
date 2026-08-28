@@ -27,7 +27,9 @@ from control_plane.app.modules.requirement.domain import (
     DecisionOutcome,
     ExecutorType,
     GateAlreadyDecided,
+    GateAssignmentConflict,
     GateNotFound,
+    GateReassignmentResult,
     GateReviewerIneligible,
     GateReviewerMismatch,
     GateState,
@@ -46,6 +48,7 @@ from control_plane.app.modules.requirement.domain import (
     RequirementType,
     SddBaselineNotFound,
     StaleBaselineSubject,
+    StaleGateRevision,
     StaleRequirementRevision,
     StaleWorkItemRevision,
     WorkItemDto,
@@ -86,6 +89,16 @@ def _normalized_text(value: str, *, field: str) -> str:
     if not normalized:
         raise InvalidRequirementInput(f"{field} is required")
     return normalized
+
+
+def _is_canonical_sha256(value: str) -> bool:
+    if not value.startswith("sha256:") or len(value) != 71:
+        return False
+    try:
+        int(value.removeprefix("sha256:"), 16)
+    except ValueError:
+        return False
+    return True
 
 
 def _work_item_set_hash(work_item_id: str) -> str:
@@ -939,7 +952,12 @@ def _submit_baseline_confirmation_once(
         raise
     except Exception as error:
         raise RequirementDependencyUnavailable("Gate policy service failed closed") from error
-    if policy.version < 1 or not policy.default_reviewer_id.strip():
+    if (
+        policy.version < 1
+        or not policy.default_reviewer_id.strip()
+        or not policy.policy_code.strip()
+        or not _is_canonical_sha256(policy.snapshot_hash)
+    ):
         raise RequirementDependencyUnavailable("Gate policy snapshot is invalid")
     now = dependencies.clock.now()
     gate = repository.insert_gate(
@@ -1076,6 +1094,168 @@ def _decision_target(outcome: DecisionOutcome) -> RequirementState:
     if outcome is DecisionOutcome.CHANGES_REQUESTED:
         return RequirementState.PREPARING
     return RequirementState.CANCELED
+
+
+def _reassign_baseline_gate_once(
+    repository: RequirementRepository,
+    *,
+    requirement_id: str,
+    gate_id: str,
+    reviewer_id: str,
+    reason: str,
+    expected_gate_revision: int,
+    actor: Any,
+    dependencies: RequirementDependencies,
+) -> GateReassignmentResult:
+    requirement = repository.requirement_by_id(requirement_id, for_update=True)
+    if requirement is None:
+        raise RequirementNotFound(requirement_id)
+    gate = repository.gate_by_id(gate_id, for_update=True)
+    if gate is None or str(gate["requirement_id"]) != requirement_id:
+        raise GateNotFound(gate_id)
+    if gate["revision"] != expected_gate_revision:
+        raise StaleGateRevision(gate_id)
+    if GateState(gate["state"]) is not GateState.OPEN:
+        raise GateAlreadyDecided(gate_id)
+    current = repository.current_gate_assignment(gate_id, for_update=True)
+    if current is None:
+        raise RequirementDependencyUnavailable("Gate has no current reviewer assignment")
+    candidate_id = _normalized_text(reviewer_id, field="reviewer id")
+    normalized_reason = _normalized_text(reason, field="reassignment reason")
+    if current["current_reviewer_id"] == candidate_id:
+        raise GateAssignmentConflict("Candidate is already the current reviewer")
+    reviewer_guard = dependencies.reviewer_guard
+    if reviewer_guard is None:
+        raise RequirementDependencyUnavailable("Reviewer eligibility service is unavailable")
+    try:
+        candidate_eligible = reviewer_guard.can_decide(
+            actor_id=candidate_id,
+            workspace_id=str(requirement["workspace_id"]),
+        )
+    except RequirementError:
+        raise
+    except Exception as error:
+        raise RequirementDependencyUnavailable("Reviewer guard failed closed") from error
+    if not candidate_eligible:
+        raise GateReviewerIneligible(candidate_id)
+
+    stable_actor = actor_id(actor)
+    now = dependencies.clock.now()
+    superseded = repository.supersede_gate_assignment(
+        str(current["id"]),
+        expected_revision=current["revision"],
+        now=now,
+    )
+    if superseded is None:
+        raise StaleGateRevision(gate_id)
+    assignment = repository.insert_gate_assignment(
+        id=str(dependencies.random.uuid4()),
+        gate_instance_id=gate_id,
+        default_reviewer_id=current["default_reviewer_id"],
+        current_reviewer_id=candidate_id,
+        revision=current["revision"] + 1,
+        now=now,
+    )
+    updated_gate = repository.reassign_gate(
+        gate_id,
+        expected_revision=expected_gate_revision,
+    )
+    if updated_gate is None:
+        raise StaleGateRevision(gate_id)
+    audit(
+        repository,
+        dependencies=dependencies,
+        actor=stable_actor,
+        action="requirement.baseline_gate.reassigned",
+        target_type="GATE_INSTANCE",
+        target_id=gate_id,
+        reason=(
+            f"reviewer={candidate_id}; assignmentRevision={assignment['revision']}; "
+            f"gateRevision={updated_gate['revision']}; reason={normalized_reason}"
+        ),
+    )
+    return GateReassignmentResult(
+        gate=gate_instance_dto(updated_gate),
+        assignment=gate_assignment_dto(assignment),
+    )
+
+
+def reassign_baseline_gate(
+    repository: RequirementRepository,
+    *,
+    requirement_id: str,
+    gate_id: str,
+    reviewer_id: str,
+    reason: str,
+    expected_gate_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    dependencies: RequirementDependencies,
+) -> GateReassignmentResult:
+    stable_actor = actor_id(actor)
+    material = dependencies.secret_manager.load()
+    body: dict[str, object] = {
+        "requirementId": requirement_id,
+        "gateId": gate_id,
+        "reviewerId": reviewer_id,
+        "reason": reason,
+        "expectedGateRevision": expected_gate_revision,
+    }
+    fingerprint = canonical_request_fingerprint(
+        operation="requirement_reassign_baseline_gate",
+        method="COMMAND",
+        path="requirement.reassign-baseline-gate",
+        body=body,
+        idempotency_sealing_key=material.idempotency_sealing_key,
+    )
+
+    def command() -> IdempotentResponse:
+        try:
+            result = _reassign_baseline_gate_once(
+                repository,
+                requirement_id=requirement_id,
+                gate_id=gate_id,
+                reviewer_id=reviewer_id,
+                reason=reason,
+                expected_gate_revision=expected_gate_revision,
+                actor=actor,
+                dependencies=dependencies,
+            )
+        except RequirementError as error:
+            _audit_denial(
+                dependencies=dependencies,
+                actor=stable_actor,
+                action="requirement.baseline_gate.reassign",
+                target_type="GATE_INSTANCE",
+                target_id=gate_id,
+                error=error,
+            )
+            raise
+        return IdempotentResponse(status_code=200, body=result.model_dump(mode="json"))
+
+    try:
+        execution = execute_idempotent(
+            repository,
+            actor=stable_actor,
+            operation="requirement_reassign_baseline_gate",
+            key=idempotency_key,
+            fingerprint=fingerprint,
+            command=command,
+            now=dependencies.clock.now,
+            new_id=dependencies.random.uuid4,
+            idempotency_sealing_key=material.idempotency_sealing_key,
+        )
+    except IdempotencyConflict as error:
+        _audit_denial(
+            dependencies=dependencies,
+            actor=stable_actor,
+            action="requirement.baseline_gate.reassign",
+            target_type="GATE_INSTANCE",
+            target_id=gate_id,
+            error=error,
+        )
+        raise
+    return GateReassignmentResult.model_validate(execution.response.body)
 
 
 def _decide_baseline_once(

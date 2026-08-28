@@ -245,7 +245,26 @@ class RequirementRepository(Protocol):
 
     def current_gate_assignment(self, gate_id: str, *, for_update: bool = False) -> Any: ...
 
+    def supersede_gate_assignment(
+        self,
+        assignment_id: str,
+        *,
+        expected_revision: int,
+        now: datetime,
+    ) -> Any: ...
+
+    def current_work_item_assignments(self, requirement_id: str) -> list[Any]: ...
+
+    def reassign_gate(
+        self,
+        gate_id: str,
+        *,
+        expected_revision: int,
+    ) -> Any: ...
+
     def insert_decision(self, **values: Any) -> Any: ...
+
+    def decision_by_gate_id(self, gate_id: str) -> Any: ...
 
     def close_gate(
         self,

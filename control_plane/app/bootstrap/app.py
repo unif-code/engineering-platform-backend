@@ -79,9 +79,11 @@ from control_plane.app.modules.organization.api import (
 from control_plane.app.modules.requirement import RequirementDependencies
 from control_plane.app.modules.requirement.adapters import (
     ComposedAutomaticAssignmentGuard,
+    ComposedGateReviewerGuard,
     SqlAlchemyRequirementRepository,
     SqlAlchemySddArtifactReader,
     V03RouteSnapshotCatalog,
+    WorkspaceOwnerGatePolicy,
 )
 from control_plane.app.modules.requirement.api import (
     RequirementHttpRuntime,
@@ -328,8 +330,18 @@ def requirement_dependencies() -> RequirementDependencies:
         ),
         secret_manager=FileSecretManager(SecuritySettings()),
         artifacts=SqlAlchemySddArtifactReader(requirement_runtime_engine()),
-        gate_policies=None,
-        reviewer_guard=None,
+        gate_policies=WorkspaceOwnerGatePolicy(
+            workspace_engine=workspace_runtime_engine(),
+            workspace_dependencies=workspace_dependencies(),
+        ),
+        reviewer_guard=ComposedGateReviewerGuard(
+            identity_engine=identity_runtime_engine(),
+            identity_dependencies=identity_dependencies(),
+            workspace_engine=workspace_runtime_engine(),
+            workspace_dependencies=workspace_dependencies(),
+            authorization_engine=authorization_runtime_engine(),
+            authorization_dependencies=authorization_dependencies(),
+        ),
     )
 
 
