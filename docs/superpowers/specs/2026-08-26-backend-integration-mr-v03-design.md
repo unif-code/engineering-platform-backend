@@ -1,7 +1,9 @@
-# V0.3 Human Integration MR Foundation · 后端设计
+# V0.5 Human Integration MR Foundation · 后端设计
+
+> **路线图重分类（2026-08-28）**：文件名保留原 V0.3 历史，但本批按新权威路线图归 V0.5 Human Integration Delivery。Artifact、IntegrationBaselineEvidence、Acceptance 与 Formal MR 仍不在本批，进入 V0.6；Chat/Model 进入 V0.7，Agent/Sandbox 进入 V0.8～V0.12。
 
 - 日期：2026-08-26
-- 状态：待用户复核，尚未进入实施计划与 TDD
+- 状态：历史实现设计；对应 Human Integration MR 代码已合入后端 `main`，不代表 V0.5 Release 已验收
 - 仓库：`engineering-platform-backend`
 - 目标分支：`codex/backend-integration-mr-v0.3`
 - 代码基线：`main@f03f95277acdc3fc8b50cba0e28ad136afb672e5`
@@ -43,7 +45,7 @@ Requirement READY / WorkItem READY
   `IntegrationBaselineEvidence`、Selection 或 Acceptance。
 - Formal MR、Formal Review、合并 `main` 或删除任务分支。
 - Agent Commit Push、Credential Broker、Attempt、Sandbox、Chat/Model、前端与 GitOps。
-- 真实 GitLab 凭据配置、环境 Smoke Test、Capability 激活、版本 tag 或 V0.3 Release Gate。
+- 真实 GitLab 凭据配置、环境 Smoke Test、Capability 激活、版本 tag 或 V0.5 Release Gate。
 
 ## 架构划分与方案选择
 

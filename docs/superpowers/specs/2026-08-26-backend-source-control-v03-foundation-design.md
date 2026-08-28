@@ -1,7 +1,9 @@
 # V0.3 Source Control Foundation · 后端设计
 
+> **路线图重分类（2026-08-28）**：本批继续归 V0.3 Requirement & Branch Foundation；V0.3 Release 还要求最小前端和真实纵向旅程。本文件的 MR、Artifact、Acceptance、Chat/Model、Agent 与 GitOps 排除项继续有效，分别由 V0.5～V0.17 后续版本承担。
+
 - 日期：2026-08-26
-- 状态：待用户确认，尚未进入 TDD 实现
+- 状态：历史实现设计；对应 Source Control Foundation 已合入后端 `main`，不代表 V0.3 Release 已验收
 - 仓库：`engineering-platform-backend`
 - 目标分支：`codex/backend-source-control-v0.3`
 - 代码基线：`main@631979b759944b7a95bc3cd380a573fbfc4b6aab`

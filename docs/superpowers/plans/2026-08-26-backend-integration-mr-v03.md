@@ -1,4 +1,6 @@
-# V0.3 Human Integration MR Foundation Implementation Plan
+# V0.5 Human Integration MR Foundation Implementation Plan
+
+> **Roadmap Reclassification（2026-08-28）**：文件名保留原 V0.3 历史；本计划现归 V0.5 Human Integration Delivery。Artifact/Evidence、Acceptance 与 Formal MR 属于 V0.6，本计划保留为已执行后端技术记录。
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
