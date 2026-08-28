@@ -7,7 +7,9 @@ from control_plane.app.modules.requirement.api.routes import (
     REQUIREMENT_READ_CAPABILITY,
     WORK_ITEM_ASSIGN_CAPABILITY,
     RequirementHttpRuntime,
-    create_requirement_router,
+    create_requirement_baseline_router,
+    create_requirement_delivery_router,
+    create_requirement_foundation_router,
 )
 
 __all__ = [
@@ -17,5 +19,7 @@ __all__ = [
     "REQUIREMENT_READ_CAPABILITY",
     "WORK_ITEM_ASSIGN_CAPABILITY",
     "RequirementHttpRuntime",
-    "create_requirement_router",
+    "create_requirement_baseline_router",
+    "create_requirement_delivery_router",
+    "create_requirement_foundation_router",
 ]

@@ -102,6 +102,15 @@ class WorkspaceRepositoryDto(BaseModel):
     updated_at: AwareDatetime
 
 
+class AuthorizedRepositorySummaryDto(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    repository_id: NonEmptyStr
+    provider: Literal["GITLAB"]
+    project_path: NonEmptyStr
+    default_branch: Literal["main"]
+
+
 class BindingRequestEnvelope(BaseModel):
     model_config = ConfigDict(frozen=True)
 

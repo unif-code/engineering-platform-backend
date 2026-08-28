@@ -58,6 +58,31 @@ class SqlAlchemySourceControlRepository:
             .one_or_none()
         )
 
+    def authorized_repositories(self, workspace_id: str) -> list[Any]:
+        return list(
+            self.db.execute(
+                text(
+                    "SELECT id, provider, project_path, default_branch "
+                    "FROM source_control.workspace_repository "
+                    "WHERE workspace_id=:workspace_id AND status='AUTHORIZED' "
+                    "ORDER BY project_path, id"
+                ),
+                {"workspace_id": workspace_id},
+            ).mappings()
+        )
+
+    def authorized_repository_runtime_references(self) -> list[Any]:
+        return list(
+            self.db.execute(
+                text(
+                    "SELECT id, connection_ref, credential_secret_ref, "
+                    "webhook_signing_secret_ref "
+                    "FROM source_control.workspace_repository "
+                    "WHERE status='AUTHORIZED' ORDER BY id"
+                )
+            ).mappings()
+        )
+
     def remove_workspace_repository(
         self,
         repository_id: str,

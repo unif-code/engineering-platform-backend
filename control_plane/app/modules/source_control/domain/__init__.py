@@ -10,6 +10,7 @@ from control_plane.app.modules.source_control.domain.integration import (
     merge_effect_subject,
 )
 from control_plane.app.modules.source_control.domain.models import (
+    AuthorizedRepositorySummaryDto,
     BindingRequestEnvelope,
     BindingRequestInboxDto,
     CreateIntegrationMergeRequestEffectPayload,
@@ -56,6 +57,7 @@ from control_plane.app.modules.source_control.domain.transitions import (
 )
 
 __all__ = [
+    "AuthorizedRepositorySummaryDto",
     "BindingRequestEnvelope",
     "BindingRequestInboxDto",
     "BindingRequestMessageConflict",

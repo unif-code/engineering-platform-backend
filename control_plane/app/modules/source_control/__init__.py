@@ -1,5 +1,7 @@
 """Public Source Control facade; other modules must not import internals."""
 
+from sqlalchemy import Connection
+
 from control_plane.app.modules.source_control.application import (
     ProcessIntegrationRequestResult,
     SourceControlDependencies,
@@ -21,7 +23,14 @@ from control_plane.app.modules.source_control.application import (
     remove_workspace_repository,
     verify_gitlab_standard_webhook,
 )
+from control_plane.app.modules.source_control.application import (
+    list_authorized_repositories as _list_authorized_repositories,
+)
+from control_plane.app.modules.source_control.application import (
+    validate_authorized_repository_runtime as _validate_authorized_repository_runtime,
+)
 from control_plane.app.modules.source_control.domain import (
+    AuthorizedRepositorySummaryDto,
     BindingRequestEnvelope,
     BindingRequestInboxDto,
     BindingRequestMessageConflict,
@@ -64,8 +73,37 @@ from control_plane.app.modules.source_control.domain import (
     build_task_branch_name,
     transition_effect,
 )
+from control_plane.app.modules.source_control.ports import SecretReferencePort
+
+
+def list_authorized_repositories(
+    db: Connection,
+    *,
+    workspace_id: str,
+    dependencies: SourceControlDependencies,
+) -> tuple[AuthorizedRepositorySummaryDto, ...]:
+    return _list_authorized_repositories(
+        dependencies.repository_factory(db),
+        workspace_id=workspace_id,
+    )
+
+
+def validate_authorized_repository_runtime(
+    db: Connection,
+    *,
+    dependencies: SourceControlDependencies,
+    secrets: SecretReferencePort,
+    connection_ref: str,
+) -> None:
+    _validate_authorized_repository_runtime(
+        dependencies.repository_factory(db),
+        secrets=secrets,
+        connection_ref=connection_ref,
+    )
+
 
 __all__ = [
+    "AuthorizedRepositorySummaryDto",
     "BindingRequestEnvelope",
     "BindingRequestInboxDto",
     "BindingRequestMessageConflict",
@@ -112,6 +150,7 @@ __all__ = [
     "build_task_branch_name",
     "get_repository_branch_binding",
     "ingest_signed_gitlab_webhook",
+    "list_authorized_repositories",
     "process_binding_request",
     "process_due_source_control_inboxes",
     "process_integration_merge_request",
@@ -125,5 +164,6 @@ __all__ = [
     "relay_due_source_control_requests",
     "remove_workspace_repository",
     "transition_effect",
+    "validate_authorized_repository_runtime",
     "verify_gitlab_standard_webhook",
 ]

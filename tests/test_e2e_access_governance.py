@@ -11,6 +11,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 from uuid import uuid4
 
+import httpx
 import pyotp
 import pytest
 from fastapi.testclient import TestClient
@@ -19,9 +20,15 @@ from sqlalchemy.engine import URL
 
 import control_plane.app.bootstrap.app as bootstrap
 from control_plane.app import __version__
+from control_plane.app.bootstrap.source_control_runtime import (
+    SourceControlRuntimeCollaborators,
+    build_source_control_runtime,
+)
 from control_plane.app.modules.identity import validate_session
+from control_plane.app.modules.source_control.adapters import SourceControlDevSettings
 from control_plane.app.shared.db.settings import DbSettings
-from control_plane.tools import bootstrap_admin
+from control_plane.tools import bootstrap_admin, source_control_repository
+from control_plane.tools.source_control_worker import run_worker_once
 from tests.integration_database import parse_database_url, required_engine
 
 pytestmark = pytest.mark.integration
@@ -151,6 +158,13 @@ def e2e_runtime(
             ),
             "requirement_rw",
         ),
+        "source_control": (
+            parse_database_url(
+                settings.source_control_database_url,
+                setting_name="SOURCE_CONTROL_DATABASE_URL",
+            ),
+            "source_control_rw",
+        ),
     }
     with ExitStack() as stack:
         engines = {
@@ -182,6 +196,11 @@ def e2e_runtime(
             "requirement_runtime_engine",
             lambda: engines["requirement"],
         )
+        monkeypatch.setattr(
+            bootstrap,
+            "source_control_query_runtime_engine",
+            lambda: engines["source_control"],
+        )
         for cached in (
             bootstrap.identity_dependencies,
             bootstrap.organization_dependencies,
@@ -189,12 +208,14 @@ def e2e_runtime(
             bootstrap.authorization_dependencies,
             bootstrap.configuration_dependencies,
             bootstrap.requirement_dependencies,
+            bootstrap.source_control_dependencies,
             bootstrap.identity_http_runtime,
             bootstrap.authorization_http_runtime,
             bootstrap.organization_http_runtime,
             bootstrap.workspace_http_runtime,
             bootstrap.configuration_http_runtime,
             bootstrap.requirement_http_runtime,
+            bootstrap.source_control_query_runtime,
             bootstrap.security_change_orchestrator,
         ):
             cached.cache_clear()
@@ -202,6 +223,14 @@ def e2e_runtime(
             db.execute(
                 text(
                     "TRUNCATE requirement.decision, requirement.gate_assignment, "
+                    "source_control.merge_request_observation, "
+                    "source_control.merge_request_binding, "
+                    "source_control.delivery_request_inbox, "
+                    "source_control.repository_branch_binding, "
+                    "source_control.source_control_effect, "
+                    "source_control.webhook_inbox, "
+                    "source_control.binding_request_inbox, "
+                    "source_control.workspace_repository, "
                     "requirement.gate_instance, requirement.sdd_baseline, "
                     "requirement.work_item, requirement.outbox_message, "
                     "requirement.idempotency_record, requirement.requirement, "
@@ -223,6 +252,14 @@ def e2e_runtime(
                 db.execute(
                     text(
                         "TRUNCATE requirement.decision, requirement.gate_assignment, "
+                        "source_control.merge_request_observation, "
+                        "source_control.merge_request_binding, "
+                        "source_control.delivery_request_inbox, "
+                        "source_control.repository_branch_binding, "
+                        "source_control.source_control_effect, "
+                        "source_control.webhook_inbox, "
+                        "source_control.binding_request_inbox, "
+                        "source_control.workspace_repository, "
                         "requirement.gate_instance, requirement.sdd_baseline, "
                         "requirement.work_item, requirement.outbox_message, "
                         "requirement.idempotency_record, requirement.requirement, "
@@ -244,12 +281,14 @@ def e2e_runtime(
                 bootstrap.authorization_dependencies,
                 bootstrap.configuration_dependencies,
                 bootstrap.requirement_dependencies,
+                bootstrap.source_control_dependencies,
                 bootstrap.identity_http_runtime,
                 bootstrap.authorization_http_runtime,
                 bootstrap.organization_http_runtime,
                 bootstrap.workspace_http_runtime,
                 bootstrap.configuration_http_runtime,
                 bootstrap.requirement_http_runtime,
+                bootstrap.source_control_query_runtime,
                 bootstrap.security_change_orchestrator,
             ):
                 cached.cache_clear()
@@ -360,6 +399,7 @@ def _audit_actions(owner: Engine) -> dict[str, tuple[str, ...]]:
 
 def test_access_governance_closes_the_real_cli_http_grant_and_audit_loop(
     e2e_runtime: tuple[Engine, dict[str, Engine]],
+    tmp_path: Path,
 ) -> None:
     owner, engines = e2e_runtime
     stdout, stderr = StringIO(), StringIO()
@@ -583,6 +623,7 @@ def test_access_governance_closes_the_real_cli_http_grant_and_audit_loop(
     assert denied_after.json()["requestId"] == "req-e2edeniedafter"
 
     workspace_id = "20000000-0000-0000-0000-000000000301"
+    repository_id = "10000000-0000-0000-0000-000000000301"
     with owner.begin() as db:
         db.execute(
             text(
@@ -616,28 +657,351 @@ def test_access_governance_closes_the_real_cli_http_grant_and_audit_loop(
         },
     )
     assert requirement_grant.status_code == 201
-    requirement_created = admin.post(
-        "/api/v1/requirements",
+    code_change_grant = admin.post(
+        "/api/v1/admin/grants",
         json={
-            "workspaceId": workspace_id,
-            "type": "feat",
-            "title": "V0.3 uses an explicit workspace grant",
-            "description": "The production router checks grant and membership.",
-            "acceptanceCriteria": ["The governed Requirement is persisted."],
-            "initialRepositoryId": "repository-1",
+            "principalId": admin_principal.account_id,
+            "capability": "code.change",
+            "scopeType": "WORKSPACE",
+            "scopeId": workspace_id,
+            "source": "MANUAL",
+            "reason": "V0.3 automatic assignment capability acceptance",
         },
         headers={
             **SAME_ORIGIN,
-            "Idempotency-Key": "e2e-create-governed-requirement",
-            "X-Request-ID": "req-e2erequirementcreate",
+            "Idempotency-Key": "e2e-grant-code-change",
+            "X-Request-ID": "req-e2ecodechangegrant",
         },
     )
+    assert code_change_grant.status_code == 201
+
+    repository_stdout, repository_stderr = StringIO(), StringIO()
+    repository_exit = source_control_repository.main(
+        [
+            "register",
+            "--repository-id",
+            repository_id,
+            "--workspace-id",
+            workspace_id,
+            "--project-id",
+            "301",
+            "--project-path",
+            "platform/backend",
+            "--connection-ref",
+            "gitlab-dev",
+            "--credential-secret-ref",
+            "secret-ref:gitlab-pat",
+            "--webhook-signing-secret-ref",
+            "secret-ref:gitlab-webhook",
+        ],
+        engine=engines["source_control"],
+        dependencies=bootstrap.source_control_dependencies(),
+        stdout=repository_stdout,
+        stderr=repository_stderr,
+    )
+    assert repository_exit == 0
+    assert repository_stderr.getvalue() == ""
+
+    repository_choices = admin.get(
+        f"/api/v1/workspaces/{workspace_id}/repositories",
+        headers={"X-Request-ID": "req-e2erepositorychoices"},
+    )
+    assert repository_choices.status_code == 200
+    assert repository_choices.json() == {
+        "items": [
+            {
+                "repositoryId": repository_id,
+                "provider": "GITLAB",
+                "projectPath": "platform/backend",
+                "defaultBranch": "main",
+            }
+        ]
+    }
+    assert "secret" not in repository_choices.text.lower()
+    denied_repository_choices = admin.get(
+        "/api/v1/workspaces/20000000-0000-0000-0000-000000000399/repositories",
+        headers={"X-Request-ID": "req-e2erepositorydenied"},
+    )
+    assert denied_repository_choices.status_code == 403
+    assert denied_repository_choices.json()["requestId"] == "req-e2erepositorydenied"
+
+    requirement_body = {
+        "workspaceId": workspace_id,
+        "type": "feat",
+        "title": "V0.3 uses an explicit workspace grant",
+        "description": "The production router checks grant and membership.",
+        "acceptanceCriteria": ["The governed Requirement is persisted."],
+        "initialRepositoryId": repository_id,
+    }
+    requirement_headers = {
+        **SAME_ORIGIN,
+        "Idempotency-Key": "e2e-create-governed-requirement",
+        "X-Request-ID": "req-e2erequirementcreate",
+    }
+    requirement_created = admin.post(
+        "/api/v1/requirements",
+        json=requirement_body,
+        headers=requirement_headers,
+    )
+    requirement_replayed = admin.post(
+        "/api/v1/requirements",
+        json=requirement_body,
+        headers={**requirement_headers, "X-Request-ID": "req-e2erequirementreplay"},
+    )
     assert requirement_created.status_code == 201, requirement_created.text
+    assert requirement_replayed.status_code == 201, requirement_replayed.text
+    assert requirement_replayed.json() == requirement_created.json()
+    assert requirement_replayed.headers["etag"] == requirement_created.headers["etag"] == '"v1"'
     requirement_payload = requirement_created.json()
     assert requirement_payload["requirement"]["workspaceId"] == workspace_id
-    assert requirement_payload["workItem"]["assignmentState"] == "UNASSIGNED"
+    assert requirement_payload["workItem"]["assignmentState"] == "ASSIGNED"
     assert requirement_payload["workItem"]["repositoryState"] == "WAITING_REPOSITORY"
     assert requirement_payload["workItem"]["state"] == "DRAFT"
+    with owner.connect() as db:
+        requirement_facts = db.execute(
+            text(
+                "SELECT "
+                "(SELECT count(*) FROM requirement.requirement WHERE id=:requirement_id), "
+                "(SELECT count(*) FROM requirement.work_item "
+                "WHERE requirement_id=:requirement_id), "
+                "(SELECT count(*) FROM requirement.outbox_message "
+                "WHERE aggregate_id=:requirement_id)"
+            ),
+            {"requirement_id": requirement_payload["requirement"]["id"]},
+        ).one()
+    assert requirement_facts == (1, 1, 1)
+
+    source_control_secret_root = tmp_path / "source-control-secrets"
+    source_control_secret_root.mkdir()
+    (source_control_secret_root / "gitlab-pat").write_text(
+        "test-only-runtime-token",
+        encoding="utf-8",
+    )
+    (source_control_secret_root / "gitlab-webhook").write_text(
+        "test-only-runtime-webhook-key",
+        encoding="utf-8",
+    )
+    gitlab_calls: list[tuple[str, str]] = []
+    base_commit_sha = "a" * 40
+    created_branch: str | None = None
+
+    def gitlab_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal created_branch
+        gitlab_calls.append((request.method, request.url.path))
+        assert request.headers["PRIVATE-TOKEN"] == "test-only-runtime-token"
+        if request.method == "GET" and "/repository/" not in request.url.path:
+            return httpx.Response(200, json={"path_with_namespace": "platform/backend"})
+        if request.method == "GET" and request.url.path.endswith("/branches/main"):
+            return httpx.Response(
+                200,
+                json={"name": "main", "commit": {"id": base_commit_sha}},
+            )
+        branch_name = request.url.params.get("branch")
+        if request.method == "POST":
+            assert branch_name is not None
+            created_branch = branch_name
+            assert request.url.params["ref"] == base_commit_sha
+            return httpx.Response(
+                201,
+                json={"name": branch_name, "commit": {"id": base_commit_sha}},
+            )
+        assert created_branch is not None
+        return httpx.Response(
+            200,
+            json={"name": created_branch, "commit": {"id": base_commit_sha}},
+        )
+
+    source_control_settings = SourceControlDevSettings.model_validate(
+        {
+            "gitlab_api_url": "https://gitlab.dev.example/api/v4",
+            "connection_id": "gitlab-dev",
+            "request_timeout_seconds": 5,
+            "policy_version": 1,
+            "reconcile_base_delay_seconds": 15,
+            "reconcile_max_delay_seconds": 120,
+            "webhook_replay_window_seconds": 300,
+            "secret_reference_root": source_control_secret_root,
+        }
+    )
+    source_control_collaborators = SourceControlRuntimeCollaborators(
+        source_control_engine=engines["source_control"],
+        requirement_engine=engines["requirement"],
+        requirement_dependencies=bootstrap.requirement_dependencies(),
+        identity_engine=engines["identity"],
+        identity_dependencies=bootstrap.identity_dependencies(),
+        workspace_engine=engines["workspace"],
+        workspace_dependencies=bootstrap.workspace_dependencies(),
+        authorization_engine=engines["authorization"],
+        authorization_dependencies=bootstrap.authorization_dependencies(),
+    )
+    source_control_runtime = build_source_control_runtime(
+        source_control_settings,
+        collaborators=source_control_collaborators,
+        client_factory=lambda **kwargs: httpx.Client(
+            transport=httpx.MockTransport(gitlab_handler),
+            **kwargs,
+        ),
+    )
+    try:
+        source_control_runtime.ensure_ready()
+        relayed = run_worker_once(
+            "relay",
+            limit=10,
+            dependencies=source_control_runtime.dependencies,
+        )
+        processed = run_worker_once(
+            "process",
+            limit=10,
+            dependencies=source_control_runtime.dependencies,
+        )
+    finally:
+        source_control_runtime.close()
+
+    assert (relayed.claimed, relayed.processed, relayed.released) == (1, 1, 0)
+    assert (processed.claimed, processed.processed, processed.released) == (1, 1, 0)
+    assert [method for method, _path in gitlab_calls] == ["GET", "GET", "POST", "GET"]
+    assert source_control_runtime.client.is_closed
+    with owner.connect() as db:
+        bound_facts = db.execute(
+            text(
+                "SELECT work_item.repository_state, work_item.base_commit_sha, "
+                "work_item.task_branch, effect.state AS effect_state, "
+                "(SELECT count(*) FROM source_control.repository_branch_binding) "
+                "AS binding_count "
+                "FROM requirement.work_item AS work_item "
+                "JOIN source_control.source_control_effect AS effect "
+                "ON effect.work_item_id=work_item.id "
+                "WHERE work_item.id=:work_item_id"
+            ),
+            {"work_item_id": requirement_payload["workItem"]["id"]},
+        ).one()
+    assert bound_facts.repository_state == "BOUND"
+    assert bound_facts.base_commit_sha == base_commit_sha
+    assert bound_facts.task_branch
+    assert bound_facts.effect_state == "SUCCEEDED"
+    assert bound_facts.binding_count == 1
+
+    unknown_requirement = admin.post(
+        "/api/v1/requirements",
+        json={
+            **requirement_body,
+            "title": "V0.3 reconciles an unknown GitLab branch result",
+        },
+        headers={
+            **SAME_ORIGIN,
+            "Idempotency-Key": "e2e-create-unknown-requirement",
+            "X-Request-ID": "req-e2erequirementunknown",
+        },
+    )
+    assert unknown_requirement.status_code == 201, unknown_requirement.text
+    unknown_payload = unknown_requirement.json()
+    assert unknown_payload["workItem"]["assignmentState"] == "ASSIGNED"
+    unknown_gitlab_calls: list[tuple[str, str]] = []
+    unknown_branch: str | None = None
+    reconciliation_available = False
+
+    def uncertain_gitlab_handler(request: httpx.Request) -> httpx.Response:
+        nonlocal reconciliation_available, unknown_branch
+        unknown_gitlab_calls.append((request.method, request.url.path))
+        assert request.headers["PRIVATE-TOKEN"] == "test-only-runtime-token"
+        if request.method == "GET" and "/repository/" not in request.url.path:
+            return httpx.Response(200, json={"path_with_namespace": "platform/backend"})
+        if request.method == "GET" and request.url.path.endswith("/branches/main"):
+            return httpx.Response(
+                200,
+                json={"name": "main", "commit": {"id": base_commit_sha}},
+            )
+        if request.method == "POST":
+            unknown_branch = request.url.params["branch"]
+            raise httpx.ReadTimeout("unknown branch result", request=request)
+        if not reconciliation_available:
+            raise httpx.ReadTimeout("branch read unavailable", request=request)
+        assert unknown_branch is not None
+        return httpx.Response(
+            200,
+            json={"name": unknown_branch, "commit": {"id": base_commit_sha}},
+        )
+
+    uncertain_runtime = build_source_control_runtime(
+        source_control_settings,
+        collaborators=source_control_collaborators,
+        client_factory=lambda **kwargs: httpx.Client(
+            transport=httpx.MockTransport(uncertain_gitlab_handler),
+            **kwargs,
+        ),
+    )
+    try:
+        uncertain_runtime.ensure_ready()
+        unknown_relay = run_worker_once(
+            "relay",
+            limit=10,
+            dependencies=uncertain_runtime.dependencies,
+        )
+        unknown_process = run_worker_once(
+            "process",
+            limit=10,
+            dependencies=uncertain_runtime.dependencies,
+        )
+        assert (unknown_relay.claimed, unknown_relay.processed) == (1, 1)
+        assert unknown_process.error_codes == ("RECONCILIATION_PENDING",)
+        with owner.connect() as db:
+            unknown_effect = db.execute(
+                text(
+                    "SELECT id, state, branch_name, "
+                    "(SELECT count(*) FROM source_control.repository_branch_binding "
+                    "WHERE work_item_id=:work_item_id) AS binding_count "
+                    "FROM source_control.source_control_effect "
+                    "WHERE work_item_id=:work_item_id"
+                ),
+                {"work_item_id": unknown_payload["workItem"]["id"]},
+            ).one()
+        assert unknown_effect.state == "UNKNOWN"
+        assert unknown_effect.binding_count == 0
+        reconciliation_available = True
+        with owner.begin() as db:
+            db.execute(
+                text(
+                    "UPDATE source_control.source_control_effect "
+                    "SET next_reconcile_at=now() WHERE id=:effect_id"
+                ),
+                {"effect_id": unknown_effect.id},
+            )
+        reconciled = run_worker_once(
+            "reconcile",
+            limit=10,
+            dependencies=uncertain_runtime.dependencies,
+        )
+    finally:
+        uncertain_runtime.close()
+
+    assert reconciled.effect_ids == (str(unknown_effect.id),)
+    assert [method for method, _path in unknown_gitlab_calls] == [
+        "GET",
+        "GET",
+        "POST",
+        "GET",
+        "GET",
+        "GET",
+    ]
+    with owner.connect() as db:
+        reconciled_facts = db.execute(
+            text(
+                "SELECT work_item.repository_state, work_item.base_commit_sha, "
+                "work_item.task_branch, effect.state AS effect_state, "
+                "(SELECT count(*) FROM source_control.repository_branch_binding "
+                "WHERE work_item_id=:work_item_id) AS binding_count "
+                "FROM requirement.work_item AS work_item "
+                "JOIN source_control.source_control_effect AS effect "
+                "ON effect.work_item_id=work_item.id "
+                "WHERE work_item.id=:work_item_id"
+            ),
+            {"work_item_id": unknown_payload["workItem"]["id"]},
+        ).one()
+    assert reconciled_facts.repository_state == "BOUND"
+    assert reconciled_facts.base_commit_sha == base_commit_sha
+    assert reconciled_facts.task_branch == unknown_effect.branch_name
+    assert reconciled_facts.effect_state == "SUCCEEDED"
+    assert reconciled_facts.binding_count == 1
 
     expected = {
         "req-e2eadmintemp": ("identity.temp_credential.consumed",),
@@ -677,8 +1041,14 @@ def test_access_governance_closes_the_real_cli_http_grant_and_audit_loop(
         "req-e2erevoke": ("authorization.grant.revoked",),
         "req-e2edeniedafter": ("authorization.decision",),
         "req-e2erequirementdenied": ("authorization.decision",),
+        "req-e2erepositorydenied": ("authorization.decision",),
         "req-e2erequirementgrant": ("authorization.grant.created",),
+        "req-e2ecodechangegrant": ("authorization.grant.created",),
         "req-e2erequirementcreate": (
+            "requirement.created",
+            "requirement.work_item.initialized",
+        ),
+        "req-e2erequirementunknown": (
             "requirement.created",
             "requirement.work_item.initialized",
         ),
@@ -807,6 +1177,6 @@ def test_bootstrap_cli_recovers_same_command_after_authorization_outage(
     assert facts == (1, 3, 1, 3)
 
 
-def test_release_version_is_0_2_2() -> None:
-    assert __version__ == "0.2.2"
-    assert bootstrap.create_app().openapi()["info"]["version"] == "0.2.2"
+def test_release_version_is_0_3_0() -> None:
+    assert __version__ == "0.3.0"
+    assert bootstrap.create_app().openapi()["info"]["version"] == "0.3.0"

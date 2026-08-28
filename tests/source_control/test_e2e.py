@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import json
+from dataclasses import replace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,6 +14,11 @@ from control_plane.app.bootstrap.source_control_connector import (
 )
 from control_plane.app.modules.audit.adapters.transactional import (
     SqlAlchemyTransactionalAuditAppender,
+)
+from control_plane.app.modules.requirement import (
+    AssignmentState,
+    RequirementType,
+    create_requirement,
 )
 from control_plane.app.modules.source_control import (
     EffectState,
@@ -40,6 +46,7 @@ from tests.requirement.conftest import (
 )
 from tests.requirement.test_source_control_relay import (
     WORKSPACE_ID,
+    Actor,
     create_assigned_requirement,
 )
 from tests.requirement.test_source_control_relay import (
@@ -70,6 +77,11 @@ class FakeSecrets:
     def resolve(self, reference: str) -> str:
         assert reference == "secret-ref:webhook"
         return SIGNING_TOKEN
+
+
+class DeniedAssignmentGuard:
+    def can_auto_assign(self, **_values: object) -> bool:
+        return False
 
 
 def _dependencies(
@@ -214,6 +226,50 @@ def test_worker_happy_path_converges_duplicate_delivery_without_duplicate_facts(
         "source_control.effect.succeeded",
         "source_control.requirement_callback.acked",
     }
+
+
+def test_unassigned_requirement_never_reaches_a_source_control_effect(
+    isolated_source_control_database: IsolatedSourceControlDatabase,
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    requirement_runtime = replace(
+        requirement_dependencies(),
+        assignment_guard=DeniedAssignmentGuard(),
+    )
+    with isolated_requirement_database.runtime.begin() as db:
+        created = create_requirement(
+            db,
+            workspace_id=WORKSPACE_ID,
+            requirement_type=RequirementType.FEAT,
+            title="Keep ineligible creator unassigned",
+            description="An ineligible creator must not trigger a Provider effect.",
+            acceptance_criteria=("No Source Control effect exists.",),
+            initial_repository_id=REPOSITORY_ID,
+            actor=Actor("ineligible-employee"),
+            idempotency_key="create-ineligible-no-effect",
+            dependencies=requirement_runtime,
+        )
+
+    gitlab = FakeGitLab()
+    dependencies = _dependencies(
+        isolated_source_control_database,
+        isolated_requirement_database,
+        gitlab,
+    )
+    _register(isolated_source_control_database, dependencies)
+    relayed = run_worker_once("relay", limit=10, dependencies=dependencies)
+    processed = run_worker_once("process", limit=10, dependencies=dependencies)
+
+    with isolated_source_control_database.owner.connect() as db:
+        effect_count = db.execute(
+            text("SELECT count(*) FROM source_control.source_control_effect")
+        ).scalar_one()
+    assert created.work_item.assignment_state is AssignmentState.UNASSIGNED
+    assert (relayed.claimed, relayed.processed) == (1, 1)
+    assert (processed.claimed, processed.processed) == (1, 1)
+    assert processed.error_codes == ("OWNER_UNASSIGNED",)
+    assert effect_count == 0
+    assert gitlab.calls == []
 
 
 def test_worker_recovers_crashed_in_flight_effect_and_completes_inbox_handoff(

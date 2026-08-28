@@ -15,21 +15,67 @@ WORK_ITEM_ID = "50000000-0000-0000-0000-000000000401"
 EFFECT_ID = "60000000-0000-0000-0000-000000000401"
 
 
-def _insert_repository(repository: SqlAlchemySourceControlRepository) -> None:
+def _insert_repository(
+    repository: SqlAlchemySourceControlRepository,
+    *,
+    repository_id: str = REPOSITORY_ID,
+    workspace_id: str = WORKSPACE_ID,
+    project_id: str = "101",
+    project_path: str = "platform/backend",
+    status: str = "AUTHORIZED",
+) -> None:
     repository.insert_workspace_repository(
-        id=REPOSITORY_ID,
-        workspace_id=WORKSPACE_ID,
+        id=repository_id,
+        workspace_id=workspace_id,
         provider="GITLAB",
-        project_id="101",
-        project_path="platform/backend",
+        project_id=project_id,
+        project_path=project_path,
         default_branch="main",
         connection_ref="gitlab-dev",
         credential_secret_ref="secret-ref:credential",
         webhook_signing_secret_ref="secret-ref:webhook",
-        status="AUTHORIZED",
+        status=status,
         revision=1,
         now=NOW,
     )
+
+
+def test_authorized_repository_query_is_scoped_sanitized_and_deterministic(
+    isolated_source_control_rw_engine: Engine,
+) -> None:
+    second_repository_id = "10000000-0000-0000-0000-000000000402"
+    removed_repository_id = "10000000-0000-0000-0000-000000000403"
+    other_workspace_repository_id = "10000000-0000-0000-0000-000000000404"
+    other_workspace_id = "20000000-0000-0000-0000-000000000402"
+    with isolated_source_control_rw_engine.begin() as db:
+        repository = SqlAlchemySourceControlRepository(db)
+        _insert_repository(repository, project_path="platform/zeta")
+        _insert_repository(
+            repository,
+            repository_id=second_repository_id,
+            project_id="102",
+            project_path="platform/alpha",
+        )
+        _insert_repository(
+            repository,
+            repository_id=removed_repository_id,
+            project_id="103",
+            project_path="platform/removed",
+            status="REMOVED",
+        )
+        _insert_repository(
+            repository,
+            repository_id=other_workspace_repository_id,
+            workspace_id=other_workspace_id,
+            project_id="104",
+            project_path="platform/other-workspace",
+        )
+
+        rows = repository.authorized_repositories(WORKSPACE_ID)
+
+    assert [str(row["id"]) for row in rows] == [second_repository_id, REPOSITORY_ID]
+    assert [row["project_path"] for row in rows] == ["platform/alpha", "platform/zeta"]
+    assert all(set(row) == {"id", "provider", "project_path", "default_branch"} for row in rows)
 
 
 def test_repository_registration_and_removal_use_revision_cas(

@@ -1,11 +1,15 @@
 import argparse
 import json
 from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager
 from dataclasses import asdict, dataclass
 
 from sqlalchemy.exc import SQLAlchemyError
 
-from control_plane.app.bootstrap.source_control_connector import source_control_runtime_engine
+from control_plane.app.bootstrap.source_control_runtime import (
+    SourceControlRuntime,
+    source_control_runtime_context,
+)
 from control_plane.app.modules.source_control import (
     RequirementCallbackUnavailable,
     SourceControlDependencies,
@@ -26,13 +30,6 @@ class WorkerRunReport:
     released: int = 0
     effect_ids: tuple[str, ...] = ()
     error_codes: tuple[str, ...] = ()
-
-
-def source_control_worker_dependencies() -> SourceControlDependencies:
-    # Provider credentials and cross-module runtime adapters arrive with the
-    # later GitOps assembly. Until then the executable is explicitly fail-closed.
-    source_control_runtime_engine()
-    raise SourceControlDependencyUnavailable("Source Control worker dependencies are unavailable")
 
 
 def run_worker_once(
@@ -71,20 +68,29 @@ def _parser() -> argparse.ArgumentParser:
 def main(
     argv: Sequence[str] | None = None,
     *,
-    dependencies_provider: Callable[
-        [], SourceControlDependencies
-    ] = source_control_worker_dependencies,
+    dependencies_provider: Callable[[], SourceControlDependencies] | None = None,
+    runtime_context_provider: Callable[
+        [], AbstractContextManager[SourceControlRuntime]
+    ] = source_control_runtime_context,
 ) -> int:
     args = _parser().parse_args(argv)
     if args.limit < _COMMAND_MINIMUM_LIMITS[args.command]:
         print(json.dumps({"command": args.command, "errorCodes": ["INVALID_ARGUMENT"]}))
         return 2
     try:
-        report = run_worker_once(
-            args.command,
-            limit=args.limit,
-            dependencies=dependencies_provider(),
-        )
+        if dependencies_provider is not None:
+            report = run_worker_once(
+                args.command,
+                limit=args.limit,
+                dependencies=dependencies_provider(),
+            )
+        else:
+            with runtime_context_provider() as runtime:
+                report = run_worker_once(
+                    args.command,
+                    limit=args.limit,
+                    dependencies=runtime.dependencies,
+                )
     except (
         RequirementCallbackUnavailable,
         SourceControlDependencyUnavailable,

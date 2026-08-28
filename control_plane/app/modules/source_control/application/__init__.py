@@ -23,6 +23,9 @@ from control_plane.app.modules.source_control.application.integration import (
 from control_plane.app.modules.source_control.application.integration_reconciliation import (
     reconcile_due_integration_effects,
 )
+from control_plane.app.modules.source_control.application.queries import (
+    list_authorized_repositories,
+)
 from control_plane.app.modules.source_control.application.reconciliation import (
     process_webhook_inbox,
     reconcile_due_effects,
@@ -31,6 +34,9 @@ from control_plane.app.modules.source_control.application.relay import (
     accept_binding_request,
     binding_request_payload_hash,
     relay_binding_requests,
+)
+from control_plane.app.modules.source_control.application.runtime import (
+    validate_authorized_repository_runtime,
 )
 from control_plane.app.modules.source_control.application.saga import (
     get_repository_branch_binding,
@@ -48,6 +54,7 @@ __all__ = [
     "accept_binding_request",
     "binding_request_payload_hash",
     "get_repository_branch_binding",
+    "list_authorized_repositories",
     "ingest_signed_gitlab_webhook",
     "process_binding_request",
     "process_integration_merge_request",
@@ -61,5 +68,6 @@ __all__ = [
     "relay_due_source_control_requests",
     "relay_integration_delivery_requests",
     "remove_workspace_repository",
+    "validate_authorized_repository_runtime",
     "verify_gitlab_standard_webhook",
 ]

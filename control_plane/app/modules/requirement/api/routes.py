@@ -170,7 +170,27 @@ def _json(dto: Any, *, status_code: int, revision: int | None = None) -> JSONRes
     )
 
 
-def create_requirement_router(
+def _authorized_details(
+    runtime: RequirementHttpRuntime,
+    principal: Any,
+    requirement_id: str,
+    capability: str,
+    capability_guard: Callable[[Any, str, str | None], None],
+) -> Any:
+    try:
+        with runtime.engine.connect() as db:
+            details = get_requirement(
+                db,
+                requirement_id=requirement_id,
+                dependencies=runtime.dependencies,
+            )
+    except Exception as error:
+        return _problem(error)
+    capability_guard(principal, capability, details.requirement.workspace_id)
+    return details
+
+
+def create_requirement_foundation_router(
     runtime_provider: Callable[[], RequirementHttpRuntime],
     principal_provider: Callable[[], Any],
     capability_guard: Callable[[Any, str, str | None], None],
@@ -243,24 +263,6 @@ def create_requirement_router(
             return _problem(error)
         return RequirementListResponseDto.from_domain(page)
 
-    def authorized_details(
-        runtime: RequirementHttpRuntime,
-        principal: Any,
-        requirement_id: str,
-        capability: str,
-    ) -> Any:
-        try:
-            with runtime.engine.connect() as db:
-                details = get_requirement(
-                    db,
-                    requirement_id=requirement_id,
-                    dependencies=runtime.dependencies,
-                )
-        except Exception as error:
-            return _problem(error)
-        capability_guard(principal, capability, details.requirement.workspace_id)
-        return details
-
     @router.get(
         "/{requirementId}",
         operation_id="requirements_get",
@@ -272,11 +274,12 @@ def create_requirement_router(
         principal: Annotated[Any, Depends(principal_provider)],
     ) -> Response:
         runtime = runtime_provider()
-        details = authorized_details(
+        details = _authorized_details(
             runtime,
             principal,
             str(requirement_id),
             REQUIREMENT_READ_CAPABILITY,
+            capability_guard,
         )
         if isinstance(details, Response):
             return details
@@ -285,6 +288,16 @@ def create_requirement_router(
             status_code=200,
             revision=details.requirement.revision,
         )
+
+    return router
+
+
+def create_requirement_baseline_router(
+    runtime_provider: Callable[[], RequirementHttpRuntime],
+    principal_provider: Callable[[], Any],
+    capability_guard: Callable[[Any, str, str | None], None],
+) -> APIRouter:
+    router = APIRouter(prefix="/api/v1/requirements", tags=["requirement"])
 
     @router.post(
         "/{requirementId}/sdd-baselines",
@@ -301,11 +314,12 @@ def create_requirement_router(
         preflight: Annotated[_VersionedPreflight, Depends(_versioned_preflight)],
     ) -> Response:
         runtime = runtime_provider()
-        details = authorized_details(
+        details = _authorized_details(
             runtime,
             principal,
             str(requirement_id),
             REQUIREMENT_BASELINE_SUBMIT_CAPABILITY,
+            capability_guard,
         )
         if isinstance(details, Response):
             return details
@@ -344,11 +358,12 @@ def create_requirement_router(
         preflight: Annotated[_VersionedPreflight, Depends(_versioned_preflight)],
     ) -> Response:
         runtime = runtime_provider()
-        details = authorized_details(
+        details = _authorized_details(
             runtime,
             principal,
             str(requirement_id),
             REQUIREMENT_BASELINE_SUBMIT_CAPABILITY,
+            capability_guard,
         )
         if isinstance(details, Response):
             return details
@@ -385,11 +400,12 @@ def create_requirement_router(
         preflight: Annotated[_VersionedPreflight, Depends(_versioned_preflight)],
     ) -> Response:
         runtime = runtime_provider()
-        details = authorized_details(
+        details = _authorized_details(
             runtime,
             principal,
             str(requirement_id),
             REQUIREMENT_BASELINE_DECIDE_CAPABILITY,
+            capability_guard,
         )
         if isinstance(details, Response):
             return details
@@ -414,6 +430,16 @@ def create_requirement_router(
             revision=decision.requirement.revision,
         )
 
+    return router
+
+
+def create_requirement_delivery_router(
+    runtime_provider: Callable[[], RequirementHttpRuntime],
+    principal_provider: Callable[[], Any],
+    capability_guard: Callable[[Any, str, str | None], None],
+) -> APIRouter:
+    router = APIRouter(prefix="/api/v1/requirements", tags=["requirement"])
+
     @router.post(
         "/{requirementId}/work-items/{workItemId}:start",
         operation_id="requirements_start_work_item",
@@ -430,11 +456,12 @@ def create_requirement_router(
     ) -> Response:
         del body
         runtime = runtime_provider()
-        details = authorized_details(
+        details = _authorized_details(
             runtime,
             principal,
             str(requirement_id),
             WORK_ITEM_EXECUTE_CAPABILITY,
+            capability_guard,
         )
         if isinstance(details, Response):
             return details
@@ -474,11 +501,12 @@ def create_requirement_router(
     ) -> Response:
         del body
         runtime = runtime_provider()
-        details = authorized_details(
+        details = _authorized_details(
             runtime,
             principal,
             str(requirement_id),
             WORK_ITEM_EXECUTE_CAPABILITY,
+            capability_guard,
         )
         if isinstance(details, Response):
             return details
@@ -518,11 +546,12 @@ def create_requirement_router(
     ) -> Response:
         del body
         runtime = runtime_provider()
-        details = authorized_details(
+        details = _authorized_details(
             runtime,
             principal,
             str(requirement_id),
             MERGE_REQUEST_MERGE_CAPABILITY,
+            capability_guard,
         )
         if isinstance(details, Response):
             return details

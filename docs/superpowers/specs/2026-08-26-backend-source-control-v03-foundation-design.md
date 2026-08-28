@@ -288,6 +288,26 @@ Requirement 回调暂时失败时，Effect 保持 `SUCCEEDED` 且 callbackState 
 - Connection/Repository 变更、Binding、base SHA、Effect、Webhook 接纳/拒绝、Reconciliation 与回调
   都写安全 Audit；不记录源码或凭据。
 
+## DEV 运行时与授权仓库初始化
+
+V0.3–V0.13 的受控 DEV 实现使用一个 Worker/Connector 共享的组合根。非 Secret 配置只包含 GitLab
+API endpoint、connection ID、HTTP timeout、Policy version、Reconciliation 退避上下界、Webhook
+replay window 与 Secret Reference 根目录；缺项或越界时整体 fail closed。DEV Secret resolver 只接受
+`secret-ref:` 相对文件引用，拒绝绝对路径、遍历与符号链接/目录联接逃逸，并限制单文件大小。它不读取
+Secret 环境变量，也不提供 `openbao:` fallback；Operations Track 可在后续替换同一 Port。
+Worker 每次启动及 Connector `/readyz` 都预检全部 `AUTHORIZED` Repository 的 connection 和已登记
+Secret Reference；引用文件缺失时 Worker 非零退出、Connector 返回 unavailable，错误不含引用或明文。
+未登记 Webhook signing reference 的 Repository 继续仅依靠 Reconciliation，不因此伪造签名能力。
+GitLab HTTP client 显式使用 `trust_env=false`，不得由宿主机环境变量静默注入代理；未来确需代理时必须
+增加显式、可校验的受信配置，而不是恢复 ambient proxy。
+
+授权仓库只能通过 `python -m control_plane.tools.source_control_repository` 的 `register`、`list`、
+`remove` 子命令初始化。`register` 接受仓库元数据和 Secret Reference，不接受 PAT、Webhook token 或
+Provider body；完全相同的事实幂等返回，Workspace、Project、connection 或 Secret Reference 事实冲突
+时拒绝。`list` 只输出 `repositoryId/provider/projectPath/defaultBranch`；`remove` 必须带
+`expectedRevision`，仅把状态推进到 `REMOVED`，不删除历史 Binding、Effect、Inbox 或 Audit。该工具是
+应用 bootstrap/configuration 入口，不是 GitOps 部署命令，也不是浏览器凭据管理界面。
+
 ## 测试策略
 
 1. Domain：Effect 状态矩阵、确定性 Unicode branch name、Binding 不变量、错误映射。
@@ -300,7 +320,8 @@ Requirement 回调暂时失败时，Effect 保持 `SUCCEEDED` 且 callbackState 
 6. Webhook：官方算法生成签名；缺头、错签、过期、明文 token-only、重复 ID 与同 ID 不同 digest。
 7. Reconciliation：存在同 SHA、不同 SHA、不存在后重试、再次未知、仓库移除与 owner 失效。
 8. PostgreSQL E2E：Requirement Outbox → Source Control Inbox/Effect/Binding → Requirement Ready/Blocked
-   回调；跨 schema 零直写，以 Fake GitLab 隔离真实凭据。
+   回调；跨 schema 零直写，并用真实默认 runtime/facade/secret/HTTPX adapter + MockTransport 证明 happy
+   path 与 UNKNOWN → Reconciliation，以 Fake/MockTransport 隔离真实凭据和网络。
 9. 完整门禁：Ruff format/check、mypy、import-linter、Alembic heads、完整 pytest、OpenAPI check。
 
 真实 GitLab Smoke Test 是后续 GitOps/Secret/网络就绪后的独立 Gate：必须验证目标 GitLab 版本和

@@ -1,11 +1,15 @@
-from collections.abc import Callable
-from functools import lru_cache
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractContextManager, asynccontextmanager
+from dataclasses import dataclass
 
 from fastapi import FastAPI
-from sqlalchemy import Engine, create_engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from control_plane.app import __version__
+from control_plane.app.bootstrap.source_control_runtime import (
+    SourceControlRuntime,
+    source_control_runtime_context,
+)
 from control_plane.app.modules.source_control import SourceControlDependencyUnavailable
 from control_plane.app.modules.source_control.api import (
     SourceControlWebhookRuntime,
@@ -19,38 +23,54 @@ from control_plane.app.shared.api.problem import (
 )
 from control_plane.app.shared.api.request_id import request_id_middleware
 from control_plane.app.shared.db.engine import ping
-from control_plane.app.shared.db.settings import DbSettings
+
+RuntimeContextProvider = Callable[[], AbstractContextManager[SourceControlRuntime]]
 
 
-@lru_cache(maxsize=1)
-def source_control_runtime_engine() -> Engine:
-    """Construct the Source Control engine without opening a connection."""
-    return create_engine(
-        DbSettings().source_control_database_url,
-        pool_pre_ping=True,
-        connect_args={"connect_timeout": 2},
-    )
-
-
-def source_control_webhook_runtime() -> SourceControlWebhookRuntime:
-    # The DB is wired here, but secret resolution stays unavailable until the
-    # GitOps-owned provider adapter is supplied.
-    source_control_runtime_engine()
-    raise SourceControlDependencyUnavailable(
-        "Source Control secret reference resolution is unavailable"
-    )
+@dataclass(slots=True)
+class _ManagedRuntimeState:
+    runtime: SourceControlRuntime | None = None
 
 
 def create_source_control_connector_app(
     *,
-    runtime_provider: Callable[[], SourceControlWebhookRuntime] = source_control_webhook_runtime,
+    runtime_provider: Callable[[], SourceControlWebhookRuntime] | None = None,
+    runtime_context_provider: RuntimeContextProvider = source_control_runtime_context,
 ) -> FastAPI:
+    managed_state = _ManagedRuntimeState()
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        context: AbstractContextManager[SourceControlRuntime] | None = None
+        try:
+            context = runtime_context_provider()
+            managed_state.runtime = context.__enter__()
+        except SourceControlDependencyUnavailable:
+            context = None
+            managed_state.runtime = None
+        try:
+            yield
+        finally:
+            managed_state.runtime = None
+            if context is not None:
+                context.__exit__(None, None, None)
+
+    def managed_runtime_provider() -> SourceControlWebhookRuntime:
+        runtime = managed_state.runtime
+        if runtime is None:
+            raise SourceControlDependencyUnavailable(
+                "Source Control connector runtime is unavailable"
+            )
+        return SourceControlWebhookRuntime(runtime.dependencies)
+
+    resolved_runtime_provider = runtime_provider or managed_runtime_provider
     app = FastAPI(
         title="engineering-platform-source-control-connector",
         version=__version__,
         docs_url=None,
         redoc_url=None,
         openapi_url=None,
+        lifespan=None if runtime_provider is not None else lifespan,
     )
     register_problem_handlers(app)
     app.middleware("http")(request_id_middleware)
@@ -65,19 +85,24 @@ def create_source_control_connector_app(
     )
     def readyz() -> object:
         try:
-            runtime = runtime_provider()
+            if runtime_provider is None:
+                managed_runtime = managed_state.runtime
+                if managed_runtime is None:
+                    raise SourceControlDependencyUnavailable(
+                        "Source Control connector runtime is unavailable"
+                    )
+                managed_runtime.ensure_ready()
+            runtime = resolved_runtime_provider()
             if not ping(runtime.dependencies.engine):
                 return problem_response(503, "Not ready")
         except (SourceControlDependencyUnavailable, SQLAlchemyError):
             return problem_response(503, "Not ready")
         return {"status": "ready"}
 
-    app.include_router(create_webhook_router(runtime_provider))
+    app.include_router(create_webhook_router(resolved_runtime_provider))
     return app
 
 
 __all__ = [
     "create_source_control_connector_app",
-    "source_control_runtime_engine",
-    "source_control_webhook_runtime",
 ]

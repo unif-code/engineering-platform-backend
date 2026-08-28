@@ -1,11 +1,18 @@
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, cast
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
-from control_plane.app.bootstrap.app import create_app, requirement_dependencies
+from control_plane.app.bootstrap.app import (
+    authorization_capability_guard,
+    authorization_http_runtime,
+    create_app,
+    requirement_dependencies,
+    requirement_http_runtime,
+)
+from control_plane.app.modules.authorization.api.dependencies import current_principal
 from control_plane.app.modules.requirement import (
     DecisionOutcome,
     RequirementDependencies,
@@ -13,9 +20,14 @@ from control_plane.app.modules.requirement import (
     RequirementType,
     start_requirement_preparation,
 )
+from control_plane.app.modules.requirement.adapters import (
+    ComposedAutomaticAssignmentGuard,
+)
 from control_plane.app.modules.requirement.api import (
     RequirementHttpRuntime,
-    create_requirement_router,
+    create_requirement_baseline_router,
+    create_requirement_delivery_router,
+    create_requirement_foundation_router,
 )
 from control_plane.app.shared.api.problem import register_problem_handlers
 from control_plane.app.shared.api.request_id import request_id_middleware
@@ -27,25 +39,83 @@ from tests.requirement.test_delivery_commands import _merge_ready_work_item, _re
 SAME_ORIGIN = {"Origin": "http://testserver"}
 
 
-def test_bootstrap_exposes_requirement_delivery_endpoints_with_fail_closed_dependencies() -> None:
+def test_bootstrap_exposes_only_v03_requirement_endpoints_with_fail_closed_dependencies() -> None:
     schema = create_app().openapi()
     paths = schema["paths"]
 
-    assert set(paths) >= {
+    assert {
         "/api/v1/requirements",
         "/api/v1/requirements/{requirementId}",
+    } <= set(paths)
+    assert {
         "/api/v1/requirements/{requirementId}/sdd-baselines",
         "/api/v1/requirements/{requirementId}/baseline-confirmations",
         "/api/v1/requirements/{requirementId}/baseline-decisions",
         "/api/v1/requirements/{requirementId}/work-items/{workItemId}:start",
         "/api/v1/requirements/{requirementId}/work-items/{workItemId}:request-integration-mr",
         "/api/v1/requirements/{requirementId}/work-items/{workItemId}:request-integration-merge",
-    }
+    }.isdisjoint(paths)
     assert set(paths["/api/v1/requirements"]) >= {"get", "post"}
     create = paths["/api/v1/requirements"]["post"]
     create_headers = {item["name"]: item for item in create["parameters"] if item["in"] == "header"}
     assert create_headers["Idempotency-Key"]["required"] is True
     assert "If-Match" not in create_headers
+    requirement_schema = schema["components"]["schemas"]["RequirementResponseDto"]
+    assert requirement_schema["properties"]["workspaceId"]["format"] == "uuid"
+    assert requirement_schema["properties"]["state"] == {
+        "$ref": "#/components/schemas/RequirementState"
+    }
+    assert requirement_schema["properties"]["createdAt"]["format"] == "date-time"
+    work_item_schema = schema["components"]["schemas"]["WorkItemResponseDto"]
+    assert work_item_schema["properties"]["repositoryBlockedReasonCode"]["anyOf"] == [
+        {"$ref": "#/components/schemas/RepositoryBindingBlockedReason"},
+        {"type": "null"},
+    ]
+    assert work_item_schema["properties"]["repositoryBlockedAt"]["anyOf"] == [
+        {"format": "date-time", "type": "string"},
+        {"type": "null"},
+    ]
+    assert "integrationDeliveryState" not in work_item_schema["properties"]
+    assert "integrationMergeRequestBindingId" not in work_item_schema["properties"]
+
+    dependencies = requirement_dependencies()
+    route = dependencies.route_snapshots.current(RequirementType.FEAT)
+    assert route.version == 1
+    assert route.snapshot_hash.startswith("sha256:")
+    assert route.required_capabilities == ("code.change",)
+    assert isinstance(dependencies.assignment_guard, ComposedAutomaticAssignmentGuard)
+    assert not dependencies.assignment_guard.can_auto_assign(
+        actor_id="employee-1",
+        workspace_id=WORKSPACE_ID,
+        repository_id="repository-1",
+        required_capabilities=route.required_capabilities,
+    )
+    assert dependencies.artifacts is None
+    assert dependencies.gate_policies is None
+    assert dependencies.reviewer_guard is None
+
+
+def _dormant_requirement_app() -> FastAPI:
+    app = FastAPI()
+    protected_principal = current_principal(authorization_http_runtime)
+    for router_factory in (
+        create_requirement_foundation_router,
+        create_requirement_baseline_router,
+        create_requirement_delivery_router,
+    ):
+        app.include_router(
+            router_factory(
+                requirement_http_runtime,
+                cast(Any, protected_principal),
+                authorization_capability_guard,
+            )
+        )
+    return app
+
+
+def test_dormant_requirement_routers_are_explicitly_composable() -> None:
+    paths = _dormant_requirement_app().openapi()["paths"]
+
     for suffix in (
         "sdd-baselines",
         "baseline-confirmations",
@@ -69,43 +139,6 @@ def test_bootstrap_exposes_requirement_delivery_endpoints_with_fail_closed_depen
         assert headers["If-Match"]["required"] is True
         assert status in operation["responses"]
         assert operation["security"] == [{"EpSessionCookie": []}]
-    requirement_schema = schema["components"]["schemas"]["RequirementResponseDto"]
-    assert requirement_schema["properties"]["workspaceId"]["format"] == "uuid"
-    assert requirement_schema["properties"]["state"] == {
-        "$ref": "#/components/schemas/RequirementState"
-    }
-    assert requirement_schema["properties"]["createdAt"]["format"] == "date-time"
-    work_item_schema = schema["components"]["schemas"]["WorkItemResponseDto"]
-    assert work_item_schema["properties"]["repositoryBlockedReasonCode"]["anyOf"] == [
-        {"$ref": "#/components/schemas/RepositoryBindingBlockedReason"},
-        {"type": "null"},
-    ]
-    assert work_item_schema["properties"]["repositoryBlockedAt"]["anyOf"] == [
-        {"format": "date-time", "type": "string"},
-        {"type": "null"},
-    ]
-    assert work_item_schema["properties"]["integrationDeliveryState"] == {
-        "$ref": "#/components/schemas/IntegrationDeliveryState"
-    }
-    assert work_item_schema["properties"]["integrationMergeRequestBindingId"]["anyOf"] == [
-        {"format": "uuid", "type": "string"},
-        {"type": "null"},
-    ]
-
-    dependencies = requirement_dependencies()
-    route = dependencies.route_snapshots.current(RequirementType.FEAT)
-    assert route.version == 1
-    assert route.snapshot_hash.startswith("sha256:")
-    assert route.required_capabilities == ("code.change",)
-    assert not dependencies.assignment_guard.can_auto_assign(
-        actor_id="employee-1",
-        workspace_id=WORKSPACE_ID,
-        repository_id="repository-1",
-        required_capabilities=route.required_capabilities,
-    )
-    assert dependencies.artifacts is None
-    assert dependencies.gate_policies is None
-    assert dependencies.reviewer_guard is None
 
 
 @dataclass(slots=True)
@@ -149,16 +182,21 @@ def _client(
     app = FastAPI()
     app.middleware("http")(request_id_middleware)
     register_problem_handlers(app)
-    app.include_router(
-        create_requirement_router(
-            lambda: RequirementHttpRuntime(
-                engine=database.runtime,
-                dependencies=resolved_dependencies,
-            ),
-            holder.get,
-            guard,
+    for router_factory in (
+        create_requirement_foundation_router,
+        create_requirement_baseline_router,
+        create_requirement_delivery_router,
+    ):
+        app.include_router(
+            router_factory(
+                lambda: RequirementHttpRuntime(
+                    engine=database.runtime,
+                    dependencies=resolved_dependencies,
+                ),
+                holder.get,
+                guard,
+            )
         )
-    )
     return (
         TestClient(app, raise_server_exceptions=False),
         holder,

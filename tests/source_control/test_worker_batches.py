@@ -1,12 +1,16 @@
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
 
+from control_plane.app.bootstrap.source_control_runtime import SourceControlRuntime
 from control_plane.app.modules.source_control import (
     SourceControlDependencies,
+    SourceControlDependencyUnavailable,
     process_due_source_control_inboxes,
     reconcile_due_source_control_effects,
     relay_due_source_control_requests,
@@ -28,6 +32,75 @@ from control_plane.tools import source_control_worker
 
 def _dependencies() -> SourceControlDependencies:
     return cast(SourceControlDependencies, object())
+
+
+def test_worker_default_path_owns_the_shared_runtime_context(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    lifecycle: list[str] = []
+    dependencies = _dependencies()
+
+    @contextmanager
+    def runtime_context() -> Iterator[SourceControlRuntime]:
+        lifecycle.append("entered")
+        try:
+            yield cast(
+                SourceControlRuntime,
+                SimpleNamespace(dependencies=dependencies),
+            )
+        finally:
+            lifecycle.append("closed")
+
+    monkeypatch.setattr(
+        source_control_worker,
+        "process_due_source_control_inboxes",
+        lambda *, limit, dependencies: SimpleNamespace(
+            claimed=limit,
+            processed=limit,
+            released=0,
+            effect_ids=(),
+            error_codes=(),
+        ),
+    )
+
+    exit_code = source_control_worker.main(
+        ["process", "--limit", "3"],
+        runtime_context_provider=runtime_context,
+    )
+
+    assert exit_code == 0
+    assert lifecycle == ["entered", "closed"]
+    assert json.loads(capsys.readouterr().out) == {
+        "command": "process",
+        "claimed": 3,
+        "processed": 3,
+        "released": 0,
+        "effect_ids": [],
+        "error_codes": [],
+    }
+
+
+def test_worker_incomplete_runtime_is_nonzero_and_sanitized(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    @contextmanager
+    def unavailable_runtime() -> Iterator[SourceControlRuntime]:
+        raise SourceControlDependencyUnavailable("private-runtime-detail")
+        yield  # pragma: no cover
+
+    exit_code = source_control_worker.main(
+        ["relay", "--limit", "2"],
+        runtime_context_provider=unavailable_runtime,
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 1
+    assert json.loads(output) == {
+        "command": "relay",
+        "errorCodes": ["DEPENDENCY_UNAVAILABLE"],
+    }
+    assert "private-runtime-detail" not in output
 
 
 @pytest.mark.parametrize(

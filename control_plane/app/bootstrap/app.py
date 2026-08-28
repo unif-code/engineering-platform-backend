@@ -78,13 +78,21 @@ from control_plane.app.modules.organization.api import (
 )
 from control_plane.app.modules.requirement import RequirementDependencies
 from control_plane.app.modules.requirement.adapters import (
-    FailClosedAutomaticAssignmentGuard,
+    ComposedAutomaticAssignmentGuard,
     SqlAlchemyRequirementRepository,
     V03RouteSnapshotCatalog,
 )
 from control_plane.app.modules.requirement.api import (
     RequirementHttpRuntime,
-    create_requirement_router,
+    create_requirement_foundation_router,
+)
+from control_plane.app.modules.source_control import SourceControlDependencies
+from control_plane.app.modules.source_control.adapters import (
+    SqlAlchemySourceControlRepository,
+)
+from control_plane.app.modules.source_control.api import (
+    SourceControlQueryRuntime,
+    create_repository_query_router,
 )
 from control_plane.app.modules.workspace import (
     WorkspaceDependencies,
@@ -174,6 +182,15 @@ def configuration_runtime_engine() -> Engine:
 def requirement_runtime_engine() -> Engine:
     return create_engine(
         DbSettings().requirement_database_url,
+        pool_pre_ping=True,
+        connect_args={"connect_timeout": 2},
+    )
+
+
+@lru_cache(maxsize=1)
+def source_control_query_runtime_engine() -> Engine:
+    return create_engine(
+        DbSettings().source_control_database_url,
         pool_pre_ping=True,
         connect_args={"connect_timeout": 2},
     )
@@ -298,7 +315,16 @@ def requirement_dependencies() -> RequirementDependencies:
         clock=SystemClock(),
         random=SystemRandom(),
         route_snapshots=V03RouteSnapshotCatalog(),
-        assignment_guard=FailClosedAutomaticAssignmentGuard(),
+        assignment_guard=ComposedAutomaticAssignmentGuard(
+            identity_engine=identity_runtime_engine(),
+            identity_dependencies=identity_dependencies(),
+            workspace_engine=workspace_runtime_engine(),
+            workspace_dependencies=workspace_dependencies(),
+            authorization_engine=authorization_runtime_engine(),
+            authorization_dependencies=authorization_dependencies(),
+            source_control_engine=source_control_query_runtime_engine(),
+            source_control_dependencies=source_control_dependencies(),
+        ),
         secret_manager=FileSecretManager(SecuritySettings()),
         artifacts=None,
         gate_policies=None,
@@ -311,6 +337,27 @@ def requirement_http_runtime() -> RequirementHttpRuntime:
     return RequirementHttpRuntime(
         engine=requirement_runtime_engine(),
         dependencies=requirement_dependencies(),
+    )
+
+
+@lru_cache(maxsize=1)
+def source_control_dependencies() -> SourceControlDependencies:
+    return SourceControlDependencies(
+        repository_factory=SqlAlchemySourceControlRepository,
+        engine=source_control_query_runtime_engine(),
+        requirement=None,
+        eligibility=None,
+        audit=SqlAlchemyTransactionalAuditAppender(),
+        clock=SystemClock(),
+        random=SystemRandom(),
+    )
+
+
+@lru_cache(maxsize=1)
+def source_control_query_runtime() -> SourceControlQueryRuntime:
+    return SourceControlQueryRuntime(
+        engine=source_control_query_runtime_engine(),
+        dependencies=source_control_dependencies(),
     )
 
 
@@ -404,6 +451,9 @@ def create_app(
     *,
     identity_runtime_provider: Callable[[], IdentityHttpRuntime] = identity_http_runtime,
     requirement_runtime_provider: Callable[[], RequirementHttpRuntime] = requirement_http_runtime,
+    source_control_query_runtime_provider: Callable[
+        [], SourceControlQueryRuntime
+    ] = source_control_query_runtime,
 ) -> FastAPI:
     app = FastAPI(
         title="engineering-platform-control-plane",
@@ -478,8 +528,15 @@ def create_app(
         )
     )
     app.include_router(
-        create_requirement_router(
+        create_requirement_foundation_router(
             requirement_runtime_provider,
+            cast(Callable[[], Any], protected_principal),
+            authorization_capability_guard,
+        )
+    )
+    app.include_router(
+        create_repository_query_router(
+            source_control_query_runtime_provider,
             cast(Callable[[], Any], protected_principal),
             authorization_capability_guard,
         )
