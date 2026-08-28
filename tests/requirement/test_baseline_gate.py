@@ -52,7 +52,13 @@ class StaticArtifacts:
     trusted: bool = True
     sha256: str = "sha256:sdd-1"
 
-    def get_snapshot(self, artifact_id: str, artifact_version: str) -> ArtifactSnapshot:
+    def get_snapshot(
+        self,
+        requirement_id: str,
+        artifact_id: str,
+        artifact_version: str,
+    ) -> ArtifactSnapshot:
+        del requirement_id
         return ArtifactSnapshot(
             id=artifact_id,
             version=artifact_version,
@@ -81,8 +87,13 @@ class StaticGatePolicies:
 
 
 class FailingArtifacts:
-    def get_snapshot(self, artifact_id: str, artifact_version: str) -> ArtifactSnapshot:
-        del artifact_id, artifact_version
+    def get_snapshot(
+        self,
+        requirement_id: str,
+        artifact_id: str,
+        artifact_version: str,
+    ) -> ArtifactSnapshot:
+        del requirement_id, artifact_id, artifact_version
         raise RuntimeError("artifact token and internal endpoint must not escape")
 
 
@@ -353,6 +364,19 @@ def test_gate_reassignment_supersedes_history_and_only_current_reviewer_can_deci
     assert reassigned.assignment.current_reviewer_id == "reviewer-2"
     assert reassigned.assignment.revision == 2
 
+    with isolated_requirement_database.runtime.begin() as db:
+        with pytest.raises(GateReviewerMismatch):
+            reassign_baseline_gate(
+                db,
+                requirement_id=created.requirement.id,
+                gate_id=confirmation.gate.id,
+                reviewer_id="reviewer-3",
+                reason="The delegated reviewer cannot delegate again.",
+                expected_gate_revision=reassigned.gate.revision,
+                actor=Actor("reviewer-2"),
+                idempotency_key="gate-reassign-non-default-reviewer",
+                dependencies=dependencies,
+            )
     with isolated_requirement_database.runtime.begin() as db:
         with pytest.raises(StaleGateRevision):
             reassign_baseline_gate(

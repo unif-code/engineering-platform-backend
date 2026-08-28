@@ -28,12 +28,24 @@ def test_render_contains_the_typed_requirement_contract() -> None:
     assert requirement["properties"]["workspaceId"]["format"] == "uuid"
     assert requirement["properties"]["state"] == {"$ref": "#/components/schemas/RequirementState"}
     assert requirement["properties"]["createdAt"]["format"] == "date-time"
+    assert "routeSnapshot" in requirement["properties"]
     requirement_paths = {
         path for path in schema["paths"] if path.startswith("/api/v1/requirements")
     }
     assert requirement_paths == {
         "/api/v1/requirements",
         "/api/v1/requirements/{requirementId}",
+        "/api/v1/requirements/{requirementId}/sdd-artifacts",
+        (
+            "/api/v1/requirements/{requirementId}/sdd-artifacts/"
+            "{artifactId}/versions/{artifactVersion}"
+        ),
+        "/api/v1/requirements/{requirementId}/work-items",
+        "/api/v1/requirements/{requirementId}/work-items/{workItemId}:assign",
+        "/api/v1/requirements/{requirementId}/sdd-baselines",
+        "/api/v1/requirements/{requirementId}/baseline-confirmations",
+        "/api/v1/requirements/{requirementId}/baseline-gates/{gateId}:reassign",
+        "/api/v1/requirements/{requirementId}/baseline-decisions",
     }
     repository_path = schema["paths"]["/api/v1/workspaces/{workspaceId}/repositories"]["get"]
     assert repository_path["operationId"] == "source_control_authorized_repositories_list"

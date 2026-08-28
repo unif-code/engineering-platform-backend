@@ -82,12 +82,14 @@ from control_plane.app.modules.requirement.adapters import (
     ComposedGateReviewerGuard,
     SqlAlchemyRequirementRepository,
     SqlAlchemySddArtifactReader,
-    V03RouteSnapshotCatalog,
+    V04RouteSnapshotCatalog,
     WorkspaceOwnerGatePolicy,
 )
 from control_plane.app.modules.requirement.api import (
     RequirementHttpRuntime,
+    create_requirement_baseline_router,
     create_requirement_foundation_router,
+    create_requirement_planning_router,
 )
 from control_plane.app.modules.source_control import SourceControlDependencies
 from control_plane.app.modules.source_control.adapters import (
@@ -317,7 +319,7 @@ def requirement_dependencies() -> RequirementDependencies:
         denial_audit=SqlAlchemyAuditEventRepository(runtime_engine()),
         clock=SystemClock(),
         random=SystemRandom(),
-        route_snapshots=V03RouteSnapshotCatalog(),
+        route_snapshots=V04RouteSnapshotCatalog(),
         assignment_guard=ComposedAutomaticAssignmentGuard(
             identity_engine=identity_runtime_engine(),
             identity_dependencies=identity_dependencies(),
@@ -542,6 +544,20 @@ def create_app(
     )
     app.include_router(
         create_requirement_foundation_router(
+            requirement_runtime_provider,
+            cast(Callable[[], Any], protected_principal),
+            authorization_capability_guard,
+        )
+    )
+    app.include_router(
+        create_requirement_planning_router(
+            requirement_runtime_provider,
+            cast(Callable[[], Any], protected_principal),
+            authorization_capability_guard,
+        )
+    )
+    app.include_router(
+        create_requirement_baseline_router(
             requirement_runtime_provider,
             cast(Callable[[], Any], protected_principal),
             authorization_capability_guard,

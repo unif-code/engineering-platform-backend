@@ -755,7 +755,11 @@ def _register_sdd_baseline_once(
         field="artifact version",
     )
     try:
-        snapshot = artifacts.get_snapshot(normalized_artifact_id, normalized_artifact_version)
+        snapshot = artifacts.get_snapshot(
+            requirement_id,
+            normalized_artifact_id,
+            normalized_artifact_version,
+        )
     except RequirementError:
         raise
     except Exception as error:
@@ -1120,6 +1124,9 @@ def _reassign_baseline_gate_once(
     current = repository.current_gate_assignment(gate_id, for_update=True)
     if current is None:
         raise RequirementDependencyUnavailable("Gate has no current reviewer assignment")
+    stable_actor = actor_id(actor)
+    if current["default_reviewer_id"] != stable_actor:
+        raise GateReviewerMismatch(stable_actor)
     candidate_id = _normalized_text(reviewer_id, field="reviewer id")
     normalized_reason = _normalized_text(reason, field="reassignment reason")
     if current["current_reviewer_id"] == candidate_id:
@@ -1139,7 +1146,6 @@ def _reassign_baseline_gate_once(
     if not candidate_eligible:
         raise GateReviewerIneligible(candidate_id)
 
-    stable_actor = actor_id(actor)
     now = dependencies.clock.now()
     superseded = repository.supersede_gate_assignment(
         str(current["id"]),

@@ -1,25 +1,31 @@
 """Requirement HTTP boundary."""
 
 from control_plane.app.modules.requirement.api.routes import (
+    REQUIREMENT_BASELINE_ASSIGN_CAPABILITY,
     REQUIREMENT_BASELINE_DECIDE_CAPABILITY,
     REQUIREMENT_BASELINE_SUBMIT_CAPABILITY,
     REQUIREMENT_CREATE_CAPABILITY,
     REQUIREMENT_READ_CAPABILITY,
     WORK_ITEM_ASSIGN_CAPABILITY,
+    WORK_ITEM_CREATE_CAPABILITY,
     RequirementHttpRuntime,
     create_requirement_baseline_router,
     create_requirement_delivery_router,
     create_requirement_foundation_router,
+    create_requirement_planning_router,
 )
 
 __all__ = [
+    "REQUIREMENT_BASELINE_ASSIGN_CAPABILITY",
     "REQUIREMENT_BASELINE_DECIDE_CAPABILITY",
     "REQUIREMENT_BASELINE_SUBMIT_CAPABILITY",
     "REQUIREMENT_CREATE_CAPABILITY",
     "REQUIREMENT_READ_CAPABILITY",
+    "WORK_ITEM_CREATE_CAPABILITY",
     "WORK_ITEM_ASSIGN_CAPABILITY",
     "RequirementHttpRuntime",
     "create_requirement_baseline_router",
     "create_requirement_delivery_router",
     "create_requirement_foundation_router",
+    "create_requirement_planning_router",
 ]

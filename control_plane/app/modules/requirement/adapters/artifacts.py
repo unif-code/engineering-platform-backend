@@ -18,7 +18,12 @@ from control_plane.app.modules.requirement.ports import (
 class SqlAlchemySddArtifactReader:
     engine: Engine
 
-    def get_snapshot(self, artifact_id: str, artifact_version: str) -> ArtifactSnapshot:
+    def get_snapshot(
+        self,
+        requirement_id: str,
+        artifact_id: str,
+        artifact_version: str,
+    ) -> ArtifactSnapshot:
         try:
             version = int(artifact_version)
         except ValueError:
@@ -26,7 +31,8 @@ class SqlAlchemySddArtifactReader:
         if version < 1 or str(version) != artifact_version:
             raise ArtifactUnavailable(artifact_id)
         with self.engine.connect() as db:
-            row = SqlAlchemyRequirementRepository(db).sdd_artifact_version_by_identity(
+            row = SqlAlchemyRequirementRepository(db).sdd_artifact_version(
+                requirement_id,
                 artifact_id,
                 version,
             )
@@ -44,10 +50,15 @@ class SqlAlchemySddArtifactReader:
 
 @dataclass(frozen=True, slots=True)
 class InMemorySddArtifactReader:
-    snapshots: Mapping[tuple[str, str], ArtifactSnapshot]
+    snapshots: Mapping[tuple[str, str, str], ArtifactSnapshot]
 
-    def get_snapshot(self, artifact_id: str, artifact_version: str) -> ArtifactSnapshot:
+    def get_snapshot(
+        self,
+        requirement_id: str,
+        artifact_id: str,
+        artifact_version: str,
+    ) -> ArtifactSnapshot:
         try:
-            return self.snapshots[(artifact_id, artifact_version)]
+            return self.snapshots[(requirement_id, artifact_id, artifact_version)]
         except KeyError:
             raise ArtifactUnavailable(artifact_id) from None

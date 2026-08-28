@@ -8,15 +8,19 @@ from control_plane.app.modules.requirement.application.delivery import (
     WorkItemDeliveryResult,
 )
 from control_plane.app.modules.requirement.domain import (
+    AddWorkItemResult,
     AssignmentState,
+    AssignWorkItemResult,
     BaselineConfirmationResult,
     BaselineDecisionResult,
     CreateRequirementResult,
+    CreateSddArtifactResult,
     DecisionDto,
     DecisionOutcome,
     ExecutorType,
     GateAssignmentDto,
     GateInstanceDto,
+    GateReassignmentResult,
     GateState,
     GateType,
     IntegrationDeliveryBlockedReason,
@@ -30,7 +34,9 @@ from control_plane.app.modules.requirement.domain import (
     RequirementPage,
     RequirementState,
     RequirementType,
+    SddArtifactVersionDto,
     SddBaselineDto,
+    WorkItemAssignmentDto,
     WorkItemDto,
     WorkItemState,
 )
@@ -38,7 +44,12 @@ from control_plane.app.shared.api.camel import CamelModel
 
 
 class StrictCamelModel(CamelModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(
+        extra="forbid",
+        populate_by_name=False,
+        validate_by_alias=True,
+        validate_by_name=False,
+    )
 
 
 class CreateRequirementRequestDto(StrictCamelModel):
@@ -53,6 +64,25 @@ class CreateRequirementRequestDto(StrictCamelModel):
 class RegisterSddBaselineRequestDto(StrictCamelModel):
     artifact_id: str = Field(min_length=1)
     artifact_version: str = Field(min_length=1)
+
+
+class CreateSddArtifactRequestDto(StrictCamelModel):
+    artifact_id: UUID | None = None
+    content: str = Field(min_length=1, max_length=200_000)
+
+
+class AddWorkItemRequestDto(StrictCamelModel):
+    repository_id: str = Field(min_length=1, max_length=200)
+
+
+class AssignWorkItemRequestDto(StrictCamelModel):
+    human_owner_id: str = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class ReassignBaselineGateRequestDto(StrictCamelModel):
+    reviewer_id: str = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=1, max_length=2000)
 
 
 class SubmitBaselineConfirmationRequestDto(StrictCamelModel):
@@ -80,6 +110,7 @@ class RequirementResponseDto(CamelModel):
     initial_repository_id: str
     route_snapshot_version: int
     route_snapshot_hash: str
+    route_snapshot: dict[str, object]
     state: RequirementState
     record_state: RecordState
     requirement_version: int
@@ -163,18 +194,6 @@ class WorkItemDeliveryProjectionResponseDto(CamelModel):
         return cls.model_validate(value.model_dump(mode="json"))
 
 
-class RequirementDetailsResponseDto(CamelModel):
-    requirement: RequirementResponseDto
-    work_items: list[WorkItemResponseDto]
-
-    @classmethod
-    def from_domain(cls, value: RequirementDetailsDto) -> "RequirementDetailsResponseDto":
-        return cls(
-            requirement=RequirementResponseDto.from_domain(value.requirement),
-            work_items=[WorkItemResponseDto.from_domain(item) for item in value.work_items],
-        )
-
-
 class RequirementListResponseDto(CamelModel):
     items: list[RequirementResponseDto]
     next_cursor: str | None
@@ -215,7 +234,9 @@ class GateInstanceResponseDto(CamelModel):
     artifact_hash: str
     route_snapshot_version: int
     route_snapshot_hash: str
+    policy_code: str
     policy_version: int
+    policy_snapshot_hash: str
     state: GateState
     revision: int
     created_at: datetime
@@ -295,4 +316,131 @@ class BaselineDecisionResponseDto(CamelModel):
             requirement=RequirementResponseDto.from_domain(value.requirement),
             gate=GateInstanceResponseDto.from_domain(value.gate),
             decision=DecisionResponseDto.from_domain(value.decision),
+        )
+
+
+class WorkItemAssignmentResponseDto(CamelModel):
+    id: UUID
+    work_item_id: UUID
+    assignee_id: str
+    assigned_by: str
+    reason: str
+    revision: int
+    assigned_at: datetime
+    superseded_at: datetime | None
+
+    @classmethod
+    def from_domain(cls, value: WorkItemAssignmentDto) -> "WorkItemAssignmentResponseDto":
+        return cls.model_validate(value.model_dump(mode="json"))
+
+
+class SddArtifactVersionResponseDto(CamelModel):
+    artifact_id: UUID
+    version: int
+    requirement_id: UUID
+    sha256: str
+    state: str
+    media_type: str
+    trust: str
+    content: str
+    created_by: str
+    created_at: datetime
+
+    @classmethod
+    def from_domain(cls, value: SddArtifactVersionDto) -> "SddArtifactVersionResponseDto":
+        return cls.model_validate(value.model_dump(mode="json"))
+
+
+class CreateSddArtifactResponseDto(CamelModel):
+    requirement: RequirementResponseDto
+    artifact: SddArtifactVersionResponseDto
+
+    @classmethod
+    def from_domain(cls, value: CreateSddArtifactResult) -> "CreateSddArtifactResponseDto":
+        return cls(
+            requirement=RequirementResponseDto.from_domain(value.requirement),
+            artifact=SddArtifactVersionResponseDto.from_domain(value.artifact),
+        )
+
+
+class AddWorkItemResponseDto(CamelModel):
+    requirement: RequirementResponseDto
+    work_item: WorkItemResponseDto
+    assignment: WorkItemAssignmentResponseDto | None
+
+    @classmethod
+    def from_domain(cls, value: AddWorkItemResult) -> "AddWorkItemResponseDto":
+        return cls(
+            requirement=RequirementResponseDto.from_domain(value.requirement),
+            work_item=WorkItemResponseDto.from_domain(value.work_item),
+            assignment=(
+                None
+                if value.assignment is None
+                else WorkItemAssignmentResponseDto.from_domain(value.assignment)
+            ),
+        )
+
+
+class AssignWorkItemResponseDto(CamelModel):
+    work_item: WorkItemResponseDto
+    assignment: WorkItemAssignmentResponseDto
+
+    @classmethod
+    def from_domain(cls, value: AssignWorkItemResult) -> "AssignWorkItemResponseDto":
+        return cls(
+            work_item=WorkItemResponseDto.from_domain(value.work_item),
+            assignment=WorkItemAssignmentResponseDto.from_domain(value.assignment),
+        )
+
+
+class GateReassignmentResponseDto(CamelModel):
+    gate: GateInstanceResponseDto
+    assignment: GateAssignmentResponseDto
+
+    @classmethod
+    def from_domain(cls, value: GateReassignmentResult) -> "GateReassignmentResponseDto":
+        return cls(
+            gate=GateInstanceResponseDto.from_domain(value.gate),
+            assignment=GateAssignmentResponseDto.from_domain(value.assignment),
+        )
+
+
+class RequirementDetailsResponseDto(CamelModel):
+    requirement: RequirementResponseDto
+    work_items: list[WorkItemResponseDto]
+    work_item_assignments: list[WorkItemAssignmentResponseDto]
+    current_sdd_baseline: SddBaselineResponseDto | None
+    current_gate: GateInstanceResponseDto | None
+    current_gate_assignment: GateAssignmentResponseDto | None
+    current_decision: DecisionResponseDto | None
+
+    @classmethod
+    def from_domain(cls, value: RequirementDetailsDto) -> "RequirementDetailsResponseDto":
+        return cls(
+            requirement=RequirementResponseDto.from_domain(value.requirement),
+            work_items=[WorkItemResponseDto.from_domain(item) for item in value.work_items],
+            work_item_assignments=[
+                WorkItemAssignmentResponseDto.from_domain(item)
+                for item in value.work_item_assignments
+            ],
+            current_sdd_baseline=(
+                None
+                if value.current_sdd_baseline is None
+                else SddBaselineResponseDto.from_domain(value.current_sdd_baseline)
+            ),
+            current_gate=(
+                None
+                if value.current_gate is None
+                else GateInstanceResponseDto.from_domain(value.current_gate)
+            ),
+            current_gate_assignment=(
+                None
+                if value.current_gate_assignment is None
+                else GateAssignmentResponseDto.from_domain(value.current_gate_assignment)
+            ),
+            current_decision=(
+                None
+                if value.current_decision is None
+                else DecisionResponseDto.from_domain(value.current_decision)
+            ),
         )

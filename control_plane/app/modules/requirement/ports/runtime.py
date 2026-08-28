@@ -62,7 +62,12 @@ class ArtifactSnapshot(BaseModel):
 
 
 class ArtifactPort(Protocol):
-    def get_snapshot(self, artifact_id: str, artifact_version: str) -> ArtifactSnapshot: ...
+    def get_snapshot(
+        self,
+        requirement_id: str,
+        artifact_id: str,
+        artifact_version: str,
+    ) -> ArtifactSnapshot: ...
 
 
 class GatePolicySnapshot(BaseModel):

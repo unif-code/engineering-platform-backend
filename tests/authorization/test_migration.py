@@ -11,6 +11,45 @@ from control_plane.app.modules.authorization import V02_SUPER_ADMIN_PLATFORM_CAP
 pytestmark = pytest.mark.integration
 
 
+def test_authorization_0007_registers_v04_workspace_actions_without_super_admin_bypass(
+    authorization_owner_engine: Engine,
+) -> None:
+    config = Config("alembic.ini")
+    expected = [
+        {"capability": "work_item.create", "scopeType": "WORKSPACE"},
+        {"capability": "work_item.assign", "scopeType": "WORKSPACE"},
+        {"capability": "requirement.baseline.submit", "scopeType": "WORKSPACE"},
+        {"capability": "requirement.baseline.assign", "scopeType": "WORKSPACE"},
+        {"capability": "requirement.baseline.decide", "scopeType": "WORKSPACE"},
+    ]
+    command.downgrade(config, "0006_auth_v03_routes")
+    try:
+        command.upgrade(config, "heads")
+        with authorization_owner_engine.connect() as db:
+            registered = db.execute(
+                text(
+                    "SELECT meta->'actionCapabilities' FROM \"authorization\".route_registry "
+                    "WHERE route_key='requirements'"
+                )
+            ).scalar_one()
+        assert registered == expected
+        assert {item["capability"] for item in expected}.isdisjoint(
+            V02_SUPER_ADMIN_PLATFORM_CAPABILITIES
+        )
+
+        command.downgrade(config, "0006_auth_v03_routes")
+        with authorization_owner_engine.connect() as db:
+            restored = db.execute(
+                text(
+                    'SELECT meta FROM "authorization".route_registry '
+                    "WHERE route_key='requirements'"
+                )
+            ).scalar_one()
+        assert restored == {"name": "Requirements", "order": 20}
+    finally:
+        command.upgrade(config, "heads")
+
+
 def test_authorization_0006_installs_workspace_requirement_route_without_super_admin_bypass(
     authorization_owner_engine: Engine,
 ) -> None:
@@ -18,13 +57,10 @@ def test_authorization_0006_installs_workspace_requirement_route_without_super_a
     capabilities = {
         "requirement.create",
         "requirement.read",
-        "requirement.baseline.submit",
-        "requirement.baseline.decide",
-        "work_item.assign",
     }
     command.downgrade(config, "0005_authorization_v02_routes")
     try:
-        command.upgrade(config, "heads")
+        command.upgrade(config, "0006_auth_v03_routes")
         with authorization_owner_engine.connect() as db:
             route = tuple(
                 db.execute(

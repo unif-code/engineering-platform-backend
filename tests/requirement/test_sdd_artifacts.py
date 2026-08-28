@@ -6,6 +6,7 @@ import pytest
 from control_plane.app.modules.requirement import (
     ArtifactState,
     ArtifactTrust,
+    ArtifactUnavailable,
     InvalidRequirementInput,
     SddArtifactNotFound,
     StaleBaselineSubject,
@@ -72,9 +73,22 @@ def test_create_sdd_artifact_normalizes_bytes_and_allocates_immutable_versions(
             artifact_version=1,
             dependencies=_dependencies(),
         )
-    snapshot = SqlAlchemySddArtifactReader(isolated_requirement_database.runtime).get_snapshot(
-        first.artifact.artifact_id, "1"
+    reader = SqlAlchemySddArtifactReader(isolated_requirement_database.runtime)
+    snapshot = reader.get_snapshot(
+        requirement_id,
+        first.artifact.artifact_id,
+        "1",
     )
+    other_requirement_id, _revision = _prepared(
+        isolated_requirement_database,
+        suffix="snapshot-isolation",
+    )
+    with pytest.raises(ArtifactUnavailable):
+        reader.get_snapshot(
+            other_requirement_id,
+            first.artifact.artifact_id,
+            "1",
+        )
 
     assert UUID(first.artifact.artifact_id)
     assert first.artifact.version == 1
