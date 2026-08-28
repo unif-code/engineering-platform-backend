@@ -17,6 +17,10 @@ class SourceControlRepository(Protocol):
         for_update: bool = False,
     ) -> Any: ...
 
+    def authorized_repositories(self, workspace_id: str) -> list[Any]: ...
+
+    def authorized_repository_runtime_references(self) -> list[Any]: ...
+
     def remove_workspace_repository(
         self,
         repository_id: str,

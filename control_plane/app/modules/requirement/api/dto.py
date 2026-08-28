@@ -111,10 +111,6 @@ class WorkItemResponseDto(CamelModel):
     task_branch: str | None
     repository_blocked_reason_code: RepositoryBindingBlockedReason | None
     repository_blocked_at: datetime | None
-    integration_delivery_state: IntegrationDeliveryState
-    integration_merge_request_binding_id: UUID | None
-    integration_blocked_reason_code: IntegrationDeliveryBlockedReason | None
-    integration_updated_at: datetime | None
     revision: int
     created_at: datetime
     updated_at: datetime

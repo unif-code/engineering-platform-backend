@@ -84,7 +84,20 @@ def register_workspace_repository(
         _validate_secret_reference(webhook_signing_secret_ref)
     existing = repository.workspace_repository(repository_id, for_update=True)
     if existing is not None:
-        if str(existing["workspace_id"]) != workspace_id:
+        expected = {
+            "workspace_id": workspace_id,
+            "provider": "GITLAB",
+            "project_id": project_id,
+            "project_path": project_path,
+            "default_branch": "main",
+            "connection_ref": connection_ref,
+            "credential_secret_ref": credential_secret_ref,
+            "webhook_signing_secret_ref": webhook_signing_secret_ref,
+        }
+        actual = {
+            key: str(existing[key]) if key == "workspace_id" else existing[key] for key in expected
+        }
+        if actual != expected:
             raise RepositoryWorkspaceConflict(repository_id)
         if existing["status"] == RepositoryAuthorizationState.REMOVED.value:
             raise RepositoryRemoved(repository_id)
