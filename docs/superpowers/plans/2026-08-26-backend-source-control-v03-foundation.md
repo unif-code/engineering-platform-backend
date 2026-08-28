@@ -1,5 +1,7 @@
 # V0.3 Source Control Foundation Implementation Plan
 
+> **Roadmap Reclassification（2026-08-28）**：本计划继续归 V0.3 Requirement & Branch Foundation，并保留为已执行后端记录；V0.3 仍缺最小前端与真实端到端旅程，不能由本计划单独标记完成。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 可靠消费 Requirement Repository Binding Outbox，校验当前负责人和 Workspace Repository，按 GitLab `main` 的准确 SHA 创建确定性任务分支，并以 Inbox、Effect Ledger、不可变 Binding、签名 Webhook 与 Reconciliation 收敛重复和未知外部结果。

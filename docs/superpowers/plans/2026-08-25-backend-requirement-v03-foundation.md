@@ -1,5 +1,7 @@
 # V0.3 Requirement 领域基础实施计划
 
+> **Roadmap Reclassification（2026-08-28）**：Requirement/首个 WorkItem/Repository Binding 请求归 V0.3；SDD Baseline Gate/Decision 是提前实现的 V0.4 前置。整个人工交付闭环现分布于 V0.3～V0.6，本计划保留为已执行后端技术记录。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 在后端建立 V0.3 第一批 Requirement 深模块，使用真实 PostgreSQL 持久化 Requirement、首个 WorkItem、SDD Baseline Gate、Assignment 与 Decision，并跑通 `CREATED → PREPARING → AWAITING_CONFIRMATION → READY` 的人工基线确认链。
@@ -14,7 +16,7 @@
 
 ## 执行前置与全局约束
 
-- 在架构仓先登记 V0.3 开发与 V0.1/V0.2 验收重叠的治理例外；登记前不在成员仓引用新的 `DEV-xxx`。
+- 路线图已允许公开 Contract 稳定后的开发 overlap，不再为本计划登记新的时序 deviation；任何 overlap、代码或 tag 仍不能替代明确 Release Acceptance。
 - 本计划只实现第一批领域底座，不实现 GitLab 协议、对象上传/扫描、Chat/Model、MR、Acceptance 或前端页面。
 - 每个实现步骤严格按 `RED → GREEN → REFACTOR`：先运行新增测试并确认按预期失败，再写最小实现，再运行定向测试。
 - 每个写命令都必须在同一数据库事务内保存业务事实、Audit 和必要的 Outbox；不得用内存队列替代可靠记录。

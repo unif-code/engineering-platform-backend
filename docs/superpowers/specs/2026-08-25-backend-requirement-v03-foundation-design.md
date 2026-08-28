@@ -1,5 +1,7 @@
 # V0.3 Requirement 领域基础 · 后端设计
 
+> **路线图重分类（2026-08-28）**：本批的 Requirement/首个 WorkItem/Repository Binding 请求归 V0.3 Requirement & Branch Foundation；已提前实现的 SDD Baseline Gate/Decision 是 V0.4 的内部前置，不代表 V0.4 旅程完成。旧 V0.3“整个人工交付闭环”总括已被权威路线图取代。
+
 - 日期：2026-08-25
 - 状态：用户已确认并授权继续实施（2026-08-25）
 - 仓库：`engineering-platform-backend`
@@ -9,17 +11,19 @@
 
 ## 目标与版本边界
 
-V0.3 的 Release 目标是跑通人工交付闭环：人员创建 Requirement，形成并确认 SDD，拆分并分配 WorkItem，人工完成代码交付，绑定精确 Git/MR/Artifact 证据，完成 Acceptance、Formal MR Review 与合并。V0.3 不执行 Agent 代码，不创建 Kata Sandbox，也不允许 Model、Connector 或 UI 代替人工 Gate。
+V0.3 的 Release 目标是让用户经前端创建 Requirement，并在负责人、授权仓库与 base commit 校验后获得经过远端回读验证的确定性任务分支；Requirement、首个 WorkItem、Outbox/Inbox、Effect Ledger、Binding 与最小 UI 形成首段纵向链。它不再承担整个人工交付闭环。
 
-本设计只覆盖 V0.3 的第一批后端领域基础：建立 Requirement 深模块、首个 WorkItem、SDD 基线 Gate 以及到 `READY` 为止的状态语义。GitLab Connector、对象存储、Chat/Model Gateway、MR/Acceptance 全闭环与前端接入在后续 V0.3 批次完成。
+本设计覆盖该链的后端领域基础：建立 Requirement 深模块、首个 WorkItem、Repository Binding 请求，以及提前形成的 SDD 基线 Gate/`READY` 状态语义。GitLab Branch Binding 由同版本 Source Control 批次完成；前端最小接入仍是 V0.3 未完成范围。
 
-因此版本能力边界固定为：
+后续能力重新归类为：
 
-- V0.3：人工 Requirement/SDD/Git/MR/Artifact 交付流程可端到端运行。
-- V0.4：在 V0.3 人工责任链之上增加 Agent Attempt、Kata Sandbox、Pydantic AI Runtime 与有界 Child Execution。
-- V0.5：在 DEV 完成生产候选级集成、运维、安全、容量、回滚与真实恢复验收。
+- V0.3：Requirement、首个 WorkItem、Repository/Branch Binding 与最小前后端旅程。
+- V0.4：SDD/Route、WorkItem 拆分/Assignment、人工基线 Gate 与 UI。
+- V0.5：人工 Integration MR 与精确 SHA Merge。
+- V0.6：Artifact、Integration Baseline Selection、Acceptance 与 Formal MR。
+- V0.7～V0.13：Chat/Model、Agent、Sandbox、专业 Agent、编排与 Team Trial；运维从 V0.14 开始。
 
-V0.3 开发可以与 V0.1/V0.2 的环境验收收尾并行，但不得据此提前宣称 V0.3 Release Gate 通过或激活 V0.3 Capability。正式实现前由架构仓登记该开发时序偏离；在登记完成前，本仓不铸造或引用新的 `DEV-xxx` 编号。
+开发可以在上游公开 Contract 稳定后重叠，不再为普通 overlap 登记 DEV deviation；但代码、CI、tag 或后一版本均不能替代 V0.3 的完整前后端旅程证据与明确 Release Acceptance。
 
 ## 方案选择
 
@@ -29,7 +33,7 @@ V0.3 开发可以与 V0.1/V0.2 的环境验收收尾并行，但不得据此提�
 
 - UI-first：会重复 V0.2 已退役的运行时 Mock 路径，无法证明服务端 Gate 与授权。
 - Integration-first：先接 GitLab 或 Model 会让外部 Adapter 反向定义 Requirement 业务状态。
-- 一次性实现完整 V0.3：范围跨 Requirement、Source Control、Artifact、Model、前后端与运行证据，不利于逐批验证和故障定位。
+- 一次性实现完整人工交付链：范围跨 Requirement、Source Control、Artifact、Model、前后端与运行证据，不利于逐版本验证和故障定位。
 
 ## 统一领域语言
 
@@ -71,7 +75,7 @@ requirement/
 - `requiredWorkItemSetVersion/hash`
 - `revision` 与创建/更新时间
 
-`type` 固定为 `feat | fix | refactor | chore`，创建后不得就地变更。首批只允许 `recordState=ACTIVE`，归档、删除和恢复留到后续 V0.3 批次。
+`type` 固定为 `feat | fix | refactor | chore`，创建后不得就地变更。首批只允许 `recordState=ACTIVE`，归档、删除和恢复留到后续 Requirement 版本。
 
 状态机首批覆盖：
 
@@ -186,7 +190,7 @@ Gate Policy 通过 Port 读取有效快照；Requirement 不拥有 Configuration
 - `requirement.baseline.decide`
 - `work_item.assign`
 
-`work_item.assign` 在第一批仅作为授权词汇和后续批次的路由种子保留。本批次不提供浏览器或内部手工分配命令；生产自动分配 Guard 固定 Fail Closed，因此真实生产装配创建的 WorkItem 保持 `UNASSIGNED`。手工分配与 Repository Guard 接入属于后续 V0.3 WorkItem 批次。
+`work_item.assign` 在第一批仅作为授权词汇和后续批次的路由种子保留。本批次不提供浏览器或内部手工分配命令；生产自动分配 Guard 固定 Fail Closed，因此真实生产装配创建的 WorkItem 保持 `UNASSIGNED`。手工分配与 Repository Guard 接入属于 V0.4 WorkItem/Assignment。
 
 所有判定同时验证 Capability、Workspace Scope、Membership 和当前对象关系。Requirement 创建人不是隐式管理员；Gate assignee 只有在决策时资格仍有效才能签署。
 
@@ -215,12 +219,12 @@ Audit 记录创建、首项初始化、负责人解析、SDD baseline 绑定、G
 6. OpenAPI 与代码一致，breaking 版本策略由后续发布计划单独确认；本设计不自动打 tag。
 7. Ruff、mypy、import-linter、Alembic heads、完整 pytest 与 OpenAPI check 全绿。
 
-## 后续 V0.3 批次
+## 后续版本映射
 
-1. GitLab Connector、Repository/Branch Binding、Webhook、Effect Ledger 与 Reconciliation。
-2. Artifact 上传、对象存储、扫描/可信纯文本策略与 Evidence Snapshot。
-3. Chat/SDD、Model Gateway、Model Route Policy 与 promptfoo 一次性评测证据。
-4. WorkItem 交付、Integration Baseline Selection、Acceptance、Formal MR Review/Merge。
-5. 前端 Requirement/Tasks/Messages 原型接入版本化 OpenAPI Artifact并完成真实人工交付旅程。
+1. V0.3：GitLab Connector、Repository/Branch Binding、Webhook、Effect Ledger、Reconciliation 与最小前端。
+2. V0.4：SDD/Route、Assignment、人工 Gate 与任务详情前端。
+3. V0.5：WorkItem 人工实现与 Integration MR。
+4. V0.6：Artifact/Evidence、Integration Baseline Selection、Acceptance、Formal MR Review/Merge。
+5. V0.7：Chat/SDD、Model Gateway、Model Route Policy 与 promptfoo Evaluation Evidence。
 
-这些批次全部完成并通过 V0.3 Release Gate 后，才可宣称人工交付流程跑通；Agent 自动研发流程仍属于 V0.4。
+V0.6 通过后才可宣称人工交付闭环；V0.3 后端基础或 V0.5 Integration MR 代码完成均不能提前形成该结论。
