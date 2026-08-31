@@ -1,7 +1,7 @@
 """Source Control adapters."""
 
 from control_plane.app.modules.source_control.adapters.eligibility import (
-    CurrentOwnerEligibilityAdapter,
+    CurrentActorEligibilityAdapter,
 )
 from control_plane.app.modules.source_control.adapters.gitlab import HttpxGitLabAdapter
 from control_plane.app.modules.source_control.adapters.gitlab_merge_requests import (
@@ -28,7 +28,7 @@ from control_plane.app.modules.source_control.adapters.sqlalchemy import (
 )
 
 __all__ = [
-    "CurrentOwnerEligibilityAdapter",
+    "CurrentActorEligibilityAdapter",
     "DevSecretReferenceResolver",
     "HttpxGitLabAdapter",
     "HttpxGitLabMergeRequestAdapter",

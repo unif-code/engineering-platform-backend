@@ -1,4 +1,5 @@
 from control_plane.app.modules.requirement.domain.delivery import (
+    required_work_item_set_hash,
     transition_human_work_started,
     transition_integration_mr_ready,
 )
@@ -29,6 +30,7 @@ from control_plane.app.modules.requirement.domain.models import (
     RepositoryBindingContext,
     RepositoryBindingRequestMessage,
     RepositoryState,
+    RequirementDeliverySnapshotDto,
     RequirementDetailsDto,
     RequirementDto,
     RequirementPage,
@@ -110,6 +112,7 @@ __all__ = [
     "RepositoryBindingBlockedReason",
     "RepositoryBindingRequestMessage",
     "RequirementDetailsDto",
+    "RequirementDeliverySnapshotDto",
     "RequirementDependencyUnavailable",
     "RequirementDto",
     "RequirementError",
@@ -133,6 +136,7 @@ __all__ = [
     "WorkItemState",
     "canonical_route_snapshot_hash",
     "derive_work_item_state",
+    "required_work_item_set_hash",
     "transition_requirement",
     "transition_human_work_started",
     "transition_integration_mr_ready",

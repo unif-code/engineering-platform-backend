@@ -14,6 +14,7 @@ from control_plane.app.modules.requirement.domain import (
     RequirementType,
     WorkItemState,
     derive_work_item_state,
+    transition_human_work_started,
     transition_requirement,
 )
 
@@ -92,6 +93,19 @@ def test_work_item_is_ready_only_after_the_requirement_gate_and_local_guards_are
     expected: WorkItemState,
 ) -> None:
     assert derive_work_item_state(requirement, assignment, repository) is expected
+
+
+@pytest.mark.parametrize(
+    "requirement",
+    (RequirementState.READY, RequirementState.IN_PROGRESS),
+)
+def test_ready_work_item_can_start_before_or_after_a_sibling_has_started(
+    requirement: RequirementState,
+) -> None:
+    assert transition_human_work_started(requirement, WorkItemState.READY) == (
+        RequirementState.IN_PROGRESS,
+        WorkItemState.IN_PROGRESS,
+    )
 
 
 def test_v04_route_snapshot_freezes_ordered_delivery_steps_and_capabilities() -> None:

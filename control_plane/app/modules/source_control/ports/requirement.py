@@ -23,6 +23,14 @@ class RequirementBindingContext(BaseModel):
     required_capabilities: tuple[str, ...]
 
 
+class ActorEligibilityContext(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    actor_id: str
+    workspace_id: str
+    required_capabilities: tuple[str, ...]
+
+
 class BindingEligibility(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -76,5 +84,5 @@ class RequirementBindingPort(Protocol):
     def record_blocked(self, result: BindingBlockedResult) -> None: ...
 
 
-class OwnerEligibilityPort(Protocol):
-    def evaluate(self, context: RequirementBindingContext) -> BindingEligibility: ...
+class ActorEligibilityPort(Protocol):
+    def evaluate(self, context: ActorEligibilityContext) -> BindingEligibility: ...

@@ -221,6 +221,30 @@ class SqlAlchemyRequirementRepository:
             ).mappings()
         )
 
+    def requirement_delivery_snapshot(self, requirement_id: str) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "SELECT requirement.id, requirement.requirement_version, "
+                    "requirement.required_work_item_set_version, "
+                    "requirement.required_work_item_set_hash, "
+                    "COALESCE(array_agg(work_item.id::text ORDER BY work_item.id) "
+                    "FILTER (WHERE work_item.id IS NOT NULL), ARRAY[]::text[]) "
+                    "AS work_item_ids "
+                    "FROM requirement.requirement AS requirement "
+                    "LEFT JOIN requirement.work_item AS work_item "
+                    "ON work_item.requirement_id=requirement.id "
+                    "WHERE requirement.id=:requirement_id "
+                    "GROUP BY requirement.id, requirement.requirement_version, "
+                    "requirement.required_work_item_set_version, "
+                    "requirement.required_work_item_set_hash"
+                ),
+                {"requirement_id": requirement_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
     def work_item_by_id(
         self,
         work_item_id: str,
@@ -710,7 +734,16 @@ class SqlAlchemyRequirementRepository:
                     "'requirement.integration-merge-request.requested', "
                     "'requirement.integration-merge.requested') "
                     "AND payload->>'workItemId'=work_item.id::text "
-                    "ORDER BY created_at DESC, id DESC LIMIT 1"
+                    "AND payload->>'workItemRevision' ~ '^[0-9]+$' "
+                    "AND (payload->>'workItemRevision')::bigint <= work_item.revision "
+                    "AND (work_item.integration_delivery_state NOT IN "
+                    "('MR_PENDING', 'MERGE_PENDING') "
+                    "OR (work_item.integration_delivery_state='MR_PENDING' AND topic="
+                    "'requirement.integration-merge-request.requested') "
+                    "OR (work_item.integration_delivery_state='MERGE_PENDING' AND topic="
+                    "'requirement.integration-merge.requested')) "
+                    "ORDER BY (payload->>'workItemRevision')::bigint DESC, "
+                    "created_at DESC, id DESC LIMIT 1"
                     ") AS delivery_request ON TRUE "
                     "WHERE work_item.id=:work_item_id"
                 ),

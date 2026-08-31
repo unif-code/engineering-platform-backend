@@ -3,6 +3,9 @@ from typing import Any, Literal
 
 from sqlalchemy.exc import IntegrityError
 
+from control_plane.app.modules.source_control.application._eligibility import (
+    actor_eligibility_context,
+)
 from control_plane.app.modules.source_control.application._integration_common import (
     CREATE_OPERATION as _CREATE_OPERATION,
 )
@@ -103,7 +106,9 @@ def _read_admission(
         return SourceControlReason.REPOSITORY_NOT_AUTHORIZED
     if context.base_commit_sha is None or context.task_branch is None:
         return SourceControlReason.BRANCH_BINDING_MISSING
-    owner = eligibility.evaluate(binding_context)
+    owner = eligibility.evaluate(
+        actor_eligibility_context(binding_context, actor_id=str(inbox["actor_id"]))
+    )
     if not owner.eligible:
         return SourceControlReason.OWNER_INELIGIBLE
     with dependencies.engine.connect() as db:

@@ -43,6 +43,7 @@ from control_plane.app.modules.requirement.application.planning import (
 from control_plane.app.modules.requirement.application.queries import (
     get_repository_binding_context,
     get_requirement,
+    get_requirement_delivery_snapshot,
     list_requirements,
 )
 
@@ -64,6 +65,7 @@ __all__ = [
     "create_sdd_artifact",
     "decide_baseline",
     "get_requirement",
+    "get_requirement_delivery_snapshot",
     "get_sdd_artifact",
     "get_repository_binding_context",
     "get_integration_delivery_context",

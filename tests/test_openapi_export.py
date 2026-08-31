@@ -18,7 +18,7 @@ def test_render_is_deterministic_and_versioned() -> None:
     first, second = render(), render()
     assert first == second
     assert f'"version": "{__version__}"' in first
-    assert json.loads(first)["info"]["version"] == "0.4.0"
+    assert json.loads(first)["info"]["version"] == "0.5.0"
 
 
 def test_render_contains_the_typed_requirement_contract() -> None:
@@ -46,6 +46,9 @@ def test_render_contains_the_typed_requirement_contract() -> None:
         "/api/v1/requirements/{requirementId}/baseline-confirmations",
         "/api/v1/requirements/{requirementId}/baseline-gates/{gateId}:reassign",
         "/api/v1/requirements/{requirementId}/baseline-decisions",
+        "/api/v1/requirements/{requirementId}/work-items/{workItemId}:start",
+        "/api/v1/requirements/{requirementId}/work-items/{workItemId}:request-integration-mr",
+        "/api/v1/requirements/{requirementId}/work-items/{workItemId}:request-integration-merge",
     }
     repository_path = schema["paths"]["/api/v1/workspaces/{workspaceId}/repositories"]["get"]
     assert repository_path["operationId"] == "source_control_authorized_repositories_list"
@@ -58,18 +61,16 @@ def test_render_contains_the_typed_requirement_contract() -> None:
     }
 
 
-def test_render_does_not_publish_future_requirement_delivery_contract() -> None:
+def test_render_publishes_v05_requirement_delivery_contract() -> None:
     schema = json.loads(render())
     components = schema["components"]["schemas"]
-    assert "WorkItemDeliveryResponseDto" not in components
-    assert set(components["WorkItemResponseDto"]["properties"]).isdisjoint(
-        {
-            "integrationDeliveryState",
-            "integrationMergeRequestBindingId",
-            "integrationBlockedReasonCode",
-            "integrationUpdatedAt",
-        }
-    )
+    assert "WorkItemDeliveryResponseDto" in components
+    assert {
+        "integrationDeliveryState",
+        "integrationMergeRequestBindingId",
+        "integrationBlockedReasonCode",
+        "integrationUpdatedAt",
+    } <= set(components["WorkItemResponseDto"]["properties"])
 
 
 def test_source_control_webhook_is_connector_only() -> None:

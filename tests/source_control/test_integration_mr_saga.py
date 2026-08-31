@@ -33,6 +33,7 @@ from control_plane.app.modules.source_control.application.integration import (
 )
 from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
 from control_plane.app.modules.source_control.ports import (
+    ActorEligibilityContext,
     BindingBlockedResult,
     BindingEligibility,
     BindingReadyResult,
@@ -124,9 +125,9 @@ class FixedPolicy:
 class FakeEligibility:
     def __init__(self, eligible: bool = True) -> None:
         self.eligible = eligible
-        self.seen: list[RequirementBindingContext] = []
+        self.seen: list[ActorEligibilityContext] = []
 
-    def evaluate(self, context: RequirementBindingContext) -> BindingEligibility:
+    def evaluate(self, context: ActorEligibilityContext) -> BindingEligibility:
         self.seen.append(context)
         if not self.eligible:
             return BindingEligibility(
@@ -781,7 +782,13 @@ def test_title_and_eligibility_use_real_requirement_binding_context(
 
     assert result.effect is not None
     assert result.effect.state is EffectState.SUCCEEDED
-    assert eligibility.seen == [binding_context]
+    assert eligibility.seen == [
+        ActorEligibilityContext(
+            actor_id="employee-1",
+            workspace_id=WORKSPACE_ID,
+            required_capabilities=("work_item.execute", "repository.read"),
+        )
+    ]
 
 
 def test_mismatched_requirement_contexts_fail_closed_before_provider_calls(

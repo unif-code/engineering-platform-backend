@@ -45,7 +45,7 @@ SAME_ORIGIN = {"Origin": "http://testserver"}
 HTTP_ARTIFACT_ID = "30000000-0000-0000-0000-000000000401"
 
 
-def test_bootstrap_exposes_v04_planning_and_gate_without_v05_delivery() -> None:
+def test_bootstrap_exposes_v05_planning_gate_and_delivery() -> None:
     schema = create_app().openapi()
     paths = schema["paths"]
 
@@ -70,7 +70,7 @@ def test_bootstrap_exposes_v04_planning_and_gate_without_v05_delivery() -> None:
         "/api/v1/requirements/{requirementId}/work-items/{workItemId}:start",
         "/api/v1/requirements/{requirementId}/work-items/{workItemId}:request-integration-mr",
         "/api/v1/requirements/{requirementId}/work-items/{workItemId}:request-integration-merge",
-    }.isdisjoint(paths)
+    } <= set(paths)
     assert set(paths["/api/v1/requirements"]) >= {"get", "post"}
     create = paths["/api/v1/requirements"]["post"]
     create_headers = {item["name"]: item for item in create["parameters"] if item["in"] == "header"}
@@ -91,8 +91,12 @@ def test_bootstrap_exposes_v04_planning_and_gate_without_v05_delivery() -> None:
         {"format": "date-time", "type": "string"},
         {"type": "null"},
     ]
-    assert "integrationDeliveryState" not in work_item_schema["properties"]
-    assert "integrationMergeRequestBindingId" not in work_item_schema["properties"]
+    assert {
+        "integrationDeliveryState",
+        "integrationMergeRequestBindingId",
+        "integrationBlockedReasonCode",
+        "integrationUpdatedAt",
+    } <= set(work_item_schema["properties"])
 
     dependencies = requirement_dependencies()
     route = dependencies.route_snapshots.current(RequirementType.FEAT)
@@ -737,6 +741,7 @@ def test_integration_routes_require_server_capabilities_and_concurrency_headers(
     client, _holder, guard, _dependencies = _client(
         isolated_requirement_database,
         allowed={
+            ("requirement.read", WORKSPACE_ID),
             ("work_item.execute", WORKSPACE_ID),
             ("merge_request.merge", WORKSPACE_ID),
         },
@@ -775,6 +780,7 @@ def test_integration_routes_require_server_capabilities_and_concurrency_headers(
         f"{base_url}:request-integration-merge",
         headers=_versioned_headers("http-merge-1", ready.requirement.revision + 3),
     )
+    details = client.get(f"/api/v1/requirements/{requirement_id}")
 
     assert started.status_code == 200
     assert started.headers["etag"] == f'"v{ready.requirement.revision + 1}"'
@@ -782,10 +788,17 @@ def test_integration_routes_require_server_capabilities_and_concurrency_headers(
     assert requested_mr.headers["etag"] == f'"v{ready.requirement.revision + 2}"'
     assert requested_merge.status_code == 202
     assert requested_merge.headers["etag"] == f'"v{ready.requirement.revision + 4}"'
+    assert details.status_code == 200
+    delivery = details.json()["workItems"][0]
+    assert delivery["integrationDeliveryState"] == "MERGE_PENDING"
+    assert delivery["integrationMergeRequestBindingId"] == binding_id
+    assert delivery["integrationBlockedReasonCode"] is None
+    assert delivery["integrationUpdatedAt"] is not None
     assert guard.calls == [
         ("work_item.execute", WORKSPACE_ID),
         ("work_item.execute", WORKSPACE_ID),
         ("merge_request.merge", WORKSPACE_ID),
+        ("requirement.read", WORKSPACE_ID),
     ]
     for response in (started, requested_mr, requested_merge):
         assert _provider_private_fields(response.json()) == set()
@@ -858,7 +871,7 @@ def test_start_route_reports_current_owner_mismatch_as_an_actor_denial(
     assert response.json()["title"] == "WorkItem actor denied"
 
 
-def test_merge_route_requires_capability_and_current_owner_together(
+def test_merge_route_allows_a_capable_actor_distinct_from_the_work_item_owner(
     isolated_requirement_database: IsolatedRequirementDatabase,
 ) -> None:
     current, _binding_id = _merge_ready_work_item(
@@ -877,7 +890,6 @@ def test_merge_route_requires_capability_and_current_owner_together(
         headers=_versioned_headers("http-merge-non-owner", current.requirement.revision),
     )
 
-    assert response.status_code == 403
-    assert response.headers["content-type"].startswith("application/problem+json")
-    assert response.json()["title"] == "WorkItem actor denied"
+    assert response.status_code == 202
+    assert response.json()["workItem"]["integrationDeliveryState"] == "MERGE_PENDING"
     assert guard.calls == [("merge_request.merge", WORKSPACE_ID)]

@@ -21,7 +21,7 @@ from control_plane.app.bootstrap.source_control_runtime import (
 )
 from control_plane.app.modules.source_control import SourceControlDependencyUnavailable
 from control_plane.app.modules.source_control.adapters import (
-    CurrentOwnerEligibilityAdapter,
+    CurrentActorEligibilityAdapter,
     DevSecretReferenceResolver,
     HttpxGitLabAdapter,
     HttpxGitLabMergeRequestAdapter,
@@ -103,7 +103,7 @@ def test_complete_non_secret_settings_build_one_shared_runtime(tmp_path: Path) -
     assert dependencies.delivery_repository_factory is SqlAlchemySourceControlIntegrationRepository
     assert isinstance(dependencies.requirement, RequirementFacadeBindingAdapter)
     assert isinstance(dependencies.requirement_delivery, RequirementFacadeDeliveryAdapter)
-    assert isinstance(dependencies.eligibility, CurrentOwnerEligibilityAdapter)
+    assert isinstance(dependencies.eligibility, CurrentActorEligibilityAdapter)
     assert isinstance(dependencies.gitlab, HttpxGitLabAdapter)
     assert isinstance(dependencies.gitlab_merge_requests, HttpxGitLabMergeRequestAdapter)
     assert isinstance(dependencies.webhook_secrets, DevSecretReferenceResolver)

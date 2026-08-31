@@ -7,10 +7,10 @@ from control_plane.app.modules.requirement import (
     RequirementError,
     RequirementState,
     StaleRequirementRevision,
-    WorkItemActorDenied,
     WorkItemDeliveryResult,
     WorkItemNotFound,
     WorkItemState,
+    add_work_item,
     decide_baseline,
     get_requirement,
     record_repository_binding,
@@ -160,6 +160,115 @@ def test_current_owner_starts_ready_bound_work_item_atomically(
     assert result.work_item.revision == ready.work_items[0].revision + 1
     assert result.outbox_topic is None
     assert not ({"base_commit_sha", "task_branch"} & set(result.work_item.model_dump()))
+
+
+def test_each_ready_work_item_can_start_after_a_sibling_is_in_progress(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    dependencies = _gate_dependencies()
+    created = _create(
+        isolated_requirement_database,
+        idempotency_key="delivery-multi-create",
+    )
+    with isolated_requirement_database.runtime.begin() as db:
+        prepared = start_requirement_preparation(
+            db,
+            requirement_id=created.requirement.id,
+            expected_revision=created.requirement.revision,
+            actor=Actor("employee-1"),
+            idempotency_key="delivery-multi-prepare",
+            dependencies=dependencies,
+        )
+    with isolated_requirement_database.runtime.begin() as db:
+        added = add_work_item(
+            db,
+            requirement_id=created.requirement.id,
+            repository_id="repository-2",
+            expected_revision=prepared.revision,
+            actor=Actor("employee-1"),
+            idempotency_key="delivery-multi-add",
+            dependencies=dependencies,
+        )
+    with isolated_requirement_database.runtime.begin() as db:
+        registered = register_sdd_baseline(
+            db,
+            requirement_id=created.requirement.id,
+            artifact_id="sdd-multi",
+            artifact_version="version-1",
+            expected_revision=added.requirement.revision,
+            actor=Actor("employee-1"),
+            idempotency_key="delivery-multi-register",
+            dependencies=dependencies,
+        )
+    with isolated_requirement_database.runtime.begin() as db:
+        confirmation = submit_baseline_confirmation(
+            db,
+            requirement_id=created.requirement.id,
+            sdd_baseline_id=registered.baseline.id,
+            expected_revision=registered.requirement.revision,
+            actor=Actor("employee-1"),
+            idempotency_key="delivery-multi-confirm",
+            dependencies=dependencies,
+        )
+    with isolated_requirement_database.runtime.begin() as db:
+        decided = decide_baseline(
+            db,
+            requirement_id=created.requirement.id,
+            gate_id=confirmation.gate.id,
+            outcome=DecisionOutcome.APPROVED,
+            reason="Both WorkItems are executable.",
+            expected_revision=confirmation.requirement.revision,
+            actor=Actor("reviewer-1"),
+            idempotency_key="delivery-multi-decide",
+            dependencies=dependencies,
+        )
+    for index, item in enumerate((created.work_item, added.work_item), start=1):
+        with isolated_requirement_database.runtime.begin() as db:
+            record_repository_binding(
+                db,
+                work_item_id=item.id,
+                repository_id=item.repository_id,
+                base_commit_sha=str(index) * 40,
+                task_branch=f"task/{item.id}",
+                expected_revision=item.revision,
+                actor=Actor("source-control"),
+                idempotency_key=f"delivery-multi-bind-{index}",
+                correlation_id=f"source-control:delivery-multi-bind-{index}",
+                dependencies=dependencies,
+            )
+    with isolated_requirement_database.runtime.connect() as db:
+        ready = get_requirement(
+            db,
+            requirement_id=created.requirement.id,
+            dependencies=dependencies,
+        )
+    assert ready.requirement.revision == decided.requirement.revision
+    assert [item.state for item in ready.work_items] == [WorkItemState.READY, WorkItemState.READY]
+
+    with isolated_requirement_database.runtime.begin() as db:
+        first = start_work_item(
+            db,
+            requirement_id=ready.requirement.id,
+            work_item_id=ready.work_items[0].id,
+            expected_revision=ready.requirement.revision,
+            actor=Actor("employee-1"),
+            idempotency_key="delivery-multi-start-1",
+            dependencies=dependencies,
+        )
+    with isolated_requirement_database.runtime.begin() as db:
+        second = start_work_item(
+            db,
+            requirement_id=ready.requirement.id,
+            work_item_id=ready.work_items[1].id,
+            expected_revision=first.requirement.revision,
+            actor=Actor("employee-1"),
+            idempotency_key="delivery-multi-start-2",
+            dependencies=dependencies,
+        )
+
+    assert first.requirement.state is RequirementState.IN_PROGRESS
+    assert second.requirement.state is RequirementState.IN_PROGRESS
+    assert second.work_item.state is WorkItemState.IN_PROGRESS
 
 
 @pytest.mark.parametrize(
@@ -465,7 +574,7 @@ def _merge_ready_work_item(
     return current, binding_id
 
 
-def test_request_integration_merge_rejects_merge_capable_non_owner(
+def test_request_integration_merge_records_a_distinct_authorized_actor(
     isolated_requirement_database: IsolatedRequirementDatabase,
 ) -> None:
     current, _binding_id = _merge_ready_work_item(
@@ -473,33 +582,28 @@ def test_request_integration_merge_rejects_merge_capable_non_owner(
         key_suffix="non-owner",
     )
 
-    with pytest.raises(WorkItemActorDenied):
-        with isolated_requirement_database.runtime.begin() as db:
-            request_integration_merge(
-                db,
-                requirement_id=current.requirement.id,
-                work_item_id=current.work_items[0].id,
-                expected_revision=current.requirement.revision,
-                actor=Actor("merge-operator-1"),
-                idempotency_key="request-integration-merge-non-owner",
-                dependencies=_gate_dependencies(),
-            )
+    with isolated_requirement_database.runtime.begin() as db:
+        result = request_integration_merge(
+            db,
+            requirement_id=current.requirement.id,
+            work_item_id=current.work_items[0].id,
+            expected_revision=current.requirement.revision,
+            actor=Actor("merge-operator-1"),
+            idempotency_key="request-integration-merge-non-owner",
+            dependencies=_gate_dependencies(),
+        )
     with isolated_requirement_database.owner.connect() as db:
-        delivery_state = db.execute(
+        delivery_state, payload = db.execute(
             text(
-                "SELECT integration_delivery_state FROM requirement.work_item "
-                "WHERE id=:work_item_id"
+                "SELECT work_item.integration_delivery_state, outbox.payload "
+                "FROM requirement.work_item JOIN requirement.outbox_message AS outbox "
+                "ON outbox.aggregate_id=work_item.requirement_id "
+                "WHERE work_item.id=:work_item_id "
+                "AND outbox.topic='requirement.integration-merge.requested'"
             ),
             {"work_item_id": current.work_items[0].id},
-        ).scalar_one()
-        outbox_count = db.execute(
-            text(
-                "SELECT count(*) FROM requirement.outbox_message "
-                "WHERE aggregate_id=:requirement_id "
-                "AND topic='requirement.integration-merge.requested'"
-            ),
-            {"requirement_id": current.requirement.id},
-        ).scalar_one()
+        ).one()
 
-    assert delivery_state == IntegrationDeliveryState.MR_OPEN.value
-    assert outbox_count == 0
+    assert result.work_item.integration_delivery_state is IntegrationDeliveryState.MERGE_PENDING
+    assert delivery_state == IntegrationDeliveryState.MERGE_PENDING.value
+    assert payload["actorId"] == "merge-operator-1"

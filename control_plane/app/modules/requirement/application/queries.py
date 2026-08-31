@@ -16,11 +16,14 @@ from control_plane.app.modules.requirement.domain import (
     AssignmentState,
     InvalidRequirementCursor,
     RepositoryBindingContext,
+    RequirementDeliverySnapshotDto,
+    RequirementDependencyUnavailable,
     RequirementDetailsDto,
     RequirementNotFound,
     RequirementPage,
     RequirementType,
     WorkItemNotFound,
+    required_work_item_set_hash,
 )
 from control_plane.app.modules.requirement.ports import RequirementRepository
 
@@ -79,6 +82,27 @@ def get_requirement(
             None if gate_assignment is None else gate_assignment_dto(gate_assignment)
         ),
         current_decision=None if decision is None else decision_dto(decision),
+    )
+
+
+def get_requirement_delivery_snapshot(
+    repository: RequirementRepository,
+    *,
+    requirement_id: str,
+) -> RequirementDeliverySnapshotDto:
+    """Read the current versioned delivery input without creating a freeze fact."""
+    row = repository.requirement_delivery_snapshot(requirement_id)
+    if row is None:
+        raise RequirementNotFound(requirement_id)
+    work_item_ids = tuple(str(work_item_id) for work_item_id in row["work_item_ids"])
+    if required_work_item_set_hash(work_item_ids) != row["required_work_item_set_hash"]:
+        raise RequirementDependencyUnavailable("Requirement delivery snapshot is inconsistent")
+    return RequirementDeliverySnapshotDto(
+        requirement_id=str(row["id"]),
+        requirement_version=row["requirement_version"],
+        required_work_item_set_version=row["required_work_item_set_version"],
+        required_work_item_set_hash=row["required_work_item_set_hash"],
+        work_item_ids=work_item_ids,
     )
 
 

@@ -304,6 +304,8 @@ def test_real_me_navigation_and_grant_lifecycle_are_protected_and_compatible(
                         "capability": "requirement.baseline.decide",
                         "scopeType": "WORKSPACE",
                     },
+                    {"capability": "work_item.execute", "scopeType": "WORKSPACE"},
+                    {"capability": "merge_request.merge", "scopeType": "WORKSPACE"},
                 ],
             },
         },

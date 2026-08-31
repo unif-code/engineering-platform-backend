@@ -1,5 +1,3 @@
-import hashlib
-import json
 from datetime import datetime
 from typing import Any
 
@@ -56,6 +54,7 @@ from control_plane.app.modules.requirement.domain import (
     WorkItemNotFound,
     WorkItemState,
     derive_work_item_state,
+    required_work_item_set_hash,
     transition_requirement,
 )
 from control_plane.app.modules.requirement.domain.transitions import (
@@ -100,8 +99,7 @@ def _is_canonical_sha256(value: str) -> bool:
 
 
 def _work_item_set_hash(work_item_id: str) -> str:
-    value = json.dumps([work_item_id], separators=(",", ":")).encode("utf-8")
-    return f"sha256:{hashlib.sha256(value).hexdigest()}"
+    return required_work_item_set_hash((work_item_id,))
 
 
 def _audit_denial(

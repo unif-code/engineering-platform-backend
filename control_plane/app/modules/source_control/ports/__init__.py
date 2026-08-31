@@ -48,10 +48,11 @@ from control_plane.app.modules.source_control.ports.repository import (
     SourceControlRepositoryFactory,
 )
 from control_plane.app.modules.source_control.ports.requirement import (
+    ActorEligibilityContext,
+    ActorEligibilityPort,
     BindingBlockedResult,
     BindingEligibility,
     BindingReadyResult,
-    OwnerEligibilityPort,
     RequirementBindingContext,
     RequirementBindingPort,
 )
@@ -86,9 +87,10 @@ __all__ = [
     "IntegrationMrReadyResult",
     "IntegrationReconciliationPendingResult",
     "BindingBlockedResult",
+    "ActorEligibilityContext",
+    "ActorEligibilityPort",
     "BindingEligibility",
     "BindingReadyResult",
-    "OwnerEligibilityPort",
     "RandomPort",
     "RelayIntegrationDeliveryRequestsResult",
     "RequirementBindingContext",

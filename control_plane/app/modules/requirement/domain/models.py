@@ -393,3 +393,15 @@ class RequirementDetailsDto(BaseModel):
     current_gate: GateInstanceDto | None = None
     current_gate_assignment: GateAssignmentDto | None = None
     current_decision: DecisionDto | None = None
+
+
+class RequirementDeliverySnapshotDto(BaseModel):
+    """Immutable current delivery read model; V0.6 owns protected persistence/freeze."""
+
+    model_config = ConfigDict(frozen=True)
+
+    requirement_id: str
+    requirement_version: int
+    required_work_item_set_version: int
+    required_work_item_set_hash: str
+    work_item_ids: tuple[str, ...]

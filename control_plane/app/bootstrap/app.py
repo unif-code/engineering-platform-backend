@@ -88,6 +88,7 @@ from control_plane.app.modules.requirement.adapters import (
 from control_plane.app.modules.requirement.api import (
     RequirementHttpRuntime,
     create_requirement_baseline_router,
+    create_requirement_delivery_router,
     create_requirement_foundation_router,
     create_requirement_planning_router,
 )
@@ -558,6 +559,13 @@ def create_app(
     )
     app.include_router(
         create_requirement_baseline_router(
+            requirement_runtime_provider,
+            cast(Callable[[], Any], protected_principal),
+            authorization_capability_guard,
+        )
+    )
+    app.include_router(
+        create_requirement_delivery_router(
             requirement_runtime_provider,
             cast(Callable[[], Any], protected_principal),
             authorization_capability_guard,

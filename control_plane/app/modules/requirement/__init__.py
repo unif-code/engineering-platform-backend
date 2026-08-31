@@ -47,6 +47,9 @@ from control_plane.app.modules.requirement.application import (
     get_requirement as _get_requirement,
 )
 from control_plane.app.modules.requirement.application import (
+    get_requirement_delivery_snapshot as _get_requirement_delivery_snapshot,
+)
+from control_plane.app.modules.requirement.application import (
     get_sdd_artifact as _get_sdd_artifact,
 )
 from control_plane.app.modules.requirement.application import (
@@ -137,6 +140,7 @@ from control_plane.app.modules.requirement.domain import (
     RepositoryBindingRequestMessage,
     RepositoryBindingRequestMissing,
     RepositoryState,
+    RequirementDeliverySnapshotDto,
     RequirementDependencyUnavailable,
     RequirementDetailsDto,
     RequirementDto,
@@ -466,6 +470,19 @@ def get_requirement(
     dependencies: RequirementDependencies,
 ) -> RequirementDetailsDto:
     return _get_requirement(
+        dependencies.repository_factory(db),
+        requirement_id=requirement_id,
+    )
+
+
+def get_requirement_delivery_snapshot(
+    db: Connection,
+    *,
+    requirement_id: str,
+    dependencies: RequirementDependencies,
+) -> RequirementDeliverySnapshotDto:
+    """Return the current immutable delivery input through the package facade."""
+    return _get_requirement_delivery_snapshot(
         dependencies.repository_factory(db),
         requirement_id=requirement_id,
     )
@@ -821,6 +838,7 @@ __all__ = [
     "RequirementDependencies",
     "RequirementDto",
     "RequirementDetailsDto",
+    "RequirementDeliverySnapshotDto",
     "RequirementDependencyUnavailable",
     "RequirementError",
     "RequirementNotFound",
@@ -856,6 +874,7 @@ __all__ = [
     "decide_baseline",
     "derive_work_item_state",
     "get_requirement",
+    "get_requirement_delivery_snapshot",
     "get_sdd_artifact",
     "get_integration_delivery_context",
     "get_repository_binding_context",
