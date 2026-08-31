@@ -63,7 +63,7 @@ class CreateRequirementRequestDto(StrictCamelModel):
 
 class RegisterSddBaselineRequestDto(StrictCamelModel):
     artifact_id: UUID
-    artifact_version: int = Field(ge=1)
+    artifact_version: int = Field(strict=True, ge=1)
 
 
 class CreateSddArtifactRequestDto(StrictCamelModel):

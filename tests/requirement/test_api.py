@@ -589,6 +589,14 @@ def test_baseline_registration_reassignment_and_decision_use_exact_etags(
         },
         {
             "artifactId": HTTP_ARTIFACT_ID,
+            "artifactVersion": "1",
+        },
+        {
+            "artifactId": HTTP_ARTIFACT_ID,
+            "artifactVersion": 1.0,
+        },
+        {
+            "artifactId": HTTP_ARTIFACT_ID,
             "artifactVersion": 0,
         },
     ],
