@@ -13,7 +13,7 @@ from tests.requirement.conftest import IsolatedRequirementDatabase
 from tests.requirement.test_commands import Actor, _create, _dependencies
 
 
-def test_binding_makes_assigned_work_item_ready_and_replays_exact_result(
+def test_binding_keeps_assigned_work_item_draft_until_gate_and_replays_exact_result(
     isolated_requirement_database: IsolatedRequirementDatabase,
 ) -> None:
     created = _create(isolated_requirement_database, idempotency_key="binding-create")
@@ -46,7 +46,7 @@ def test_binding_makes_assigned_work_item_ready_and_replays_exact_result(
         )
 
     assert first.repository_state is RepositoryState.BOUND
-    assert first.state is WorkItemState.READY
+    assert first.state is WorkItemState.DRAFT
     assert first.revision == 2
     assert replay == first
     with isolated_requirement_database.owner.connect() as db:
@@ -137,7 +137,7 @@ def test_binding_records_a_structured_block_and_recovers_the_same_work_item(
     assert recovered.repository_state is RepositoryState.BOUND
     assert recovered.repository_blocked_reason_code is None
     assert recovered.repository_blocked_at is None
-    assert recovered.state is WorkItemState.READY
+    assert recovered.state is WorkItemState.DRAFT
     assert recovered.revision == 3
     with isolated_requirement_database.owner.connect() as db:
         events = list(

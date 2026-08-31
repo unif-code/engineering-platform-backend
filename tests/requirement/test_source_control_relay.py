@@ -1,3 +1,5 @@
+import hashlib
+import json
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -56,9 +58,21 @@ class StaticSecrets:
 class StaticRouteSnapshots:
     def current(self, requirement_type: RequirementType) -> RouteSnapshot:
         assert requirement_type is RequirementType.FEAT
+        payload = {
+            "requirementType": requirement_type.value,
+            "requiredCapabilities": ["code.change"],
+            "steps": [],
+            "version": 1,
+        }
+        canonical = json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
         return RouteSnapshot(
             version=1,
-            snapshot_hash="sha256:route-source-control",
+            snapshot_hash=f"sha256:{hashlib.sha256(canonical).hexdigest()}",
             required_capabilities=("code.change",),
         )
 

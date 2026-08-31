@@ -147,3 +147,22 @@ def test_composed_assignment_guard_fails_closed_on_every_dependency_error(
         repository_id=REPOSITORY_ID,
         required_capabilities=CAPABILITIES,
     )
+
+
+@pytest.mark.parametrize(
+    "stage",
+    ["identity", "workspace", "authorization", "source_control"],
+)
+def test_explicit_assignment_preserves_dependency_failure_for_service_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+    stage: str,
+) -> None:
+    guard, _calls = _guard(monkeypatch, FacadeState(raise_at=stage))
+
+    with pytest.raises(RuntimeError, match=f"{stage} unavailable"):
+        guard.can_assign(
+            actor_id=ACTOR_ID,
+            workspace_id=WORKSPACE_ID,
+            repository_id=REPOSITORY_ID,
+            required_capabilities=CAPABILITIES,
+        )

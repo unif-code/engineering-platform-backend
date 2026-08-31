@@ -3,6 +3,7 @@ from control_plane.app.modules.requirement.application.commands import (
     claim_repository_binding_requests,
     create_requirement,
     decide_baseline,
+    reassign_baseline_gate,
     record_repository_binding,
     record_repository_binding_blocked,
     register_sdd_baseline,
@@ -35,6 +36,10 @@ from control_plane.app.modules.requirement.application.delivery_relay import (
 from control_plane.app.modules.requirement.application.dependencies import (
     RequirementDependencies,
 )
+from control_plane.app.modules.requirement.application.planning import (
+    add_work_item,
+    assign_work_item,
+)
 from control_plane.app.modules.requirement.application.queries import (
     get_repository_binding_context,
     get_requirement,
@@ -50,17 +55,22 @@ __all__ = [
     "WorkItemDeliveryDto",
     "WorkItemDeliveryResult",
     "acknowledge_repository_binding_request",
+    "add_work_item",
+    "assign_work_item",
     "acknowledge_integration_delivery_request",
     "claim_integration_delivery_requests",
     "claim_repository_binding_requests",
     "create_requirement",
+    "create_sdd_artifact",
     "decide_baseline",
     "get_requirement",
+    "get_sdd_artifact",
     "get_repository_binding_context",
     "get_integration_delivery_context",
     "list_requirements",
     "record_repository_binding",
     "record_repository_binding_blocked",
+    "reassign_baseline_gate",
     "record_external_merge_drift",
     "record_integration_delivery_blocked",
     "record_integration_merged",
@@ -75,3 +85,7 @@ __all__ = [
     "start_work_item",
     "submit_baseline_confirmation",
 ]
+from control_plane.app.modules.requirement.application.artifacts import (
+    create_sdd_artifact,
+    get_sdd_artifact,
+)

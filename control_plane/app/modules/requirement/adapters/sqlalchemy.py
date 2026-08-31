@@ -98,12 +98,21 @@ class SqlAlchemyRequirementRepository:
         return result.rowcount == 1
 
     def insert_requirement(self, **values: Any) -> Any:
+        route_snapshot = values.get(
+            "route_snapshot",
+            {
+                "requirementType": values["type"],
+                "requiredCapabilities": ["code.change"],
+                "version": values["route_snapshot_version"],
+            },
+        )
         parameters = {
             **values,
             "acceptance_criteria": json.dumps(
                 values["acceptance_criteria"],
                 separators=(",", ":"),
             ),
+            "route_snapshot": json.dumps(route_snapshot, separators=(",", ":")),
         }
         return (
             self.db.execute(
@@ -111,12 +120,14 @@ class SqlAlchemyRequirementRepository:
                     "INSERT INTO requirement.requirement "
                     "(id, workspace_id, type, title, description, acceptance_criteria, "
                     "created_by, initial_repository_id, route_snapshot_version, "
-                    "route_snapshot_hash, state, record_state, requirement_version, "
+                    "route_snapshot_hash, route_snapshot, state, record_state, "
+                    "requirement_version, "
                     "required_work_item_set_version, required_work_item_set_hash, revision, "
                     "created_at, updated_at) VALUES "
                     "(:id, :workspace_id, :type, :title, :description, "
                     "CAST(:acceptance_criteria AS JSONB), :created_by, :initial_repository_id, "
-                    ":route_snapshot_version, :route_snapshot_hash, :state, :record_state, "
+                    ":route_snapshot_version, :route_snapshot_hash, "
+                    "CAST(:route_snapshot AS JSONB), :state, :record_state, "
                     ":requirement_version, :required_work_item_set_version, "
                     ":required_work_item_set_hash, :revision, :now, :now) RETURNING *"
                 ),
@@ -221,6 +232,203 @@ class SqlAlchemyRequirementRepository:
             self.db.execute(
                 text(f"SELECT * FROM requirement.work_item WHERE id=:id{suffix}"),
                 {"id": work_item_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def insert_sdd_artifact_version(self, **values: Any) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "INSERT INTO requirement.sdd_artifact_version "
+                    "(artifact_id, version, requirement_id, sha256, state, media_type, "
+                    "trust, content, created_by, created_at) VALUES "
+                    "(:artifact_id, :version, :requirement_id, :sha256, :state, "
+                    ":media_type, :trust, :content, :created_by, :now) RETURNING *"
+                ),
+                values,
+            )
+            .mappings()
+            .one()
+        )
+
+    def sdd_artifact_version(
+        self,
+        requirement_id: str,
+        artifact_id: str,
+        version: int,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "SELECT * FROM requirement.sdd_artifact_version "
+                    "WHERE requirement_id=:requirement_id "
+                    "AND artifact_id=:artifact_id AND version=:version"
+                ),
+                {
+                    "requirement_id": requirement_id,
+                    "artifact_id": artifact_id,
+                    "version": version,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def sdd_artifact_version_by_identity(self, artifact_id: str, version: int) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "SELECT * FROM requirement.sdd_artifact_version "
+                    "WHERE artifact_id=:artifact_id AND version=:version"
+                ),
+                {"artifact_id": artifact_id, "version": version},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def latest_sdd_artifact_version(
+        self,
+        requirement_id: str,
+        artifact_id: str,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "SELECT * FROM requirement.sdd_artifact_version "
+                    "WHERE requirement_id=:requirement_id AND artifact_id=:artifact_id "
+                    "ORDER BY version DESC LIMIT 1"
+                ),
+                {"requirement_id": requirement_id, "artifact_id": artifact_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def insert_work_item_assignment(self, **values: Any) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "INSERT INTO requirement.work_item_assignment "
+                    "(id, work_item_id, assignee_id, assigned_by, reason, revision, "
+                    "assigned_at) VALUES "
+                    "(:id, :work_item_id, :assignee_id, :assigned_by, :reason, :revision, "
+                    ":now) RETURNING *"
+                ),
+                values,
+            )
+            .mappings()
+            .one()
+        )
+
+    def current_work_item_assignment(
+        self,
+        work_item_id: str,
+        *,
+        for_update: bool = False,
+    ) -> Any:
+        suffix = " FOR UPDATE" if for_update else ""
+        return (
+            self.db.execute(
+                text(
+                    "SELECT * FROM requirement.work_item_assignment "
+                    "WHERE work_item_id=:work_item_id AND superseded_at IS NULL"
+                    f"{suffix}"
+                ),
+                {"work_item_id": work_item_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def supersede_work_item_assignment(
+        self,
+        assignment_id: str,
+        *,
+        expected_revision: int,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.work_item_assignment SET superseded_at=:now "
+                    "WHERE id=:id AND revision=:expected_revision "
+                    "AND superseded_at IS NULL RETURNING *"
+                ),
+                {
+                    "id": assignment_id,
+                    "expected_revision": expected_revision,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def update_requirement_plan(
+        self,
+        requirement_id: str,
+        *,
+        expected_revision: int,
+        required_work_item_set_hash: str,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.requirement SET "
+                    "requirement_version=requirement_version + 1, "
+                    "required_work_item_set_version=required_work_item_set_version + 1, "
+                    "required_work_item_set_hash=:required_work_item_set_hash, "
+                    "current_sdd_baseline_id=NULL, revision=revision + 1, updated_at=:now "
+                    "WHERE id=:id AND revision=:expected_revision AND state='PREPARING' "
+                    "RETURNING *"
+                ),
+                {
+                    "id": requirement_id,
+                    "expected_revision": expected_revision,
+                    "required_work_item_set_hash": required_work_item_set_hash,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def assign_work_item_projection(
+        self,
+        work_item_id: str,
+        *,
+        expected_revision: int,
+        human_owner_id: str,
+        repository_state: str,
+        repository_blocked_reason_code: str | None,
+        repository_blocked_at: datetime | None,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.work_item SET human_owner_id=:human_owner_id, "
+                    "executor_id=:human_owner_id, assignment_state='ASSIGNED', "
+                    "repository_state=:repository_state, "
+                    "repository_blocked_reason_code=:repository_blocked_reason_code, "
+                    "repository_blocked_at=:repository_blocked_at, "
+                    "revision=revision + 1, updated_at=:now "
+                    "WHERE id=:id AND revision=:expected_revision "
+                    "AND integration_delivery_state='NOT_STARTED' RETURNING *"
+                ),
+                {
+                    "id": work_item_id,
+                    "expected_revision": expected_revision,
+                    "human_owner_id": human_owner_id,
+                    "repository_state": repository_state,
+                    "repository_blocked_reason_code": repository_blocked_reason_code,
+                    "repository_blocked_at": repository_blocked_at,
+                    "now": now,
+                },
             )
             .mappings()
             .one_or_none()
@@ -332,6 +540,37 @@ class SqlAlchemyRequirementRepository:
                 ),
                 {"requirement_id": requirement_id},
             ).scalars()
+        )
+
+    def reconcile_planned_work_item_states(
+        self,
+        requirement_id: str,
+        *,
+        requirement_state: str,
+        now: datetime,
+    ) -> list[Any]:
+        target = (
+            "CASE "
+            "WHEN :requirement_state='READY' "
+            "AND assignment_state='ASSIGNED' AND repository_state='BOUND' THEN 'READY' "
+            "WHEN :requirement_state='CANCELED' THEN 'CANCELED' "
+            "ELSE 'DRAFT' END"
+        )
+        return list(
+            self.db.execute(
+                text(
+                    "UPDATE requirement.work_item SET "
+                    f"state={target}, revision=revision + 1, updated_at=:now "
+                    "WHERE requirement_id=:requirement_id "
+                    "AND integration_delivery_state='NOT_STARTED' "
+                    f"AND state IS DISTINCT FROM ({target}) RETURNING *"
+                ),
+                {
+                    "requirement_id": requirement_id,
+                    "requirement_state": requirement_state,
+                    "now": now,
+                },
+            ).mappings()
         )
 
     def insert_outbox(self, **values: Any) -> Any:
@@ -649,11 +888,13 @@ class SqlAlchemyRequirementRepository:
                     "INSERT INTO requirement.gate_instance "
                     "(id, gate_type, requirement_id, requirement_version, sdd_baseline_id, "
                     "artifact_id, artifact_version, artifact_hash, route_snapshot_version, "
-                    "route_snapshot_hash, policy_version, state, revision, created_at) VALUES "
+                    "route_snapshot_hash, policy_code, policy_version, "
+                    "policy_snapshot_hash, state, revision, created_at) VALUES "
                     "(:id, :gate_type, :requirement_id, :requirement_version, "
                     ":sdd_baseline_id, :artifact_id, :artifact_version, :artifact_hash, "
-                    ":route_snapshot_version, :route_snapshot_hash, :policy_version, "
-                    ":state, :revision, :now) RETURNING *"
+                    ":route_snapshot_version, :route_snapshot_hash, :policy_code, "
+                    ":policy_version, :policy_snapshot_hash, :state, :revision, :now) "
+                    "RETURNING *"
                 ),
                 values,
             )
@@ -716,6 +957,63 @@ class SqlAlchemyRequirementRepository:
             .one_or_none()
         )
 
+    def current_work_item_assignments(self, requirement_id: str) -> list[Any]:
+        return list(
+            self.db.execute(
+                text(
+                    "SELECT assignment.* FROM requirement.work_item_assignment AS assignment "
+                    "JOIN requirement.work_item AS item ON item.id=assignment.work_item_id "
+                    "WHERE item.requirement_id=:requirement_id "
+                    "AND assignment.superseded_at IS NULL "
+                    "ORDER BY item.created_at, item.id"
+                ),
+                {"requirement_id": requirement_id},
+            ).mappings()
+        )
+
+    def supersede_gate_assignment(
+        self,
+        assignment_id: str,
+        *,
+        expected_revision: int,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.gate_assignment SET superseded_at=:now "
+                    "WHERE id=:id AND revision=:expected_revision "
+                    "AND superseded_at IS NULL RETURNING *"
+                ),
+                {
+                    "id": assignment_id,
+                    "expected_revision": expected_revision,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def reassign_gate(
+        self,
+        gate_id: str,
+        *,
+        expected_revision: int,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.gate_instance SET revision=revision + 1 "
+                    "WHERE id=:id AND revision=:expected_revision AND state='OPEN' "
+                    "RETURNING *"
+                ),
+                {"id": gate_id, "expected_revision": expected_revision},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
     def insert_decision(self, **values: Any) -> Any:
         return (
             self.db.execute(
@@ -730,6 +1028,16 @@ class SqlAlchemyRequirementRepository:
             )
             .mappings()
             .one()
+        )
+
+    def decision_by_gate_id(self, gate_id: str) -> Any:
+        return (
+            self.db.execute(
+                text("SELECT * FROM requirement.decision WHERE gate_instance_id=:gate_id"),
+                {"gate_id": gate_id},
+            )
+            .mappings()
+            .one_or_none()
         )
 
     def close_gate(

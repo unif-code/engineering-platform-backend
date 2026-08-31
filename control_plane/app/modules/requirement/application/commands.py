@@ -12,6 +12,7 @@ from control_plane.app.modules.requirement.application.common import (
     gate_instance_dto,
     requirement_dto,
     sdd_baseline_dto,
+    validate_frozen_route_snapshot,
     validated_correlation_id,
     work_item_dto,
 )
@@ -27,7 +28,9 @@ from control_plane.app.modules.requirement.domain import (
     DecisionOutcome,
     ExecutorType,
     GateAlreadyDecided,
+    GateAssignmentConflict,
     GateNotFound,
+    GateReassignmentResult,
     GateReviewerIneligible,
     GateReviewerMismatch,
     GateState,
@@ -46,6 +49,7 @@ from control_plane.app.modules.requirement.domain import (
     RequirementType,
     SddBaselineNotFound,
     StaleBaselineSubject,
+    StaleGateRevision,
     StaleRequirementRevision,
     StaleWorkItemRevision,
     WorkItemDto,
@@ -86,6 +90,13 @@ def _normalized_text(value: str, *, field: str) -> str:
     if not normalized:
         raise InvalidRequirementInput(f"{field} is required")
     return normalized
+
+
+def _is_canonical_sha256(value: str) -> bool:
+    if not value.startswith("sha256:") or len(value) != 71:
+        return False
+    digest = value.removeprefix("sha256:")
+    return all(character in "0123456789abcdef" for character in digest)
 
 
 def _work_item_set_hash(work_item_id: str) -> str:
@@ -162,6 +173,12 @@ def _create_requirement_once(
         initial_repository_id=initial_repository_id,
         route_snapshot_version=route.version,
         route_snapshot_hash=route.snapshot_hash,
+        route_snapshot={
+            "requirementType": requirement_type.value,
+            "requiredCapabilities": list(route.required_capabilities),
+            "steps": list(route.steps),
+            "version": route.version,
+        },
         state=RequirementState.CREATED.value,
         record_state=RecordState.ACTIVE.value,
         requirement_version=1,
@@ -185,6 +202,16 @@ def _create_requirement_once(
         revision=1,
         now=now,
     )
+    if owner_id is not None:
+        repository.insert_work_item_assignment(
+            id=work_item_id,
+            work_item_id=work_item_id,
+            assignee_id=owner_id,
+            assigned_by=stable_actor,
+            reason="V0.4_INITIAL_ASSIGNMENT",
+            revision=1,
+            now=now,
+        )
     repository.insert_outbox(
         id=str(dependencies.random.uuid4()),
         topic="requirement.repository-binding.requested",
@@ -505,7 +532,11 @@ def _record_repository_binding_once(
         raise RepositoryBindingConflict("WorkItem already has a different repository binding")
     if row["revision"] != expected_revision:
         raise StaleWorkItemRevision(work_item_id)
+    requirement = repository.requirement_by_id(str(row["requirement_id"]))
+    if requirement is None:
+        raise RequirementNotFound(str(row["requirement_id"]))
     state = derive_work_item_state(
+        RequirementState(requirement["state"]),
         AssignmentState(row["assignment_state"]),
         RepositoryState.BOUND,
     )
@@ -713,6 +744,12 @@ def _register_sdd_baseline_once(
         raise StaleRequirementRevision(requirement_id)
     if RequirementState(requirement["state"]) is not RequirementState.PREPARING:
         raise StaleBaselineSubject("Requirement is not preparing an SDD baseline")
+    validate_frozen_route_snapshot(
+        requirement["route_snapshot"],
+        expected_hash=requirement["route_snapshot_hash"],
+        expected_version=requirement["route_snapshot_version"],
+        expected_requirement_type=requirement["type"],
+    )
     artifacts = dependencies.artifacts
     if artifacts is None:
         raise RequirementDependencyUnavailable("Artifact service is unavailable")
@@ -722,7 +759,11 @@ def _register_sdd_baseline_once(
         field="artifact version",
     )
     try:
-        snapshot = artifacts.get_snapshot(normalized_artifact_id, normalized_artifact_version)
+        snapshot = artifacts.get_snapshot(
+            requirement_id,
+            normalized_artifact_id,
+            normalized_artifact_version,
+        )
     except RequirementError:
         raise
     except Exception as error:
@@ -730,10 +771,10 @@ def _register_sdd_baseline_once(
     if (
         snapshot.state is not ArtifactState.AVAILABLE
         or snapshot.trust is not ArtifactTrust.TRUSTED_PLAIN_TEXT
-        or not snapshot.media_type.split(";", 1)[0].strip().startswith("text/")
+        or snapshot.media_type != "text/markdown; charset=utf-8"
         or snapshot.id != normalized_artifact_id
         or snapshot.version != normalized_artifact_version
-        or not snapshot.sha256
+        or not _is_canonical_sha256(snapshot.sha256)
     ):
         raise ArtifactUnavailable(normalized_artifact_id)
     existing = repository.sdd_baseline_by_artifact(
@@ -919,7 +960,12 @@ def _submit_baseline_confirmation_once(
         raise
     except Exception as error:
         raise RequirementDependencyUnavailable("Gate policy service failed closed") from error
-    if policy.version < 1 or not policy.default_reviewer_id.strip():
+    if (
+        policy.version < 1
+        or not policy.default_reviewer_id.strip()
+        or not policy.policy_code.strip()
+        or not _is_canonical_sha256(policy.snapshot_hash)
+    ):
         raise RequirementDependencyUnavailable("Gate policy snapshot is invalid")
     now = dependencies.clock.now()
     gate = repository.insert_gate(
@@ -933,7 +979,9 @@ def _submit_baseline_confirmation_once(
         artifact_hash=baseline["artifact_hash"],
         route_snapshot_version=baseline["route_snapshot_version"],
         route_snapshot_hash=baseline["route_snapshot_hash"],
+        policy_code=policy.policy_code,
         policy_version=policy.version,
+        policy_snapshot_hash=policy.snapshot_hash,
         state=GateState.OPEN.value,
         revision=1,
         now=now,
@@ -1056,6 +1104,176 @@ def _decision_target(outcome: DecisionOutcome) -> RequirementState:
     return RequirementState.CANCELED
 
 
+def _reassign_baseline_gate_once(
+    repository: RequirementRepository,
+    *,
+    requirement_id: str,
+    gate_id: str,
+    reviewer_id: str,
+    reason: str,
+    expected_gate_revision: int,
+    actor: Any,
+    dependencies: RequirementDependencies,
+) -> GateReassignmentResult:
+    requirement = repository.requirement_by_id(requirement_id, for_update=True)
+    if requirement is None:
+        raise RequirementNotFound(requirement_id)
+    gate = repository.gate_by_id(gate_id, for_update=True)
+    if gate is None or str(gate["requirement_id"]) != requirement_id:
+        raise GateNotFound(gate_id)
+    if gate["revision"] != expected_gate_revision:
+        raise StaleGateRevision(gate_id)
+    if GateState(gate["state"]) is not GateState.OPEN:
+        raise GateAlreadyDecided(gate_id)
+    validate_frozen_route_snapshot(
+        requirement["route_snapshot"],
+        expected_hash=requirement["route_snapshot_hash"],
+        expected_version=requirement["route_snapshot_version"],
+        expected_requirement_type=requirement["type"],
+    )
+    current = repository.current_gate_assignment(gate_id, for_update=True)
+    if current is None:
+        raise RequirementDependencyUnavailable("Gate has no current reviewer assignment")
+    stable_actor = actor_id(actor)
+    if current["default_reviewer_id"] != stable_actor:
+        raise GateReviewerMismatch(stable_actor)
+    candidate_id = _normalized_text(reviewer_id, field="reviewer id")
+    normalized_reason = _normalized_text(reason, field="reassignment reason")
+    if current["current_reviewer_id"] == candidate_id:
+        raise GateAssignmentConflict("Candidate is already the current reviewer")
+    reviewer_guard = dependencies.reviewer_guard
+    if reviewer_guard is None:
+        raise RequirementDependencyUnavailable("Reviewer eligibility service is unavailable")
+    try:
+        candidate_eligible = reviewer_guard.can_decide(
+            actor_id=candidate_id,
+            workspace_id=str(requirement["workspace_id"]),
+        )
+    except RequirementError:
+        raise
+    except Exception as error:
+        raise RequirementDependencyUnavailable("Reviewer guard failed closed") from error
+    if not candidate_eligible:
+        raise GateReviewerIneligible(candidate_id)
+
+    now = dependencies.clock.now()
+    superseded = repository.supersede_gate_assignment(
+        str(current["id"]),
+        expected_revision=current["revision"],
+        now=now,
+    )
+    if superseded is None:
+        raise StaleGateRevision(gate_id)
+    assignment = repository.insert_gate_assignment(
+        id=str(dependencies.random.uuid4()),
+        gate_instance_id=gate_id,
+        default_reviewer_id=current["default_reviewer_id"],
+        current_reviewer_id=candidate_id,
+        revision=current["revision"] + 1,
+        now=now,
+    )
+    updated_gate = repository.reassign_gate(
+        gate_id,
+        expected_revision=expected_gate_revision,
+    )
+    if updated_gate is None:
+        raise StaleGateRevision(gate_id)
+    audit(
+        repository,
+        dependencies=dependencies,
+        actor=stable_actor,
+        action="requirement.baseline_gate.reassigned",
+        target_type="GATE_INSTANCE",
+        target_id=gate_id,
+        reason=(
+            f"reviewer={candidate_id}; assignmentRevision={assignment['revision']}; "
+            f"gateRevision={updated_gate['revision']}; reason={normalized_reason}"
+        ),
+    )
+    return GateReassignmentResult(
+        gate=gate_instance_dto(updated_gate),
+        assignment=gate_assignment_dto(assignment),
+    )
+
+
+def reassign_baseline_gate(
+    repository: RequirementRepository,
+    *,
+    requirement_id: str,
+    gate_id: str,
+    reviewer_id: str,
+    reason: str,
+    expected_gate_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    dependencies: RequirementDependencies,
+) -> GateReassignmentResult:
+    stable_actor = actor_id(actor)
+    material = dependencies.secret_manager.load()
+    body: dict[str, object] = {
+        "requirementId": requirement_id,
+        "gateId": gate_id,
+        "reviewerId": reviewer_id,
+        "reason": reason,
+        "expectedGateRevision": expected_gate_revision,
+    }
+    fingerprint = canonical_request_fingerprint(
+        operation="requirement_reassign_baseline_gate",
+        method="COMMAND",
+        path="requirement.reassign-baseline-gate",
+        body=body,
+        idempotency_sealing_key=material.idempotency_sealing_key,
+    )
+
+    def command() -> IdempotentResponse:
+        try:
+            result = _reassign_baseline_gate_once(
+                repository,
+                requirement_id=requirement_id,
+                gate_id=gate_id,
+                reviewer_id=reviewer_id,
+                reason=reason,
+                expected_gate_revision=expected_gate_revision,
+                actor=actor,
+                dependencies=dependencies,
+            )
+        except RequirementError as error:
+            _audit_denial(
+                dependencies=dependencies,
+                actor=stable_actor,
+                action="requirement.baseline_gate.reassign",
+                target_type="GATE_INSTANCE",
+                target_id=gate_id,
+                error=error,
+            )
+            raise
+        return IdempotentResponse(status_code=200, body=result.model_dump(mode="json"))
+
+    try:
+        execution = execute_idempotent(
+            repository,
+            actor=stable_actor,
+            operation="requirement_reassign_baseline_gate",
+            key=idempotency_key,
+            fingerprint=fingerprint,
+            command=command,
+            now=dependencies.clock.now,
+            new_id=dependencies.random.uuid4,
+            idempotency_sealing_key=material.idempotency_sealing_key,
+        )
+    except IdempotencyConflict as error:
+        _audit_denial(
+            dependencies=dependencies,
+            actor=stable_actor,
+            action="requirement.baseline_gate.reassign",
+            target_type="GATE_INSTANCE",
+            target_id=gate_id,
+            error=error,
+        )
+        raise
+    return GateReassignmentResult.model_validate(execution.response.body)
+
+
 def _decide_baseline_once(
     repository: RequirementRepository,
     *,
@@ -1077,8 +1295,30 @@ def _decide_baseline_once(
         raise GateNotFound(gate_id)
     if GateState(gate["state"]) is not GateState.OPEN:
         raise GateAlreadyDecided(gate_id)
+    try:
+        validate_frozen_route_snapshot(
+            requirement["route_snapshot"],
+            expected_hash=requirement["route_snapshot_hash"],
+            expected_version=requirement["route_snapshot_version"],
+            expected_requirement_type=requirement["type"],
+        )
+    except RequirementDependencyUnavailable as error:
+        raise StaleBaselineSubject(gate_id) from error
+    baseline_id = str(gate["sdd_baseline_id"])
+    baseline = repository.sdd_baseline_by_id(baseline_id)
     if (
-        gate["requirement_version"] != requirement["requirement_version"]
+        requirement["current_sdd_baseline_id"] is None
+        or str(requirement["current_sdd_baseline_id"]) != baseline_id
+        or baseline is None
+        or str(baseline["id"]) != baseline_id
+        or str(baseline["requirement_id"]) != requirement_id
+        or baseline["requirement_version"] != gate["requirement_version"]
+        or baseline["artifact_id"] != gate["artifact_id"]
+        or baseline["artifact_version"] != gate["artifact_version"]
+        or baseline["artifact_hash"] != gate["artifact_hash"]
+        or baseline["route_snapshot_version"] != gate["route_snapshot_version"]
+        or baseline["route_snapshot_hash"] != gate["route_snapshot_hash"]
+        or gate["requirement_version"] != requirement["requirement_version"]
         or gate["route_snapshot_version"] != requirement["route_snapshot_version"]
         or gate["route_snapshot_hash"] != requirement["route_snapshot_hash"]
     ):
@@ -1095,7 +1335,7 @@ def _decide_baseline_once(
     try:
         reviewer_eligible = reviewer_guard.can_decide(
             actor_id=stable_actor,
-            workspace_id=requirement["workspace_id"],
+            workspace_id=str(requirement["workspace_id"]),
         )
     except RequirementError:
         raise
@@ -1134,6 +1374,11 @@ def _decide_baseline_once(
     )
     if updated is None:
         raise StaleRequirementRevision(requirement_id)
+    repository.reconcile_planned_work_item_states(
+        requirement_id,
+        requirement_state=target.value,
+        now=now,
+    )
     audit(
         repository,
         dependencies=dependencies,

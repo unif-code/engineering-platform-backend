@@ -18,8 +18,10 @@ EXPECTED_TABLES = {
     "idempotency_record",
     "outbox_message",
     "requirement",
+    "sdd_artifact_version",
     "sdd_baseline",
     "work_item",
+    "work_item_assignment",
 }
 
 
@@ -29,11 +31,12 @@ def _insert_requirement_for_integrity_test(db: Connection) -> None:
             "INSERT INTO requirement.requirement "
             "(id, workspace_id, type, title, description, acceptance_criteria, "
             "created_by, initial_repository_id, route_snapshot_version, "
-            "route_snapshot_hash, state, record_state, requirement_version, "
+            "route_snapshot_hash, route_snapshot, state, record_state, requirement_version, "
             "required_work_item_set_version, required_work_item_set_hash, revision) VALUES "
             "('10000000-0000-0000-0000-000000000201', "
             "'20000000-0000-0000-0000-000000000201', 'feat', 'Title', 'Description', "
             "'[\"accepted\"]', 'employee-1', 'repository-1', 1, 'sha256:route', "
+            '\'{"requirementType":"feat","requiredCapabilities":["code.change"],"version": 1}\', '
             "'PREPARING', 'ACTIVE', 1, 1, 'sha256:set', 1)"
         )
     )
@@ -55,11 +58,15 @@ def _insert_gate(db: Connection, gate_id: str) -> None:
             "INSERT INTO requirement.gate_instance "
             "(id, gate_type, requirement_id, requirement_version, sdd_baseline_id, "
             "artifact_id, artifact_version, artifact_hash, route_snapshot_version, "
-            "route_snapshot_hash, policy_version, state, revision) VALUES "
+            "route_snapshot_hash, policy_code, policy_version, policy_snapshot_hash, "
+            "state, revision) VALUES "
             "(:id, 'REQUIREMENT_BASELINE_CONFIRMATION', "
             "'10000000-0000-0000-0000-000000000201', 1, "
             "'10000000-0000-0000-0000-000000000202', 'artifact-1', 'version-1', "
-            "'sha256:artifact-1', 1, 'sha256:route', 1, 'OPEN', 1)"
+            "'sha256:artifact-1', 1, 'sha256:route', "
+            "'REQUIREMENT_BASELINE_WORKSPACE_OWNER', 1, "
+            "'sha256:bdfadcc2d2c32fdb9fdf327d45a231cd2e5cb9bf3028f4e09d527fdb50dd8ea2', "
+            "'OPEN', 1)"
         ),
         {"id": gate_id},
     )
@@ -153,6 +160,53 @@ def test_requirement_integration_delivery_columns_and_checks_exist(
     assert "VERIFYING" in state_constraint
 
 
+def test_v04_route_artifact_assignment_and_gate_snapshot_storage_exist(
+    requirement_owner_engine: Engine,
+) -> None:
+    inspector = inspect(requirement_owner_engine)
+    requirement_columns = {
+        column["name"]: column
+        for column in inspector.get_columns("requirement", schema="requirement")
+    }
+    gate_columns = {
+        column["name"]: column
+        for column in inspector.get_columns("gate_instance", schema="requirement")
+    }
+    artifact_columns = {
+        column["name"]: column
+        for column in inspector.get_columns("sdd_artifact_version", schema="requirement")
+    }
+    assignment_columns = {
+        column["name"]: column
+        for column in inspector.get_columns("work_item_assignment", schema="requirement")
+    }
+
+    assert requirement_columns["route_snapshot"]["nullable"] is False
+    assert {"policy_code", "policy_snapshot_hash"} <= set(gate_columns)
+    assert {
+        "artifact_id",
+        "version",
+        "requirement_id",
+        "sha256",
+        "state",
+        "media_type",
+        "trust",
+        "content",
+        "created_by",
+        "created_at",
+    } <= set(artifact_columns)
+    assert {
+        "id",
+        "work_item_id",
+        "assignee_id",
+        "assigned_by",
+        "reason",
+        "revision",
+        "assigned_at",
+        "superseded_at",
+    } <= set(assignment_columns)
+
+
 @pytest.mark.parametrize(
     ("delivery_state", "merge_request_binding_id", "blocked_reason"),
     [
@@ -244,12 +298,16 @@ def test_gate_cannot_claim_artifact_different_from_its_sdd_baseline(
                     "INSERT INTO requirement.gate_instance "
                     "(id, gate_type, requirement_id, requirement_version, sdd_baseline_id, "
                     "artifact_id, artifact_version, artifact_hash, route_snapshot_version, "
-                    "route_snapshot_hash, policy_version, state, revision) VALUES "
+                    "route_snapshot_hash, policy_code, policy_version, policy_snapshot_hash, "
+                    "state, revision) VALUES "
                     "('10000000-0000-0000-0000-000000000203', "
                     "'REQUIREMENT_BASELINE_CONFIRMATION', "
                     "'10000000-0000-0000-0000-000000000201', 1, "
                     "'10000000-0000-0000-0000-000000000202', 'artifact-1', 'version-1', "
-                    "'sha256:different', 1, 'sha256:route', 1, 'OPEN', 1)"
+                    "'sha256:different', 1, 'sha256:route', "
+                    "'REQUIREMENT_BASELINE_WORKSPACE_OWNER', 1, "
+                    "'sha256:bdfadcc2d2c32fdb9fdf327d45a231cd2e5cb9bf3028f4e09d527fdb50dd8ea2', "
+                    "'OPEN', 1)"
                 )
             )
 
@@ -264,12 +322,15 @@ def test_current_sdd_baseline_must_belong_to_the_same_requirement(
                 "INSERT INTO requirement.requirement "
                 "(id, workspace_id, type, title, description, acceptance_criteria, "
                 "created_by, initial_repository_id, route_snapshot_version, "
-                "route_snapshot_hash, state, record_state, requirement_version, "
+                "route_snapshot_hash, route_snapshot, state, record_state, requirement_version, "
                 "required_work_item_set_version, required_work_item_set_hash, revision) "
                 "VALUES ('10000000-0000-0000-0000-000000000209', "
                 "'20000000-0000-0000-0000-000000000209', 'feat', 'Other', "
                 "'Other requirement', '[\"accepted\"]', 'employee-2', 'repository-2', 1, "
-                "'sha256:route-2', 'PREPARING', 'ACTIVE', 1, 1, 'sha256:set-2', 1)"
+                "'sha256:route-2', "
+                '\'{"requirementType":"feat","requiredCapabilities":'
+                '["code.change"],"version": 1}\', '
+                "'PREPARING', 'ACTIVE', 1, 1, 'sha256:set-2', 1)"
             )
         )
         db.execute(
@@ -335,8 +396,10 @@ def test_requirement_rw_has_only_expected_module_and_audit_privileges(
     isolated_requirement_database: IsolatedRequirementDatabase,
 ) -> None:
     expected = {
-        "requirement": {"SELECT", "INSERT", "UPDATE"},
+        "requirement": {"SELECT", "INSERT"},
+        "sdd_artifact_version": {"SELECT", "INSERT"},
         "work_item": {"SELECT", "INSERT", "UPDATE"},
+        "work_item_assignment": {"SELECT", "INSERT"},
         "sdd_baseline": {"SELECT", "INSERT"},
         "gate_instance": {"SELECT", "INSERT"},
         "gate_assignment": {"SELECT", "INSERT"},
@@ -387,7 +450,12 @@ def test_requirement_rw_has_only_expected_module_and_audit_privileges(
                     {"table_name": table_name, "column_name": column_name},
                 ).scalar_one()
             }
-            for table_name in ("gate_instance", "gate_assignment")
+            for table_name in (
+                "requirement",
+                "gate_instance",
+                "gate_assignment",
+                "work_item_assignment",
+            )
         }
     with isolated_requirement_database.owner.connect() as db:
         cross_module = {
@@ -409,8 +477,18 @@ def test_requirement_rw_has_only_expected_module_and_audit_privileges(
     assert actual == expected
     assert schema_privileges == {"USAGE"}
     assert column_updates == {
+        "requirement": {
+            "state",
+            "requirement_version",
+            "required_work_item_set_version",
+            "required_work_item_set_hash",
+            "current_sdd_baseline_id",
+            "revision",
+            "updated_at",
+        },
         "gate_instance": {"state", "revision", "decided_at"},
         "gate_assignment": {"superseded_at"},
+        "work_item_assignment": {"superseded_at"},
     }
     assert cross_module == {
         "identity.account": False,
@@ -418,6 +496,27 @@ def test_requirement_rw_has_only_expected_module_and_audit_privileges(
         "audit.audit_event": False,
     }
     assert audit_execute is True
+
+
+def test_requirement_rw_cannot_mutate_the_frozen_route_snapshot(
+    isolated_requirement_rw_engine: Engine,
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    with isolated_requirement_database.owner.begin() as db:
+        _insert_requirement_for_integrity_test(db)
+
+    with (
+        isolated_requirement_rw_engine.begin() as db,
+        pytest.raises(ProgrammingError, match="permission denied"),
+    ):
+        db.execute(
+            text(
+                "UPDATE requirement.requirement "
+                "SET route_snapshot=jsonb_set(route_snapshot, "
+                "'{requiredCapabilities}', '[\"platform.authorization.manage\"]'::jsonb) "
+                "WHERE id='10000000-0000-0000-0000-000000000201'"
+            )
+        )
 
 
 def test_requirement_rw_cannot_delete_aggregate_or_create_tables(

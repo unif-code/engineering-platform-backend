@@ -14,6 +14,15 @@ def list_workspaces(repository: WorkspaceRepository) -> list[WorkspaceDto]:
     return [workspace_dto(row) for row in repository.list_workspaces()]
 
 
+def get_workspace(repository: WorkspaceRepository, *, workspace_id: str) -> WorkspaceDto:
+    row = repository.workspace_by_id(workspace_id)
+    if row is None:
+        raise WorkspaceNotFound(workspace_id)
+    if row["archived_at"] is not None:
+        raise WorkspaceArchived(workspace_id)
+    return workspace_dto(row)
+
+
 def members(
     repository: WorkspaceRepository,
     *,

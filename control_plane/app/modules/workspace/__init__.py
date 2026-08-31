@@ -20,6 +20,9 @@ from control_plane.app.modules.workspace.application.projection import (
     recompute_members as _recompute_members,
 )
 from control_plane.app.modules.workspace.application.queries import (
+    get_workspace as _get_workspace,
+)
+from control_plane.app.modules.workspace.application.queries import (
     is_formal_member as _is_formal_member,
 )
 from control_plane.app.modules.workspace.application.queries import (
@@ -157,6 +160,18 @@ def list_workspaces(db: Connection, *, dependencies: WorkspaceDependencies) -> l
     return _list_workspaces(dependencies.repository_factory(db))
 
 
+def get_workspace(
+    db: Connection,
+    *,
+    workspace_id: str,
+    dependencies: WorkspaceDependencies,
+) -> WorkspaceDto:
+    return _get_workspace(
+        dependencies.repository_factory(db),
+        workspace_id=workspace_id,
+    )
+
+
 def members(
     db: Connection,
     *,
@@ -195,6 +210,7 @@ __all__ = [
     "WorkspaceNotFound",
     "WorkspaceOwnerRequired",
     "create_workspace",
+    "get_workspace",
     "invite_leader",
     "is_formal_member",
     "list_workspaces",

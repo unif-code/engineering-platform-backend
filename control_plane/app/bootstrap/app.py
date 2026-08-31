@@ -79,12 +79,17 @@ from control_plane.app.modules.organization.api import (
 from control_plane.app.modules.requirement import RequirementDependencies
 from control_plane.app.modules.requirement.adapters import (
     ComposedAutomaticAssignmentGuard,
+    ComposedGateReviewerGuard,
     SqlAlchemyRequirementRepository,
-    V03RouteSnapshotCatalog,
+    SqlAlchemySddArtifactReader,
+    V04RouteSnapshotCatalog,
+    WorkspaceOwnerGatePolicy,
 )
 from control_plane.app.modules.requirement.api import (
     RequirementHttpRuntime,
+    create_requirement_baseline_router,
     create_requirement_foundation_router,
+    create_requirement_planning_router,
 )
 from control_plane.app.modules.source_control import SourceControlDependencies
 from control_plane.app.modules.source_control.adapters import (
@@ -314,7 +319,7 @@ def requirement_dependencies() -> RequirementDependencies:
         denial_audit=SqlAlchemyAuditEventRepository(runtime_engine()),
         clock=SystemClock(),
         random=SystemRandom(),
-        route_snapshots=V03RouteSnapshotCatalog(),
+        route_snapshots=V04RouteSnapshotCatalog(),
         assignment_guard=ComposedAutomaticAssignmentGuard(
             identity_engine=identity_runtime_engine(),
             identity_dependencies=identity_dependencies(),
@@ -326,9 +331,19 @@ def requirement_dependencies() -> RequirementDependencies:
             source_control_dependencies=source_control_dependencies(),
         ),
         secret_manager=FileSecretManager(SecuritySettings()),
-        artifacts=None,
-        gate_policies=None,
-        reviewer_guard=None,
+        artifacts=SqlAlchemySddArtifactReader(requirement_runtime_engine()),
+        gate_policies=WorkspaceOwnerGatePolicy(
+            workspace_engine=workspace_runtime_engine(),
+            workspace_dependencies=workspace_dependencies(),
+        ),
+        reviewer_guard=ComposedGateReviewerGuard(
+            identity_engine=identity_runtime_engine(),
+            identity_dependencies=identity_dependencies(),
+            workspace_engine=workspace_runtime_engine(),
+            workspace_dependencies=workspace_dependencies(),
+            authorization_engine=authorization_runtime_engine(),
+            authorization_dependencies=authorization_dependencies(),
+        ),
     )
 
 
@@ -529,6 +544,20 @@ def create_app(
     )
     app.include_router(
         create_requirement_foundation_router(
+            requirement_runtime_provider,
+            cast(Callable[[], Any], protected_principal),
+            authorization_capability_guard,
+        )
+    )
+    app.include_router(
+        create_requirement_planning_router(
+            requirement_runtime_provider,
+            cast(Callable[[], Any], protected_principal),
+            authorization_capability_guard,
+        )
+    )
+    app.include_router(
+        create_requirement_baseline_router(
             requirement_runtime_provider,
             cast(Callable[[], Any], protected_principal),
             authorization_capability_guard,

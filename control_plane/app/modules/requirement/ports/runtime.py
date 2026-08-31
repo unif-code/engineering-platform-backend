@@ -21,6 +21,8 @@ class RouteSnapshot(BaseModel):
     version: int
     snapshot_hash: str
     required_capabilities: tuple[str, ...]
+    requirement_type: RequirementType | None = None
+    steps: tuple[str, ...] = ()
 
 
 class RouteSnapshotPort(Protocol):
@@ -60,7 +62,12 @@ class ArtifactSnapshot(BaseModel):
 
 
 class ArtifactPort(Protocol):
-    def get_snapshot(self, artifact_id: str, artifact_version: str) -> ArtifactSnapshot: ...
+    def get_snapshot(
+        self,
+        requirement_id: str,
+        artifact_id: str,
+        artifact_version: str,
+    ) -> ArtifactSnapshot: ...
 
 
 class GatePolicySnapshot(BaseModel):
@@ -68,6 +75,8 @@ class GatePolicySnapshot(BaseModel):
 
     version: int
     default_reviewer_id: str
+    policy_code: str = "REQUIREMENT_BASELINE_WORKSPACE_OWNER"
+    snapshot_hash: str = "sha256:bdfadcc2d2c32fdb9fdf327d45a231cd2e5cb9bf3028f4e09d527fdb50dd8ea2"
 
 
 class GatePolicyPort(Protocol):

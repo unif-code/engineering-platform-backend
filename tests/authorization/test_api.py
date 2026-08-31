@@ -286,7 +286,26 @@ def test_real_me_navigation_and_grant_lifecycle_are_protected_and_compatible(
             "order": 20,
             "capability": "requirement.read",
             "scopeType": "WORKSPACE",
-            "meta": {"name": "Requirements", "order": 20},
+            "meta": {
+                "name": "Requirements",
+                "order": 20,
+                "actionCapabilities": [
+                    {"capability": "work_item.create", "scopeType": "WORKSPACE"},
+                    {"capability": "work_item.assign", "scopeType": "WORKSPACE"},
+                    {
+                        "capability": "requirement.baseline.submit",
+                        "scopeType": "WORKSPACE",
+                    },
+                    {
+                        "capability": "requirement.baseline.assign",
+                        "scopeType": "WORKSPACE",
+                    },
+                    {
+                        "capability": "requirement.baseline.decide",
+                        "scopeType": "WORKSPACE",
+                    },
+                ],
+            },
         },
     ]
 

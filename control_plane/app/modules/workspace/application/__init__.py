@@ -10,6 +10,7 @@ from control_plane.app.modules.workspace.application.projection import (
     recompute_members,
 )
 from control_plane.app.modules.workspace.application.queries import (
+    get_workspace,
     is_formal_member,
     list_workspaces,
     members,
@@ -19,6 +20,7 @@ __all__ = [
     "WorkspaceDependencies",
     "WorkspaceMembershipChangeHandler",
     "create_workspace",
+    "get_workspace",
     "invite_leader",
     "is_formal_member",
     "list_workspaces",

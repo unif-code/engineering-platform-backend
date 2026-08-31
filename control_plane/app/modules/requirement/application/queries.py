@@ -4,7 +4,12 @@ from datetime import datetime
 from uuid import UUID
 
 from control_plane.app.modules.requirement.application.common import (
+    decision_dto,
+    gate_assignment_dto,
+    gate_instance_dto,
     requirement_dto,
+    sdd_baseline_dto,
+    work_item_assignment_dto,
     work_item_dto,
 )
 from control_plane.app.modules.requirement.domain import (
@@ -53,9 +58,27 @@ def get_requirement(
     row = repository.requirement_by_id(requirement_id)
     if row is None:
         raise RequirementNotFound(requirement_id)
+    baseline = (
+        None
+        if row["current_sdd_baseline_id"] is None
+        else repository.sdd_baseline_by_id(str(row["current_sdd_baseline_id"]))
+    )
+    gate = None if baseline is None else repository.gate_by_baseline_id(str(baseline["id"]))
+    gate_assignment = None if gate is None else repository.current_gate_assignment(str(gate["id"]))
+    decision = None if gate is None else repository.decision_by_gate_id(str(gate["id"]))
     return RequirementDetailsDto(
         requirement=requirement_dto(row),
         work_items=tuple(work_item_dto(item) for item in repository.work_items(requirement_id)),
+        work_item_assignments=tuple(
+            work_item_assignment_dto(item)
+            for item in repository.current_work_item_assignments(requirement_id)
+        ),
+        current_sdd_baseline=None if baseline is None else sdd_baseline_dto(baseline),
+        current_gate=None if gate is None else gate_instance_dto(gate),
+        current_gate_assignment=(
+            None if gate_assignment is None else gate_assignment_dto(gate_assignment)
+        ),
+        current_decision=None if decision is None else decision_dto(decision),
     )
 
 

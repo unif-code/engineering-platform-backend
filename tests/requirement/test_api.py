@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
+import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import text
@@ -22,24 +23,29 @@ from control_plane.app.modules.requirement import (
 )
 from control_plane.app.modules.requirement.adapters import (
     ComposedAutomaticAssignmentGuard,
+    ComposedGateReviewerGuard,
+    SqlAlchemySddArtifactReader,
+    WorkspaceOwnerGatePolicy,
 )
 from control_plane.app.modules.requirement.api import (
     RequirementHttpRuntime,
     create_requirement_baseline_router,
     create_requirement_delivery_router,
     create_requirement_foundation_router,
+    create_requirement_planning_router,
 )
 from control_plane.app.shared.api.problem import register_problem_handlers
 from control_plane.app.shared.api.request_id import request_id_middleware
 from tests.requirement.conftest import IsolatedRequirementDatabase
-from tests.requirement.test_baseline_gate import _gate_dependencies
+from tests.requirement.test_baseline_gate import ARTIFACT_HASH_V1, _gate_dependencies
 from tests.requirement.test_commands import WORKSPACE_ID, Actor
 from tests.requirement.test_delivery_commands import _merge_ready_work_item, _ready_requirement
 
 SAME_ORIGIN = {"Origin": "http://testserver"}
+HTTP_ARTIFACT_ID = "30000000-0000-0000-0000-000000000401"
 
 
-def test_bootstrap_exposes_only_v03_requirement_endpoints_with_fail_closed_dependencies() -> None:
+def test_bootstrap_exposes_v04_planning_and_gate_without_v05_delivery() -> None:
     schema = create_app().openapi()
     paths = schema["paths"]
 
@@ -48,9 +54,19 @@ def test_bootstrap_exposes_only_v03_requirement_endpoints_with_fail_closed_depen
         "/api/v1/requirements/{requirementId}",
     } <= set(paths)
     assert {
+        "/api/v1/requirements/{requirementId}/sdd-artifacts",
+        (
+            "/api/v1/requirements/{requirementId}/sdd-artifacts/"
+            "{artifactId}/versions/{artifactVersion}"
+        ),
+        "/api/v1/requirements/{requirementId}/work-items",
+        "/api/v1/requirements/{requirementId}/work-items/{workItemId}:assign",
         "/api/v1/requirements/{requirementId}/sdd-baselines",
         "/api/v1/requirements/{requirementId}/baseline-confirmations",
+        "/api/v1/requirements/{requirementId}/baseline-gates/{gateId}:reassign",
         "/api/v1/requirements/{requirementId}/baseline-decisions",
+    } <= set(paths)
+    assert {
         "/api/v1/requirements/{requirementId}/work-items/{workItemId}:start",
         "/api/v1/requirements/{requirementId}/work-items/{workItemId}:request-integration-mr",
         "/api/v1/requirements/{requirementId}/work-items/{workItemId}:request-integration-merge",
@@ -80,7 +96,7 @@ def test_bootstrap_exposes_only_v03_requirement_endpoints_with_fail_closed_depen
 
     dependencies = requirement_dependencies()
     route = dependencies.route_snapshots.current(RequirementType.FEAT)
-    assert route.version == 1
+    assert route.version == 2
     assert route.snapshot_hash.startswith("sha256:")
     assert route.required_capabilities == ("code.change",)
     assert isinstance(dependencies.assignment_guard, ComposedAutomaticAssignmentGuard)
@@ -90,16 +106,17 @@ def test_bootstrap_exposes_only_v03_requirement_endpoints_with_fail_closed_depen
         repository_id="repository-1",
         required_capabilities=route.required_capabilities,
     )
-    assert dependencies.artifacts is None
-    assert dependencies.gate_policies is None
-    assert dependencies.reviewer_guard is None
+    assert isinstance(dependencies.artifacts, SqlAlchemySddArtifactReader)
+    assert isinstance(dependencies.gate_policies, WorkspaceOwnerGatePolicy)
+    assert isinstance(dependencies.reviewer_guard, ComposedGateReviewerGuard)
 
 
-def _dormant_requirement_app() -> FastAPI:
+def _all_requirement_routers_app() -> FastAPI:
     app = FastAPI()
     protected_principal = current_principal(authorization_http_runtime)
     for router_factory in (
         create_requirement_foundation_router,
+        create_requirement_planning_router,
         create_requirement_baseline_router,
         create_requirement_delivery_router,
     ):
@@ -113,8 +130,8 @@ def _dormant_requirement_app() -> FastAPI:
     return app
 
 
-def test_dormant_requirement_routers_are_explicitly_composable() -> None:
-    paths = _dormant_requirement_app().openapi()["paths"]
+def test_requirement_routers_are_explicitly_composable() -> None:
+    paths = _all_requirement_routers_app().openapi()["paths"]
 
     for suffix in (
         "sdd-baselines",
@@ -175,7 +192,10 @@ def _client(
         or {
             ("requirement.create", WORKSPACE_ID),
             ("requirement.read", WORKSPACE_ID),
+            ("work_item.create", WORKSPACE_ID),
+            ("work_item.assign", WORKSPACE_ID),
             ("requirement.baseline.submit", WORKSPACE_ID),
+            ("requirement.baseline.assign", WORKSPACE_ID),
             ("requirement.baseline.decide", WORKSPACE_ID),
         }
     )
@@ -184,6 +204,7 @@ def _client(
     register_problem_handlers(app)
     for router_factory in (
         create_requirement_foundation_router,
+        create_requirement_planning_router,
         create_requirement_baseline_router,
         create_requirement_delivery_router,
     ):
@@ -269,6 +290,91 @@ def test_create_list_and_detail_use_camel_case_cursor_shape_and_etag(
     ]
 
 
+def test_v04_artifact_work_item_and_assignment_http_contract(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    dependencies = replace(
+        _gate_dependencies(),
+        artifacts=SqlAlchemySddArtifactReader(isolated_requirement_database.runtime),
+    )
+    client, holder, _guard, _resolved = _client(
+        isolated_requirement_database,
+        dependencies=dependencies,
+    )
+    created = _create_via_api(client, key="v04-planning-create")
+    requirement_id = created["requirement"]["id"]
+    with isolated_requirement_database.runtime.begin() as db:
+        prepared = start_requirement_preparation(
+            db,
+            requirement_id=requirement_id,
+            expected_revision=1,
+            actor=holder.value,
+            idempotency_key="v04-planning-prepare",
+            dependencies=dependencies,
+        )
+
+    artifact = client.post(
+        f"/api/v1/requirements/{requirement_id}/sdd-artifacts",
+        json={"content": "# First\r\nline\rnext"},
+        headers=_versioned_headers("v04-artifact-v1", prepared.revision),
+    )
+    assert artifact.status_code == 201, artifact.text
+    assert artifact.headers["etag"] == '"v3"'
+    assert artifact.json()["artifact"]["version"] == 1
+    assert artifact.json()["artifact"]["content"] == "# First\nline\nnext"
+    artifact_id = artifact.json()["artifact"]["artifactId"]
+
+    exact = client.get(
+        f"/api/v1/requirements/{requirement_id}/sdd-artifacts/{artifact_id}/versions/1"
+    )
+    assert exact.status_code == 200
+    assert exact.json() == artifact.json()["artifact"]
+
+    snake_case_body = client.post(
+        f"/api/v1/requirements/{requirement_id}/work-items",
+        json={"repository_id": "repository-2"},
+        headers=_versioned_headers("v04-work-item-snake-case", 3),
+    )
+    assert snake_case_body.status_code == 422
+    assert snake_case_body.json()["title"] == "Validation failed"
+
+    added = client.post(
+        f"/api/v1/requirements/{requirement_id}/work-items",
+        json={"repositoryId": "repository-2"},
+        headers=_versioned_headers("v04-work-item-add", 3),
+    )
+    assert added.status_code == 201, added.text
+    assert added.headers["etag"] == '"v4"'
+    assert added.json()["assignment"]["assigneeId"] == "employee-1"
+    work_item_id = added.json()["workItem"]["id"]
+
+    assigned = client.post(
+        f"/api/v1/requirements/{requirement_id}/work-items/{work_item_id}:assign",
+        json={"humanOwnerId": "employee-2", "reason": "Split backend ownership."},
+        headers=_versioned_headers("v04-work-item-assign", 1),
+    )
+    assert assigned.status_code == 200, assigned.text
+    assert assigned.headers["etag"] == '"v2"'
+    assert assigned.json()["workItem"]["humanOwnerId"] == "employee-2"
+    assert assigned.json()["assignment"]["revision"] == 2
+
+    stale = client.post(
+        f"/api/v1/requirements/{requirement_id}/work-items/{work_item_id}:assign",
+        json={"humanOwnerId": "employee-3", "reason": "Stale overwrite."},
+        headers=_versioned_headers("v04-work-item-assign-stale", 1),
+    )
+    assert stale.status_code == 409
+    assert stale.json()["title"] == "Requirement state conflict"
+
+    detail = client.get(f"/api/v1/requirements/{requirement_id}")
+    assert detail.status_code == 200
+    assert detail.json()["requirement"]["routeSnapshot"]["requiredCapabilities"] == ["code.change"]
+    assert {item["workItemId"] for item in detail.json()["workItemAssignments"]} == {
+        created["workItem"]["id"],
+        work_item_id,
+    }
+
+
 def test_write_preflight_and_strict_browser_dto_return_problem_details(
     isolated_requirement_database: IsolatedRequirementDatabase,
 ) -> None:
@@ -305,12 +411,12 @@ def test_write_preflight_and_strict_browser_dto_return_problem_details(
     valid_requirement_id = "00000000-0000-0000-0000-000000000301"
     missing_if_match = client.post(
         f"/api/v1/requirements/{valid_requirement_id}/sdd-baselines",
-        json={"artifactId": "sdd-1", "artifactVersion": "version-1"},
+        json={"artifactId": HTTP_ARTIFACT_ID, "artifactVersion": 1},
         headers={**SAME_ORIGIN, "Idempotency-Key": "requirement-missing-revision"},
     )
     missing_versioned_key = client.post(
         f"/api/v1/requirements/{valid_requirement_id}/sdd-baselines",
-        json={"artifactId": "sdd-1", "artifactVersion": "version-1"},
+        json={"artifactId": HTTP_ARTIFACT_ID, "artifactVersion": 1},
         headers={**SAME_ORIGIN, "If-Match": '"v1"'},
     )
     invalid_subject_id = client.post(
@@ -365,7 +471,7 @@ def test_create_http_idempotency_replays_and_rejects_payload_conflicts(
     assert conflict.json()["title"] == "Idempotency conflict"
 
 
-def test_baseline_registration_confirmation_and_decision_enforce_revision_headers(
+def test_baseline_registration_reassignment_and_decision_use_exact_etags(
     isolated_requirement_database: IsolatedRequirementDatabase,
 ) -> None:
     client, holder, _guard, dependencies = _client(isolated_requirement_database)
@@ -383,7 +489,7 @@ def test_baseline_registration_confirmation_and_decision_enforce_revision_header
 
     malformed = client.post(
         f"/api/v1/requirements/{requirement_id}/sdd-baselines",
-        json={"artifactId": "sdd-1", "artifactVersion": "version-1"},
+        json={"artifactId": HTTP_ARTIFACT_ID, "artifactVersion": 1},
         headers={
             **SAME_ORIGIN,
             "Idempotency-Key": "requirement-baseline-malformed",
@@ -395,7 +501,7 @@ def test_baseline_registration_confirmation_and_decision_enforce_revision_header
 
     registered = client.post(
         f"/api/v1/requirements/{requirement_id}/sdd-baselines",
-        json={"artifactId": "sdd-1", "artifactVersion": "version-1"},
+        json={"artifactId": HTTP_ARTIFACT_ID, "artifactVersion": 1},
         headers={
             **SAME_ORIGIN,
             "Idempotency-Key": "requirement-baseline-register",
@@ -404,7 +510,7 @@ def test_baseline_registration_confirmation_and_decision_enforce_revision_header
     )
     assert registered.status_code == 201
     assert registered.headers["etag"] == '"v3"'
-    assert registered.json()["baseline"]["artifactHash"] == "sha256:sdd-1"
+    assert registered.json()["baseline"]["artifactHash"] == ARTIFACT_HASH_V1
 
     confirmed = client.post(
         f"/api/v1/requirements/{requirement_id}/baseline-confirmations",
@@ -418,8 +524,37 @@ def test_baseline_registration_confirmation_and_decision_enforce_revision_header
     assert confirmed.status_code == 201
     assert confirmed.headers["etag"] == '"v4"'
     assert confirmed.json()["assignment"]["currentReviewerId"] == "reviewer-1"
+    assert confirmed.json()["gate"]["policyCode"] == "REQUIREMENT_BASELINE_WORKSPACE_OWNER"
+    assert confirmed.json()["gate"]["policySnapshotHash"].startswith("sha256:")
 
     holder.value = Actor("reviewer-1")
+    reassigned = client.post(
+        f"/api/v1/requirements/{requirement_id}/baseline-gates/"
+        f"{confirmed.json()['gate']['id']}:reassign",
+        json={"reviewerId": "reviewer-2", "reason": "Delegate the current review."},
+        headers=_versioned_headers("requirement-baseline-reassign", 1),
+    )
+    assert reassigned.status_code == 200, reassigned.text
+    assert reassigned.headers["etag"] == '"v2"'
+    assert reassigned.json()["assignment"]["currentReviewerId"] == "reviewer-2"
+
+    wrong_reviewer = client.post(
+        f"/api/v1/requirements/{requirement_id}/baseline-decisions",
+        json={
+            "gateId": confirmed.json()["gate"]["id"],
+            "outcome": DecisionOutcome.APPROVED.value,
+            "reason": "The old reviewer must no longer decide.",
+        },
+        headers={
+            **SAME_ORIGIN,
+            "Idempotency-Key": "requirement-baseline-old-reviewer",
+            "If-Match": confirmed.headers["etag"],
+        },
+    )
+    assert wrong_reviewer.status_code == 403
+    assert wrong_reviewer.json()["title"] == "Baseline reviewer denied"
+
+    holder.value = Actor("reviewer-2")
     decided = client.post(
         f"/api/v1/requirements/{requirement_id}/baseline-decisions",
         json={
@@ -436,7 +571,65 @@ def test_baseline_registration_confirmation_and_decision_enforce_revision_header
     assert decided.status_code == 200
     assert decided.headers["etag"] == '"v5"'
     assert decided.json()["requirement"]["state"] == RequirementState.READY.value
-    assert decided.json()["decision"]["reviewerId"] == "reviewer-1"
+    assert decided.json()["decision"]["reviewerId"] == "reviewer-2"
+
+    detail = client.get(f"/api/v1/requirements/{requirement_id}")
+    assert detail.status_code == 200
+    assert detail.json()["currentGateAssignment"]["currentReviewerId"] == "reviewer-2"
+    assert detail.json()["currentDecision"]["reviewerId"] == "reviewer-2"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"artifactId": "not-a-uuid", "artifactVersion": "1"},
+        {
+            "artifactId": HTTP_ARTIFACT_ID,
+            "artifactVersion": "version-1",
+        },
+        {
+            "artifactId": HTTP_ARTIFACT_ID,
+            "artifactVersion": "1",
+        },
+        {
+            "artifactId": HTTP_ARTIFACT_ID,
+            "artifactVersion": 1.0,
+        },
+        {
+            "artifactId": HTTP_ARTIFACT_ID,
+            "artifactVersion": 0,
+        },
+    ],
+)
+def test_baseline_registration_rejects_malformed_artifact_subjects(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+    body: dict[str, object],
+) -> None:
+    client, holder, _guard, dependencies = _client(isolated_requirement_database)
+    created = _create_via_api(client, key="requirement-subject-create")
+    requirement_id = created["requirement"]["id"]
+    with isolated_requirement_database.runtime.begin() as db:
+        prepared = start_requirement_preparation(
+            db,
+            requirement_id=requirement_id,
+            expected_revision=1,
+            actor=holder.value,
+            idempotency_key="requirement-subject-start",
+            dependencies=dependencies,
+        )
+
+    response = client.post(
+        f"/api/v1/requirements/{requirement_id}/sdd-baselines",
+        json=body,
+        headers={
+            **SAME_ORIGIN,
+            "Idempotency-Key": "requirement-subject-register",
+            "If-Match": f'"v{prepared.revision}"',
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.headers["content-type"].startswith("application/problem+json")
 
 
 def test_dependency_unavailable_is_a_503_problem_and_not_a_fake_success(
@@ -461,7 +654,7 @@ def test_dependency_unavailable_is_a_503_problem_and_not_a_fake_success(
 
     response = client.post(
         f"/api/v1/requirements/{requirement_id}/sdd-baselines",
-        json={"artifactId": "sdd-1", "artifactVersion": "version-1"},
+        json={"artifactId": HTTP_ARTIFACT_ID, "artifactVersion": 1},
         headers={
             **SAME_ORIGIN,
             "Idempotency-Key": "requirement-unavailable-register",
@@ -493,14 +686,20 @@ def test_unknown_capability_and_cross_workspace_access_are_denied(
         headers={**SAME_ORIGIN, "Idempotency-Key": "requirement-unknown-capability"},
     )
     cross_workspace = client.get(f"/api/v1/requirements/{requirement_id}")
+    cross_workspace_write = client.post(
+        f"/api/v1/requirements/{requirement_id}/sdd-artifacts",
+        json={"content": "# Must not be written"},
+        headers=_versioned_headers("requirement-cross-workspace-write", 1),
+    )
 
-    for response in (unknown, cross_workspace):
+    for response in (unknown, cross_workspace, cross_workspace_write):
         assert response.status_code == 403
         assert response.headers["content-type"].startswith("application/problem+json")
         assert response.json()["title"] == "Forbidden"
-    assert guard.calls[-2:] == [
+    assert guard.calls[-3:] == [
         ("requirement.create", WORKSPACE_ID),
         ("requirement.read", WORKSPACE_ID),
+        ("requirement.baseline.submit", WORKSPACE_ID),
     ]
 
 

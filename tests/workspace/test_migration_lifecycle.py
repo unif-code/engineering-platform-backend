@@ -67,15 +67,15 @@ def test_fresh_upgrade_heads_installs_workspace_and_independent_graph(
             "0010_identity_policy_reauth",
             "0001_organization_base",
             "0001_workspace_base",
-            "0006_auth_v03_routes",
-            "0004_req_int_delivery",
+            "0007_auth_v04_routes",
+            "0005_req_sdd_human_gate",
             "0006_sc_mr_reconcile",
         }
         assert installed_heads == {
             "0008_audit_requirement_grant",
             "0010_identity_policy_reauth",
-            "0006_auth_v03_routes",
-            "0004_req_int_delivery",
+            "0007_auth_v04_routes",
+            "0005_req_sdd_human_gate",
             "0006_sc_mr_reconcile",
         }
         assert set(inspect(engine).get_table_names(schema="workspace")) == {

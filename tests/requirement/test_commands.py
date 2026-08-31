@@ -25,6 +25,7 @@ from control_plane.app.modules.requirement import (
     start_requirement_preparation,
 )
 from control_plane.app.modules.requirement.adapters import SqlAlchemyRequirementRepository
+from control_plane.app.modules.requirement.domain import canonical_route_snapshot_hash
 from control_plane.app.modules.requirement.ports import AssignmentGuardPort, RouteSnapshot
 from control_plane.app.shared.idempotency import IdempotencyConflict
 from control_plane.app.shared.security import SecretMaterial
@@ -58,9 +59,15 @@ class StaticSecrets:
 class StaticRouteSnapshots:
     def current(self, requirement_type: RequirementType) -> RouteSnapshot:
         assert requirement_type is RequirementType.FEAT
+        payload = {
+            "requirementType": requirement_type.value,
+            "requiredCapabilities": ["code.change"],
+            "steps": [],
+            "version": 1,
+        }
         return RouteSnapshot(
             version=1,
-            snapshot_hash="sha256:route-1",
+            snapshot_hash=canonical_route_snapshot_hash(payload),
             required_capabilities=("code.change",),
         )
 
@@ -174,6 +181,13 @@ def test_create_requirement_persists_initial_work_item_outbox_and_audit_atomical
             ),
             {"id": created.work_item.id},
         ).one()
+        assignment = db.execute(
+            text(
+                "SELECT CAST(id AS TEXT), assignee_id, assigned_by, reason, revision "
+                "FROM requirement.work_item_assignment WHERE work_item_id=:id"
+            ),
+            {"id": created.work_item.id},
+        ).one()
         outbox = db.execute(
             text(
                 "SELECT topic, payload, state FROM requirement.outbox_message "
@@ -204,6 +218,13 @@ def test_create_requirement_persists_initial_work_item_outbox_and_audit_atomical
     )
     assert created.work_item.assignment_state is AssignmentState.ASSIGNED
     assert work_item == ("employee-1", "ASSIGNED", "WAITING_REPOSITORY", "DRAFT")
+    assert assignment == (
+        created.work_item.id,
+        "employee-1",
+        "employee-1",
+        "V0.4_INITIAL_ASSIGNMENT",
+        1,
+    )
     assert outbox == (
         "requirement.repository-binding.requested",
         {"repositoryId": "repository-1", "workItemId": created.work_item.id},

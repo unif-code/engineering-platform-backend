@@ -20,6 +20,10 @@ from control_plane.app.modules.requirement.application import (
 from control_plane.app.modules.requirement.application import (
     acknowledge_repository_binding_request as _acknowledge_repository_binding_request,
 )
+from control_plane.app.modules.requirement.application import add_work_item as _add_work_item
+from control_plane.app.modules.requirement.application import (
+    assign_work_item as _assign_work_item,
+)
 from control_plane.app.modules.requirement.application import (
     claim_integration_delivery_requests as _claim_integration_delivery_requests,
 )
@@ -28,6 +32,9 @@ from control_plane.app.modules.requirement.application import (
 )
 from control_plane.app.modules.requirement.application import (
     create_requirement as _create_requirement,
+)
+from control_plane.app.modules.requirement.application import (
+    create_sdd_artifact as _create_sdd_artifact,
 )
 from control_plane.app.modules.requirement.application import decide_baseline as _decide_baseline
 from control_plane.app.modules.requirement.application import (
@@ -40,7 +47,13 @@ from control_plane.app.modules.requirement.application import (
     get_requirement as _get_requirement,
 )
 from control_plane.app.modules.requirement.application import (
+    get_sdd_artifact as _get_sdd_artifact,
+)
+from control_plane.app.modules.requirement.application import (
     list_requirements as _list_requirements,
+)
+from control_plane.app.modules.requirement.application import (
+    reassign_baseline_gate as _reassign_baseline_gate,
 )
 from control_plane.app.modules.requirement.application import (
     record_external_merge_drift as _record_external_merge_drift,
@@ -86,18 +99,23 @@ from control_plane.app.modules.requirement.application import (
     submit_baseline_confirmation as _submit_baseline_confirmation,
 )
 from control_plane.app.modules.requirement.domain import (
+    AddWorkItemResult,
     ArtifactUnavailable,
     AssignmentState,
+    AssignWorkItemResult,
     BaselineConfirmationResult,
     BaselineDecisionResult,
     CreateRequirementResult,
+    CreateSddArtifactResult,
     DecisionDto,
     DecisionOutcome,
     ExecutorType,
     GateAlreadyDecided,
+    GateAssignmentConflict,
     GateAssignmentDto,
     GateInstanceDto,
     GateNotFound,
+    GateReassignmentResult,
     GateReviewerIneligible,
     GateReviewerMismatch,
     GateState,
@@ -127,11 +145,16 @@ from control_plane.app.modules.requirement.domain import (
     RequirementPage,
     RequirementState,
     RequirementType,
+    SddArtifactNotFound,
+    SddArtifactVersionDto,
     SddBaselineDto,
     SddBaselineNotFound,
     StaleBaselineSubject,
+    StaleGateRevision,
     StaleRequirementRevision,
     StaleWorkItemRevision,
+    WorkItemAssigneeIneligible,
+    WorkItemAssignmentConflict,
     WorkItemDto,
     WorkItemNotFound,
     WorkItemState,
@@ -170,6 +193,91 @@ def create_requirement(
         actor=actor,
         idempotency_key=idempotency_key,
         dependencies=dependencies,
+    )
+
+
+def add_work_item(
+    db: Connection,
+    *,
+    requirement_id: str,
+    repository_id: str,
+    expected_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    dependencies: RequirementDependencies,
+) -> AddWorkItemResult:
+    return _add_work_item(
+        dependencies.repository_factory(db),
+        requirement_id=requirement_id,
+        repository_id=repository_id,
+        expected_revision=expected_revision,
+        actor=actor,
+        idempotency_key=idempotency_key,
+        dependencies=dependencies,
+    )
+
+
+def assign_work_item(
+    db: Connection,
+    *,
+    requirement_id: str,
+    work_item_id: str,
+    human_owner_id: str,
+    reason: str,
+    expected_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    dependencies: RequirementDependencies,
+) -> AssignWorkItemResult:
+    return _assign_work_item(
+        dependencies.repository_factory(db),
+        requirement_id=requirement_id,
+        work_item_id=work_item_id,
+        human_owner_id=human_owner_id,
+        reason=reason,
+        expected_revision=expected_revision,
+        actor=actor,
+        idempotency_key=idempotency_key,
+        dependencies=dependencies,
+    )
+
+
+def create_sdd_artifact(
+    db: Connection,
+    *,
+    requirement_id: str,
+    artifact_id: str | None,
+    content: str,
+    expected_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    dependencies: RequirementDependencies,
+) -> CreateSddArtifactResult:
+    return _create_sdd_artifact(
+        dependencies.repository_factory(db),
+        requirement_id=requirement_id,
+        artifact_id=artifact_id,
+        content=content,
+        expected_revision=expected_revision,
+        actor=actor,
+        idempotency_key=idempotency_key,
+        dependencies=dependencies,
+    )
+
+
+def get_sdd_artifact(
+    db: Connection,
+    *,
+    requirement_id: str,
+    artifact_id: str,
+    artifact_version: int,
+    dependencies: RequirementDependencies,
+) -> SddArtifactVersionDto:
+    return _get_sdd_artifact(
+        dependencies.repository_factory(db),
+        requirement_id=requirement_id,
+        artifact_id=artifact_id,
+        artifact_version=artifact_version,
     )
 
 
@@ -616,6 +724,31 @@ def submit_baseline_confirmation(
     )
 
 
+def reassign_baseline_gate(
+    db: Connection,
+    *,
+    requirement_id: str,
+    gate_id: str,
+    reviewer_id: str,
+    reason: str,
+    expected_gate_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    dependencies: RequirementDependencies,
+) -> GateReassignmentResult:
+    return _reassign_baseline_gate(
+        dependencies.repository_factory(db),
+        requirement_id=requirement_id,
+        gate_id=gate_id,
+        reviewer_id=reviewer_id,
+        reason=reason,
+        expected_gate_revision=expected_gate_revision,
+        actor=actor,
+        idempotency_key=idempotency_key,
+        dependencies=dependencies,
+    )
+
+
 def decide_baseline(
     db: Connection,
     *,
@@ -643,6 +776,8 @@ def decide_baseline(
 
 __all__ = [
     "AssignmentState",
+    "AddWorkItemResult",
+    "AssignWorkItemResult",
     "ArtifactSnapshot",
     "ArtifactState",
     "ArtifactTrust",
@@ -650,11 +785,14 @@ __all__ = [
     "BaselineConfirmationResult",
     "BaselineDecisionResult",
     "CreateRequirementResult",
+    "CreateSddArtifactResult",
     "DecisionDto",
     "DecisionOutcome",
     "ExecutorType",
     "GateAlreadyDecided",
     "GateAssignmentDto",
+    "GateAssignmentConflict",
+    "GateReassignmentResult",
     "GateInstanceDto",
     "GateNotFound",
     "GatePolicySnapshot",
@@ -690,11 +828,16 @@ __all__ = [
     "RequirementState",
     "RequirementType",
     "SddBaselineDto",
+    "SddArtifactNotFound",
+    "SddArtifactVersionDto",
     "SddBaselineNotFound",
     "StaleBaselineSubject",
+    "StaleGateRevision",
     "StaleRequirementRevision",
     "StaleWorkItemRevision",
     "WorkItemDto",
+    "WorkItemAssigneeIneligible",
+    "WorkItemAssignmentConflict",
     "WorkItemActorDenied",
     "WorkItemDeliveryConflict",
     "WorkItemDeliveryDto",
@@ -703,18 +846,23 @@ __all__ = [
     "WorkItemState",
     "RepositoryBindingRequestMessage",
     "acknowledge_repository_binding_request",
+    "add_work_item",
+    "assign_work_item",
     "acknowledge_integration_delivery_request",
     "claim_integration_delivery_requests",
     "claim_repository_binding_requests",
     "create_requirement",
+    "create_sdd_artifact",
     "decide_baseline",
     "derive_work_item_state",
     "get_requirement",
+    "get_sdd_artifact",
     "get_integration_delivery_context",
     "get_repository_binding_context",
     "list_requirements",
     "record_repository_binding",
     "record_repository_binding_blocked",
+    "reassign_baseline_gate",
     "record_external_merge_drift",
     "record_integration_delivery_blocked",
     "record_integration_merged",

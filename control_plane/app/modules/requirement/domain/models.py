@@ -125,6 +125,7 @@ class RequirementDto(BaseModel):
     initial_repository_id: str
     route_snapshot_version: int
     route_snapshot_hash: str
+    route_snapshot: dict[str, object] = Field(default_factory=dict)
     state: RequirementState
     record_state: RecordState
     requirement_version: int
@@ -161,6 +162,56 @@ class WorkItemDto(BaseModel):
     revision: int
     created_at: datetime
     updated_at: datetime
+
+
+class WorkItemAssignmentDto(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    work_item_id: str
+    assignee_id: str
+    assigned_by: str
+    reason: str
+    revision: int
+    assigned_at: datetime
+    superseded_at: datetime | None
+
+
+class SddArtifactVersionDto(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    artifact_id: str
+    version: int
+    requirement_id: str
+    sha256: str
+    state: str
+    media_type: str
+    trust: str
+    content: str
+    created_by: str
+    created_at: datetime
+
+
+class CreateSddArtifactResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    requirement: RequirementDto
+    artifact: SddArtifactVersionDto
+
+
+class AddWorkItemResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    requirement: RequirementDto
+    work_item: WorkItemDto
+    assignment: WorkItemAssignmentDto | None
+
+
+class AssignWorkItemResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    work_item: WorkItemDto
+    assignment: WorkItemAssignmentDto
 
 
 class RepositoryBindingRequestMessage(BaseModel):
@@ -233,13 +284,6 @@ class CreateRequirementResult(BaseModel):
     work_item: WorkItemDto
 
 
-class RequirementDetailsDto(BaseModel):
-    model_config = ConfigDict(frozen=True)
-
-    requirement: RequirementDto
-    work_items: tuple[WorkItemDto, ...]
-
-
 class RequirementPage(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -282,7 +326,9 @@ class GateInstanceDto(BaseModel):
     artifact_hash: str
     route_snapshot_version: int
     route_snapshot_hash: str
+    policy_code: str
     policy_version: int
+    policy_snapshot_hash: str
     state: GateState
     revision: int
     created_at: datetime
@@ -328,3 +374,22 @@ class BaselineDecisionResult(BaseModel):
     requirement: RequirementDto
     gate: GateInstanceDto
     decision: DecisionDto
+
+
+class GateReassignmentResult(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    gate: GateInstanceDto
+    assignment: GateAssignmentDto
+
+
+class RequirementDetailsDto(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    requirement: RequirementDto
+    work_items: tuple[WorkItemDto, ...]
+    work_item_assignments: tuple[WorkItemAssignmentDto, ...] = ()
+    current_sdd_baseline: SddBaselineDto | None = None
+    current_gate: GateInstanceDto | None = None
+    current_gate_assignment: GateAssignmentDto | None = None
+    current_decision: DecisionDto | None = None

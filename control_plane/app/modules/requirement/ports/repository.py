@@ -64,6 +64,65 @@ class RequirementRepository(Protocol):
         for_update: bool = False,
     ) -> Any: ...
 
+    def insert_sdd_artifact_version(self, **values: Any) -> Any: ...
+
+    def sdd_artifact_version(
+        self,
+        requirement_id: str,
+        artifact_id: str,
+        version: int,
+    ) -> Any: ...
+
+    def sdd_artifact_version_by_identity(
+        self,
+        artifact_id: str,
+        version: int,
+    ) -> Any: ...
+
+    def latest_sdd_artifact_version(
+        self,
+        requirement_id: str,
+        artifact_id: str,
+    ) -> Any: ...
+
+    def insert_work_item_assignment(self, **values: Any) -> Any: ...
+
+    def current_work_item_assignment(
+        self,
+        work_item_id: str,
+        *,
+        for_update: bool = False,
+    ) -> Any: ...
+
+    def supersede_work_item_assignment(
+        self,
+        assignment_id: str,
+        *,
+        expected_revision: int,
+        now: datetime,
+    ) -> Any: ...
+
+    def update_requirement_plan(
+        self,
+        requirement_id: str,
+        *,
+        expected_revision: int,
+        required_work_item_set_hash: str,
+        now: datetime,
+    ) -> Any: ...
+
+    def assign_work_item_projection(
+        self,
+        work_item_id: str,
+        *,
+        expected_revision: int,
+        human_owner_id: str,
+        repository_state: str,
+        repository_blocked_reason_code: str | None,
+        repository_blocked_at: datetime | None,
+        now: datetime,
+    ) -> Any: ...
+
     def repository_binding_context(self, work_item_id: str) -> Any: ...
 
     def integration_delivery_context(self, work_item_id: str) -> Any: ...
@@ -101,6 +160,14 @@ class RequirementRepository(Protocol):
     ) -> Any: ...
 
     def required_work_item_states(self, requirement_id: str) -> tuple[str, ...]: ...
+
+    def reconcile_planned_work_item_states(
+        self,
+        requirement_id: str,
+        *,
+        requirement_state: str,
+        now: datetime,
+    ) -> list[Any]: ...
 
     def insert_outbox(self, **values: Any) -> Any: ...
 
@@ -178,7 +245,26 @@ class RequirementRepository(Protocol):
 
     def current_gate_assignment(self, gate_id: str, *, for_update: bool = False) -> Any: ...
 
+    def supersede_gate_assignment(
+        self,
+        assignment_id: str,
+        *,
+        expected_revision: int,
+        now: datetime,
+    ) -> Any: ...
+
+    def current_work_item_assignments(self, requirement_id: str) -> list[Any]: ...
+
+    def reassign_gate(
+        self,
+        gate_id: str,
+        *,
+        expected_revision: int,
+    ) -> Any: ...
+
     def insert_decision(self, **values: Any) -> Any: ...
+
+    def decision_by_gate_id(self, gate_id: str) -> Any: ...
 
     def close_gate(
         self,

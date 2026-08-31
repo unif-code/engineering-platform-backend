@@ -46,6 +46,14 @@ class StaleWorkItemRevision(RequirementError):
     pass
 
 
+class WorkItemAssigneeIneligible(RequirementError):
+    pass
+
+
+class WorkItemAssignmentConflict(RequirementError):
+    pass
+
+
 class RepositoryBindingConflict(RequirementError):
     pass
 
@@ -55,6 +63,10 @@ class RequirementDependencyUnavailable(RequirementError):
 
 
 class ArtifactUnavailable(RequirementError):
+    pass
+
+
+class SddArtifactNotFound(RequirementError):
     pass
 
 
@@ -79,6 +91,14 @@ class GateReviewerMismatch(RequirementError):
 
 
 class GateReviewerIneligible(RequirementError):
+    pass
+
+
+class StaleGateRevision(RequirementError):
+    pass
+
+
+class GateAssignmentConflict(RequirementError):
     pass
 
 
@@ -110,9 +130,14 @@ def transition_requirement(
 
 
 def derive_work_item_state(
+    requirement: RequirementState,
     assignment: AssignmentState,
     repository: RepositoryState,
 ) -> WorkItemState:
-    if assignment is AssignmentState.ASSIGNED and repository is RepositoryState.BOUND:
+    if (
+        requirement is RequirementState.READY
+        and assignment is AssignmentState.ASSIGNED
+        and repository is RepositoryState.BOUND
+    ):
         return WorkItemState.READY
     return WorkItemState.DRAFT

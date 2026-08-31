@@ -9,10 +9,15 @@ from sqlalchemy import Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from control_plane.app.modules.requirement import (
+    add_work_item,
+    assign_work_item,
     create_requirement,
+    create_sdd_artifact,
     decide_baseline,
     get_requirement,
+    get_sdd_artifact,
     list_requirements,
+    reassign_baseline_gate,
     register_sdd_baseline,
     request_integration_merge,
     request_integration_merge_request,
@@ -20,15 +25,24 @@ from control_plane.app.modules.requirement import (
     submit_baseline_confirmation,
 )
 from control_plane.app.modules.requirement.api.dto import (
+    AddWorkItemRequestDto,
+    AddWorkItemResponseDto,
+    AssignWorkItemRequestDto,
+    AssignWorkItemResponseDto,
     BaselineConfirmationResponseDto,
     BaselineDecisionResponseDto,
     CreateRequirementRequestDto,
     CreateRequirementResponseDto,
+    CreateSddArtifactRequestDto,
+    CreateSddArtifactResponseDto,
     DecideBaselineRequestDto,
+    GateReassignmentResponseDto,
+    ReassignBaselineGateRequestDto,
     RegisterSddBaselineRequestDto,
     RegisterSddBaselineResponseDto,
     RequirementDetailsResponseDto,
     RequirementListResponseDto,
+    SddArtifactVersionResponseDto,
     SubmitBaselineConfirmationRequestDto,
     WorkItemDeliveryCommandRequestDto,
     WorkItemDeliveryResponseDto,
@@ -45,6 +59,7 @@ from control_plane.app.modules.requirement.domain import (
     RequirementDependencyUnavailable,
     RequirementError,
     RequirementNotFound,
+    SddArtifactNotFound,
     SddBaselineNotFound,
     WorkItemNotFound,
 )
@@ -64,7 +79,9 @@ from control_plane.app.shared.security import SecretMaterialUnavailable, assert_
 REQUIREMENT_CREATE_CAPABILITY = "requirement.create"
 REQUIREMENT_READ_CAPABILITY = "requirement.read"
 REQUIREMENT_BASELINE_SUBMIT_CAPABILITY = "requirement.baseline.submit"
+REQUIREMENT_BASELINE_ASSIGN_CAPABILITY = "requirement.baseline.assign"
 REQUIREMENT_BASELINE_DECIDE_CAPABILITY = "requirement.baseline.decide"
+WORK_ITEM_CREATE_CAPABILITY = "work_item.create"
 WORK_ITEM_ASSIGN_CAPABILITY = "work_item.assign"
 WORK_ITEM_EXECUTE_CAPABILITY = "work_item.execute"
 MERGE_REQUEST_MERGE_CAPABILITY = "merge_request.merge"
@@ -76,9 +93,21 @@ _RESPONSES = cast(
         503: SERVICE_UNAVAILABLE_RESPONSE,
     },
 )
-_ETAG_HEADER = {
+_REQUIREMENT_ETAG_HEADER = {
     "ETag": {
         "description": "Strong Requirement revision entity tag",
+        "schema": {"type": "string", "pattern": '^"v[1-9][0-9]*"$'},
+    }
+}
+_WORK_ITEM_ETAG_HEADER = {
+    "ETag": {
+        "description": "Strong WorkItem revision entity tag",
+        "schema": {"type": "string", "pattern": '^"v[1-9][0-9]*"$'},
+    }
+}
+_GATE_ETAG_HEADER = {
+    "ETag": {
+        "description": "Strong Gate revision entity tag",
         "schema": {"type": "string", "pattern": '^"v[1-9][0-9]*"$'},
     }
 }
@@ -137,7 +166,14 @@ def _versioned_preflight(
 
 def _problem(error: Exception) -> Response:
     if isinstance(
-        error, (RequirementNotFound, WorkItemNotFound, SddBaselineNotFound, GateNotFound)
+        error,
+        (
+            RequirementNotFound,
+            WorkItemNotFound,
+            SddArtifactNotFound,
+            SddBaselineNotFound,
+            GateNotFound,
+        ),
     ):
         return problem_response(404, "Requirement subject not found")
     if isinstance(error, WorkItemActorDenied):
@@ -202,7 +238,7 @@ def create_requirement_foundation_router(
         operation_id="requirements_create",
         status_code=201,
         response_model=CreateRequirementResponseDto,
-        responses={**_RESPONSES, 201: {"headers": _ETAG_HEADER}},
+        responses={**_RESPONSES, 201: {"headers": _REQUIREMENT_ETAG_HEADER}},
         dependencies=[Depends(_assert_create_preflight), Depends(_create_preflight)],
     )
     def requirement_create(
@@ -267,7 +303,7 @@ def create_requirement_foundation_router(
         "/{requirementId}",
         operation_id="requirements_get",
         response_model=RequirementDetailsResponseDto,
-        responses={**_RESPONSES, 200: {"headers": _ETAG_HEADER}},
+        responses={**_RESPONSES, 200: {"headers": _REQUIREMENT_ETAG_HEADER}},
     )
     def requirement_get(
         requirement_id: Annotated[UUID, Path(alias="requirementId")],
@@ -292,6 +328,186 @@ def create_requirement_foundation_router(
     return router
 
 
+def create_requirement_planning_router(
+    runtime_provider: Callable[[], RequirementHttpRuntime],
+    principal_provider: Callable[[], Any],
+    capability_guard: Callable[[Any, str, str | None], None],
+) -> APIRouter:
+    router = APIRouter(prefix="/api/v1/requirements", tags=["requirement"])
+
+    @router.post(
+        "/{requirementId}/sdd-artifacts",
+        operation_id="requirements_create_sdd_artifact",
+        status_code=201,
+        response_model=CreateSddArtifactResponseDto,
+        responses={**_RESPONSES, 201: {"headers": _REQUIREMENT_ETAG_HEADER}},
+        dependencies=[Depends(_assert_versioned_preflight), Depends(_versioned_preflight)],
+    )
+    def requirement_create_sdd_artifact(
+        requirement_id: Annotated[UUID, Path(alias="requirementId")],
+        body: CreateSddArtifactRequestDto,
+        principal: Annotated[Any, Depends(principal_provider)],
+        preflight: Annotated[_VersionedPreflight, Depends(_versioned_preflight)],
+    ) -> Response:
+        runtime = runtime_provider()
+        details = _authorized_details(
+            runtime,
+            principal,
+            str(requirement_id),
+            REQUIREMENT_BASELINE_SUBMIT_CAPABILITY,
+            capability_guard,
+        )
+        if isinstance(details, Response):
+            return details
+        try:
+            with runtime.engine.begin() as db:
+                created = create_sdd_artifact(
+                    db,
+                    requirement_id=str(requirement_id),
+                    artifact_id=None if body.artifact_id is None else str(body.artifact_id),
+                    content=body.content,
+                    expected_revision=preflight.expected_revision,
+                    actor=principal,
+                    idempotency_key=preflight.idempotency_key,
+                    dependencies=runtime.dependencies,
+                )
+        except Exception as error:
+            return _problem(error)
+        return _json(
+            CreateSddArtifactResponseDto.from_domain(created),
+            status_code=201,
+            revision=created.requirement.revision,
+        )
+
+    @router.get(
+        "/{requirementId}/sdd-artifacts/{artifactId}/versions/{artifactVersion}",
+        operation_id="requirements_get_sdd_artifact_version",
+        response_model=SddArtifactVersionResponseDto,
+        responses=_RESPONSES,
+    )
+    def requirement_get_sdd_artifact_version(
+        requirement_id: Annotated[UUID, Path(alias="requirementId")],
+        artifact_id: Annotated[UUID, Path(alias="artifactId")],
+        artifact_version: Annotated[int, Path(alias="artifactVersion", ge=1)],
+        principal: Annotated[Any, Depends(principal_provider)],
+    ) -> Response:
+        runtime = runtime_provider()
+        details = _authorized_details(
+            runtime,
+            principal,
+            str(requirement_id),
+            REQUIREMENT_READ_CAPABILITY,
+            capability_guard,
+        )
+        if isinstance(details, Response):
+            return details
+        try:
+            with runtime.engine.connect() as db:
+                artifact = get_sdd_artifact(
+                    db,
+                    requirement_id=str(requirement_id),
+                    artifact_id=str(artifact_id),
+                    artifact_version=artifact_version,
+                    dependencies=runtime.dependencies,
+                )
+        except Exception as error:
+            return _problem(error)
+        return _json(
+            SddArtifactVersionResponseDto.from_domain(artifact),
+            status_code=200,
+        )
+
+    @router.post(
+        "/{requirementId}/work-items",
+        operation_id="requirements_add_work_item",
+        status_code=201,
+        response_model=AddWorkItemResponseDto,
+        responses={**_RESPONSES, 201: {"headers": _REQUIREMENT_ETAG_HEADER}},
+        dependencies=[Depends(_assert_versioned_preflight), Depends(_versioned_preflight)],
+    )
+    def requirement_add_work_item(
+        requirement_id: Annotated[UUID, Path(alias="requirementId")],
+        body: AddWorkItemRequestDto,
+        principal: Annotated[Any, Depends(principal_provider)],
+        preflight: Annotated[_VersionedPreflight, Depends(_versioned_preflight)],
+    ) -> Response:
+        runtime = runtime_provider()
+        details = _authorized_details(
+            runtime,
+            principal,
+            str(requirement_id),
+            WORK_ITEM_CREATE_CAPABILITY,
+            capability_guard,
+        )
+        if isinstance(details, Response):
+            return details
+        try:
+            with runtime.engine.begin() as db:
+                added = add_work_item(
+                    db,
+                    requirement_id=str(requirement_id),
+                    repository_id=body.repository_id,
+                    expected_revision=preflight.expected_revision,
+                    actor=principal,
+                    idempotency_key=preflight.idempotency_key,
+                    dependencies=runtime.dependencies,
+                )
+        except Exception as error:
+            return _problem(error)
+        return _json(
+            AddWorkItemResponseDto.from_domain(added),
+            status_code=201,
+            revision=added.requirement.revision,
+        )
+
+    @router.post(
+        "/{requirementId}/work-items/{workItemId}:assign",
+        operation_id="requirements_assign_work_item",
+        response_model=AssignWorkItemResponseDto,
+        responses={**_RESPONSES, 200: {"headers": _WORK_ITEM_ETAG_HEADER}},
+        dependencies=[Depends(_assert_versioned_preflight), Depends(_versioned_preflight)],
+    )
+    def requirement_assign_work_item(
+        requirement_id: Annotated[UUID, Path(alias="requirementId")],
+        work_item_id: Annotated[UUID, Path(alias="workItemId")],
+        body: AssignWorkItemRequestDto,
+        principal: Annotated[Any, Depends(principal_provider)],
+        preflight: Annotated[_VersionedPreflight, Depends(_versioned_preflight)],
+    ) -> Response:
+        runtime = runtime_provider()
+        details = _authorized_details(
+            runtime,
+            principal,
+            str(requirement_id),
+            WORK_ITEM_ASSIGN_CAPABILITY,
+            capability_guard,
+        )
+        if isinstance(details, Response):
+            return details
+        try:
+            with runtime.engine.begin() as db:
+                assigned = assign_work_item(
+                    db,
+                    requirement_id=str(requirement_id),
+                    work_item_id=str(work_item_id),
+                    human_owner_id=body.human_owner_id,
+                    reason=body.reason,
+                    expected_revision=preflight.expected_revision,
+                    actor=principal,
+                    idempotency_key=preflight.idempotency_key,
+                    dependencies=runtime.dependencies,
+                )
+        except Exception as error:
+            return _problem(error)
+        return _json(
+            AssignWorkItemResponseDto.from_domain(assigned),
+            status_code=200,
+            revision=assigned.work_item.revision,
+        )
+
+    return router
+
+
 def create_requirement_baseline_router(
     runtime_provider: Callable[[], RequirementHttpRuntime],
     principal_provider: Callable[[], Any],
@@ -304,7 +520,7 @@ def create_requirement_baseline_router(
         operation_id="requirements_register_sdd_baseline",
         status_code=201,
         response_model=RegisterSddBaselineResponseDto,
-        responses={**_RESPONSES, 201: {"headers": _ETAG_HEADER}},
+        responses={**_RESPONSES, 201: {"headers": _REQUIREMENT_ETAG_HEADER}},
         dependencies=[Depends(_assert_versioned_preflight), Depends(_versioned_preflight)],
     )
     def requirement_register_sdd_baseline(
@@ -328,8 +544,8 @@ def create_requirement_baseline_router(
                 registered = register_sdd_baseline(
                     db,
                     requirement_id=str(requirement_id),
-                    artifact_id=body.artifact_id,
-                    artifact_version=body.artifact_version,
+                    artifact_id=str(body.artifact_id),
+                    artifact_version=str(body.artifact_version),
                     expected_revision=preflight.expected_revision,
                     actor=principal,
                     idempotency_key=preflight.idempotency_key,
@@ -348,7 +564,7 @@ def create_requirement_baseline_router(
         operation_id="requirements_submit_baseline_confirmation",
         status_code=201,
         response_model=BaselineConfirmationResponseDto,
-        responses={**_RESPONSES, 201: {"headers": _ETAG_HEADER}},
+        responses={**_RESPONSES, 201: {"headers": _REQUIREMENT_ETAG_HEADER}},
         dependencies=[Depends(_assert_versioned_preflight), Depends(_versioned_preflight)],
     )
     def requirement_submit_baseline_confirmation(
@@ -387,10 +603,55 @@ def create_requirement_baseline_router(
         )
 
     @router.post(
+        "/{requirementId}/baseline-gates/{gateId}:reassign",
+        operation_id="requirements_reassign_baseline_gate",
+        response_model=GateReassignmentResponseDto,
+        responses={**_RESPONSES, 200: {"headers": _GATE_ETAG_HEADER}},
+        dependencies=[Depends(_assert_versioned_preflight), Depends(_versioned_preflight)],
+    )
+    def requirement_reassign_baseline_gate(
+        requirement_id: Annotated[UUID, Path(alias="requirementId")],
+        gate_id: Annotated[UUID, Path(alias="gateId")],
+        body: ReassignBaselineGateRequestDto,
+        principal: Annotated[Any, Depends(principal_provider)],
+        preflight: Annotated[_VersionedPreflight, Depends(_versioned_preflight)],
+    ) -> Response:
+        runtime = runtime_provider()
+        details = _authorized_details(
+            runtime,
+            principal,
+            str(requirement_id),
+            REQUIREMENT_BASELINE_ASSIGN_CAPABILITY,
+            capability_guard,
+        )
+        if isinstance(details, Response):
+            return details
+        try:
+            with runtime.engine.begin() as db:
+                reassigned = reassign_baseline_gate(
+                    db,
+                    requirement_id=str(requirement_id),
+                    gate_id=str(gate_id),
+                    reviewer_id=body.reviewer_id,
+                    reason=body.reason,
+                    expected_gate_revision=preflight.expected_revision,
+                    actor=principal,
+                    idempotency_key=preflight.idempotency_key,
+                    dependencies=runtime.dependencies,
+                )
+        except Exception as error:
+            return _problem(error)
+        return _json(
+            GateReassignmentResponseDto.from_domain(reassigned),
+            status_code=200,
+            revision=reassigned.gate.revision,
+        )
+
+    @router.post(
         "/{requirementId}/baseline-decisions",
         operation_id="requirements_decide_baseline",
         response_model=BaselineDecisionResponseDto,
-        responses={**_RESPONSES, 200: {"headers": _ETAG_HEADER}},
+        responses={**_RESPONSES, 200: {"headers": _REQUIREMENT_ETAG_HEADER}},
         dependencies=[Depends(_assert_versioned_preflight), Depends(_versioned_preflight)],
     )
     def requirement_decide_baseline(
@@ -444,7 +705,7 @@ def create_requirement_delivery_router(
         "/{requirementId}/work-items/{workItemId}:start",
         operation_id="requirements_start_work_item",
         response_model=WorkItemDeliveryResponseDto,
-        responses={**_RESPONSES, 200: {"headers": _ETAG_HEADER}},
+        responses={**_RESPONSES, 200: {"headers": _REQUIREMENT_ETAG_HEADER}},
         dependencies=[Depends(_assert_versioned_preflight), Depends(_versioned_preflight)],
     )
     def requirement_start_work_item(
@@ -489,7 +750,7 @@ def create_requirement_delivery_router(
         operation_id="requirements_request_integration_merge_request",
         status_code=202,
         response_model=WorkItemDeliveryResponseDto,
-        responses={**_RESPONSES, 202: {"headers": _ETAG_HEADER}},
+        responses={**_RESPONSES, 202: {"headers": _REQUIREMENT_ETAG_HEADER}},
         dependencies=[Depends(_assert_versioned_preflight), Depends(_versioned_preflight)],
     )
     def requirement_request_integration_merge_request(
@@ -534,7 +795,7 @@ def create_requirement_delivery_router(
         operation_id="requirements_request_integration_merge",
         status_code=202,
         response_model=WorkItemDeliveryResponseDto,
-        responses={**_RESPONSES, 202: {"headers": _ETAG_HEADER}},
+        responses={**_RESPONSES, 202: {"headers": _REQUIREMENT_ETAG_HEADER}},
         dependencies=[Depends(_assert_versioned_preflight), Depends(_versioned_preflight)],
     )
     def requirement_request_integration_merge(
