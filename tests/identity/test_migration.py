@@ -277,7 +277,7 @@ def test_current_alembic_heads_are_installed(identity_owner_engine: Engine) -> N
         "0005_req_sdd_human_gate",
         "0008_audit_requirement_grant",
         "0010_identity_policy_reauth",
-        "0007_auth_v04_routes",
+        "0008_auth_v05_routes",
         "0006_sc_mr_reconcile",
     }
 

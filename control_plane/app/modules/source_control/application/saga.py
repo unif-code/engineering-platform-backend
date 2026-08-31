@@ -4,6 +4,9 @@ from typing import Any
 from sqlalchemy.exc import IntegrityError
 
 from control_plane.app.modules.source_control.application._batch_claim import InboxClaimLost
+from control_plane.app.modules.source_control.application._eligibility import (
+    actor_eligibility_context,
+)
 from control_plane.app.modules.source_control.application._reasons import stored_reason
 from control_plane.app.modules.source_control.application.audit import (
     append_lifecycle_audit,
@@ -384,7 +387,9 @@ def _process_binding_request(
             reason_code=SourceControlReason.OWNER_UNASSIGNED,
             dependencies=dependencies,
         )
-    owner = eligibility.evaluate(context)
+    owner = eligibility.evaluate(
+        actor_eligibility_context(context, actor_id=context.human_owner_id)
+    )
     if not owner.eligible:
         return _complete_preflight_block(
             context,

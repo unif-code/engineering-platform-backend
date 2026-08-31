@@ -28,13 +28,14 @@ from control_plane.app.modules.requirement import (
 )
 from control_plane.app.modules.source_control import RequirementCallbackUnavailable
 from control_plane.app.modules.source_control.adapters import (
-    CurrentOwnerEligibilityAdapter,
+    CurrentActorEligibilityAdapter,
     RequirementFacadeBindingAdapter,
     RequirementFacadeDeliveryAdapter,
 )
 from control_plane.app.modules.source_control.domain import DeliveryRequestKind
 from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
 from control_plane.app.modules.source_control.ports import (
+    ActorEligibilityContext,
     BindingBlockedResult,
     BindingReadyResult,
     ExternalMergeDriftResult,
@@ -68,7 +69,7 @@ def _context() -> RequirementBindingContext:
     )
 
 
-def test_current_owner_eligibility_requires_enabled_formal_member_with_every_grant(
+def test_current_actor_eligibility_requires_enabled_formal_member_with_every_grant(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     engines = [create_engine("sqlite://") for _ in range(3)]
@@ -93,7 +94,7 @@ def test_current_owner_eligibility_requires_enabled_formal_member_with_every_gra
         return [SimpleNamespace(id=f"grant:{capability}")]
 
     monkeypatch.setattr(authorization_module, "effective_grants", effective_grants)
-    adapter = CurrentOwnerEligibilityAdapter(
+    adapter = CurrentActorEligibilityAdapter(
         identity_engine=engines[0],
         identity_dependencies=object(),
         workspace_engine=engines[1],
@@ -102,15 +103,21 @@ def test_current_owner_eligibility_requires_enabled_formal_member_with_every_gra
         authorization_dependencies=object(),
     )
 
-    result = adapter.evaluate(_context())
+    result = adapter.evaluate(
+        ActorEligibilityContext(
+            actor_id="merge-operator-521",
+            workspace_id=_context().workspace_id,
+            required_capabilities=("code.read", "merge_request.merge"),
+        )
+    )
 
     assert result.eligible is True
-    assert requested_capabilities == ["code.read", "code.change"]
+    assert requested_capabilities == ["code.read", "merge_request.merge"]
     for engine in engines:
         engine.dispose()
 
 
-def test_current_owner_eligibility_fails_closed_when_dependency_is_unavailable(
+def test_current_actor_eligibility_fails_closed_when_dependency_is_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     engines = [create_engine("sqlite://") for _ in range(3)]
@@ -119,7 +126,7 @@ def test_current_owner_eligibility_fails_closed_when_dependency_is_unavailable(
         "get_account",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("unavailable")),
     )
-    adapter = CurrentOwnerEligibilityAdapter(
+    adapter = CurrentActorEligibilityAdapter(
         identity_engine=engines[0],
         identity_dependencies=object(),
         workspace_engine=engines[1],
@@ -128,7 +135,13 @@ def test_current_owner_eligibility_fails_closed_when_dependency_is_unavailable(
         authorization_dependencies=object(),
     )
 
-    result = adapter.evaluate(_context())
+    result = adapter.evaluate(
+        ActorEligibilityContext(
+            actor_id="account-521",
+            workspace_id=_context().workspace_id,
+            required_capabilities=_context().required_capabilities,
+        )
+    )
 
     assert result.eligible is False
     assert result.reason_code == "OWNER_INELIGIBLE"

@@ -1,5 +1,3 @@
-import hashlib
-import json
 from typing import Any
 
 from control_plane.app.modules.audit import AuditEnvelope, record
@@ -33,6 +31,7 @@ from control_plane.app.modules.requirement.domain import (
     WorkItemAssignmentConflict,
     WorkItemNotFound,
     WorkItemState,
+    required_work_item_set_hash,
 )
 from control_plane.app.modules.requirement.ports import RequirementRepository
 from control_plane.app.shared.api.request_id import current_request_id
@@ -56,11 +55,6 @@ def _normalized_text(value: str, *, field: str) -> str:
     if not normalized:
         raise InvalidRequirementInput(f"{field} is required")
     return normalized
-
-
-def _work_item_set_hash(work_item_ids: tuple[str, ...]) -> str:
-    canonical = json.dumps(sorted(work_item_ids), separators=(",", ":")).encode("utf-8")
-    return "sha256:" + hashlib.sha256(canonical).hexdigest()
 
 
 def _route_capabilities(requirement: Any) -> tuple[str, ...]:
@@ -169,7 +163,7 @@ def _add_work_item_once(
     updated = repository.update_requirement_plan(
         requirement_id,
         expected_revision=expected_revision,
-        required_work_item_set_hash=_work_item_set_hash(work_item_ids),
+        required_work_item_set_hash=required_work_item_set_hash(work_item_ids),
         now=now,
     )
     if updated is None:

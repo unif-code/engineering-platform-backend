@@ -1,6 +1,9 @@
 from datetime import timedelta
 
 from control_plane.app.modules.source_control.application._batch_claim import InboxClaimLost
+from control_plane.app.modules.source_control.application._eligibility import (
+    actor_eligibility_context,
+)
 from control_plane.app.modules.source_control.application._reasons import effect_reason
 from control_plane.app.modules.source_control.application.audit import (
     append_lifecycle_audit,
@@ -281,7 +284,9 @@ def _reconcile_effect(
             binding=None,
             dependencies=dependencies,
         )
-    owner = eligibility.evaluate(context)
+    owner = eligibility.evaluate(
+        actor_eligibility_context(context, actor_id=context.human_owner_id)
+    )
     if not owner.eligible:
         blocked, completed = _complete_block(
             effect,

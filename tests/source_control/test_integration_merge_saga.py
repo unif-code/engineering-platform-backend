@@ -25,6 +25,7 @@ from control_plane.app.modules.source_control.adapters import (
 )
 from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
 from control_plane.app.modules.source_control.ports import (
+    ActorEligibilityContext,
     BindingEligibility,
     BranchSnapshot,
     GitLabAccessDenied,
@@ -99,9 +100,9 @@ class FixedClock:
 class MergeEligibility:
     def __init__(self, eligible: bool = True) -> None:
         self.eligible = eligible
-        self.seen: list[RequirementBindingContext] = []
+        self.seen: list[ActorEligibilityContext] = []
 
-    def evaluate(self, context: RequirementBindingContext) -> BindingEligibility:
+    def evaluate(self, context: ActorEligibilityContext) -> BindingEligibility:
         self.seen.append(context)
         return BindingEligibility(
             eligible=self.eligible,
@@ -706,21 +707,18 @@ def test_merge_saga_uses_current_exact_sha_and_preserves_source_branch(
     assert result.observation.merge_commit_sha == MERGE_COMMIT_SHA
     assert gitlab.source_head == HEAD_SHA
     assert requirement.merged[0].binding_id == MR_BINDING_ID
-    assert eligibility.seen[-1].human_owner_id == "employee-1"
-    assert eligibility.seen[-1].required_capabilities == (
-        "work_item.execute",
-        "merge_request.merge",
-    )
+    assert eligibility.seen[-1].actor_id == "employee-1"
+    assert eligibility.seen[-1].required_capabilities == ("merge_request.merge",)
 
 
 @pytest.mark.parametrize(
     ("admission_failure", "reason_code"),
     [
-        ("owner", "OWNER_MISMATCH"),
+        ("assignment", "OWNER_MISMATCH"),
         ("eligibility", "MERGE_ACTOR_INELIGIBLE"),
     ],
 )
-def test_merge_admission_blocks_current_owner_or_merge_capability_failure(
+def test_merge_admission_blocks_inconsistent_assignment_or_merge_actor_ineligibility(
     isolated_source_control_database: Any,
     admission_failure: str,
     reason_code: str,
@@ -728,7 +726,7 @@ def test_merge_admission_blocks_current_owner_or_merge_capability_failure(
     engine = isolated_source_control_database.runtime
     _seed_merge_request(engine)
     context = _delivery_context()
-    if admission_failure == "owner":
+    if admission_failure == "assignment":
         context = context.model_copy(update={"human_owner_id": "employee-2"})
     requirement = MergeRequirementDelivery(context)
     dependencies, requirement, _eligibility, gitlab = _dependencies(
@@ -747,6 +745,37 @@ def test_merge_admission_blocks_current_owner_or_merge_capability_failure(
     assert result.blocked_reason == reason_code
     assert gitlab.calls == []
     assert requirement.blocked[0].reason_code == reason_code
+
+
+def test_merge_admission_revalidates_the_request_actor_not_the_work_item_owner(
+    isolated_source_control_database: Any,
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_merge_request(engine)
+    context = _delivery_context().model_copy(update={"request_actor_id": "merge-operator-1"})
+    requirement = MergeRequirementDelivery(context)
+    dependencies, _requirement, eligibility, gitlab = _dependencies(
+        engine,
+        requirement=requirement,
+    )
+    with engine.begin() as db:
+        db.execute(
+            text(
+                "UPDATE source_control.delivery_request_inbox "
+                "SET actor_id='merge-operator-1' WHERE message_id=:message_id"
+            ),
+            {"message_id": MERGE_MESSAGE_ID},
+        )
+
+    result = process_integration_merge_request(
+        message_id=MERGE_MESSAGE_ID,
+        dependencies=dependencies,
+    )
+
+    assert result.effect is not None
+    assert gitlab.merge_calls == [(17, HEAD_SHA)]
+    assert eligibility.seen[-1].actor_id == "merge-operator-1"
+    assert eligibility.seen[-1].required_capabilities == ("merge_request.merge",)
 
 
 @pytest.mark.parametrize(

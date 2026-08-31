@@ -57,6 +57,8 @@ class RequirementRepository(Protocol):
 
     def work_items(self, requirement_id: str) -> list[Any]: ...
 
+    def requirement_delivery_snapshot(self, requirement_id: str) -> Any: ...
+
     def work_item_by_id(
         self,
         work_item_id: str,

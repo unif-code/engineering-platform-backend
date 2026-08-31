@@ -94,14 +94,14 @@ def test_fresh_upgrade_installs_independent_heads_and_deterministic_seed(
             "0010_identity_policy_reauth",
             "0001_organization_base",
             "0001_workspace_base",
-            "0007_auth_v04_routes",
+            "0008_auth_v05_routes",
             "0005_req_sdd_human_gate",
             "0006_sc_mr_reconcile",
         }
         assert installed_heads == {
             "0008_audit_requirement_grant",
             "0010_identity_policy_reauth",
-            "0007_auth_v04_routes",
+            "0008_auth_v05_routes",
             "0005_req_sdd_human_gate",
             "0006_sc_mr_reconcile",
         }

@@ -18,7 +18,7 @@ from control_plane.app.modules.source_control import (
     validate_authorized_repository_runtime,
 )
 from control_plane.app.modules.source_control.adapters import (
-    CurrentOwnerEligibilityAdapter,
+    CurrentActorEligibilityAdapter,
     DevSecretReferenceResolver,
     HttpxGitLabAdapter,
     HttpxGitLabMergeRequestAdapter,
@@ -128,7 +128,7 @@ def build_source_control_runtime(
                 collaborators.requirement_dependencies,
                 clock,
             ),
-            eligibility=CurrentOwnerEligibilityAdapter(
+            eligibility=CurrentActorEligibilityAdapter(
                 identity_engine=collaborators.identity_engine,
                 identity_dependencies=collaborators.identity_dependencies,
                 workspace_engine=collaborators.workspace_engine,

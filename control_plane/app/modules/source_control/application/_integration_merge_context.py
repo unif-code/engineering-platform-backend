@@ -1,6 +1,9 @@
 from dataclasses import dataclass
 from typing import Any
 
+from control_plane.app.modules.source_control.application._eligibility import (
+    actor_eligibility_context,
+)
 from control_plane.app.modules.source_control.application._integration_common import (
     TARGET_BRANCH as _TARGET_BRANCH,
 )
@@ -173,21 +176,19 @@ def _read_merge_admission(
         raise SourceControlDependencyUnavailable("Integration merge context is invalid")
     blocked_reason: SourceControlReason | None = None
     if (
-        context.human_owner_id != inbox["actor_id"]
-        or binding_context.assignment_state != "ASSIGNED"
+        binding_context.assignment_state != "ASSIGNED"
+        or context.human_owner_id is None
         or binding_context.human_owner_id != context.human_owner_id
-        or binding_context.human_owner_id != inbox["actor_id"]
     ):
         blocked_reason = SourceControlReason.OWNER_MISMATCH
     elif context.repository_state != "BOUND":
         blocked_reason = SourceControlReason.REPOSITORY_NOT_AUTHORIZED
-    required_capabilities = tuple(
-        dict.fromkeys((*binding_context.required_capabilities, _MERGE_CAPABILITY))
+    merge_actor = actor_eligibility_context(
+        binding_context,
+        actor_id=str(inbox["actor_id"]),
+        required_capabilities=(_MERGE_CAPABILITY,),
     )
-    merge_context = binding_context.model_copy(
-        update={"required_capabilities": required_capabilities}
-    )
-    if blocked_reason is None and not eligibility.evaluate(merge_context).eligible:
+    if blocked_reason is None and not eligibility.evaluate(merge_actor).eligible:
         blocked_reason = SourceControlReason.MERGE_ACTOR_INELIGIBLE
     binding_id = context.integration_merge_request_binding_id
     if binding_id is None:
@@ -238,7 +239,7 @@ def _read_merge_admission(
         raise SourceControlDependencyUnavailable("Integration merge facts are invalid")
     return _MergeAdmission(
         context=context,
-        binding_context=merge_context,
+        binding_context=binding_context,
         repository_profile=_repository_profile(repository_row),
         branch_binding_id=str(branch_row["id"]),
         binding=binding,

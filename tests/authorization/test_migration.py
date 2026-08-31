@@ -11,6 +11,50 @@ from control_plane.app.modules.authorization import V02_SUPER_ADMIN_PLATFORM_CAP
 pytestmark = pytest.mark.integration
 
 
+def test_authorization_0008_registers_v05_delivery_actions_without_super_admin_bypass(
+    authorization_owner_engine: Engine,
+) -> None:
+    config = Config("alembic.ini")
+    v04 = [
+        {"capability": "work_item.create", "scopeType": "WORKSPACE"},
+        {"capability": "work_item.assign", "scopeType": "WORKSPACE"},
+        {"capability": "requirement.baseline.submit", "scopeType": "WORKSPACE"},
+        {"capability": "requirement.baseline.assign", "scopeType": "WORKSPACE"},
+        {"capability": "requirement.baseline.decide", "scopeType": "WORKSPACE"},
+    ]
+    v05 = [
+        *v04,
+        {"capability": "work_item.execute", "scopeType": "WORKSPACE"},
+        {"capability": "merge_request.merge", "scopeType": "WORKSPACE"},
+    ]
+    command.downgrade(config, "0007_auth_v04_routes")
+    try:
+        command.upgrade(config, "heads")
+        with authorization_owner_engine.connect() as db:
+            registered = db.execute(
+                text(
+                    "SELECT meta->'actionCapabilities' FROM \"authorization\".route_registry "
+                    "WHERE route_key='requirements'"
+                )
+            ).scalar_one()
+        assert registered == v05
+        assert {item["capability"] for item in v05}.isdisjoint(
+            V02_SUPER_ADMIN_PLATFORM_CAPABILITIES
+        )
+
+        command.downgrade(config, "0007_auth_v04_routes")
+        with authorization_owner_engine.connect() as db:
+            restored = db.execute(
+                text(
+                    "SELECT meta->'actionCapabilities' FROM \"authorization\".route_registry "
+                    "WHERE route_key='requirements'"
+                )
+            ).scalar_one()
+        assert restored == v04
+    finally:
+        command.upgrade(config, "heads")
+
+
 def test_authorization_0007_registers_v04_workspace_actions_without_super_admin_bypass(
     authorization_owner_engine: Engine,
 ) -> None:
@@ -24,7 +68,7 @@ def test_authorization_0007_registers_v04_workspace_actions_without_super_admin_
     ]
     command.downgrade(config, "0006_auth_v03_routes")
     try:
-        command.upgrade(config, "heads")
+        command.upgrade(config, "0007_auth_v04_routes")
         with authorization_owner_engine.connect() as db:
             registered = db.execute(
                 text(

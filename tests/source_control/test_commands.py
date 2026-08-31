@@ -27,6 +27,7 @@ from control_plane.app.modules.source_control.adapters import (
 )
 from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
 from control_plane.app.modules.source_control.ports import (
+    ActorEligibilityContext,
     BindingBlockedResult,
     BindingEligibility,
     BindingReadyResult,
@@ -110,7 +111,7 @@ class FakeEligibility:
     def __init__(self, eligible: bool = True) -> None:
         self.eligible = eligible
 
-    def evaluate(self, _context: RequirementBindingContext) -> BindingEligibility:
+    def evaluate(self, _context: ActorEligibilityContext) -> BindingEligibility:
         return BindingEligibility(
             eligible=self.eligible,
             reason_code=(None if self.eligible else SourceControlReason.OWNER_INELIGIBLE),

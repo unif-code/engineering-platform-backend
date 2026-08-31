@@ -1,10 +1,12 @@
 from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 
@@ -20,10 +22,11 @@ from control_plane.app.modules.requirement import (
     decide_baseline,
     get_requirement,
     register_sdd_baseline,
-    request_integration_merge,
-    request_integration_merge_request,
-    start_work_item,
     submit_baseline_confirmation,
+)
+from control_plane.app.modules.requirement.api import (
+    RequirementHttpRuntime,
+    create_requirement_delivery_router,
 )
 from control_plane.app.modules.source_control import (
     EffectOperation,
@@ -39,13 +42,15 @@ from control_plane.app.modules.source_control.adapters import (
     SqlAlchemySourceControlRepository,
 )
 from control_plane.app.modules.source_control.ports import (
+    ActorEligibilityContext,
     BindingEligibility,
     BranchSnapshot,
     GitLabMergeRequestLocator,
     GitLabMergeRequestSnapshot,
     GitLabProjectDeliveryProfile,
-    RequirementBindingContext,
 )
+from control_plane.app.shared.api.problem import register_problem_handlers
+from control_plane.app.shared.api.request_id import request_id_middleware
 from tests.requirement.conftest import (
     IsolatedRequirementDatabase,
     isolated_requirement_database,
@@ -67,6 +72,7 @@ HEAD_SHA = "b" * 40
 DEV_SHA = "c" * 40
 MERGE_SHA = "d" * 40
 REPOSITORY_ID = "repository-source-control-1"
+SAME_ORIGIN = {"Origin": "http://testserver"}
 
 # Register the cross-module PostgreSQL fixtures in this test module.
 assert isolated_requirement_database and requirement_owner_engine
@@ -88,9 +94,12 @@ class RandomValues:
         return uuid4()
 
 
-@dataclass(frozen=True, slots=True)
-class EligibleOwner:
-    def evaluate(self, _context: RequirementBindingContext) -> BindingEligibility:
+@dataclass(slots=True)
+class EligibleActor:
+    seen: list[ActorEligibilityContext]
+
+    def evaluate(self, context: ActorEligibilityContext) -> BindingEligibility:
+        self.seen.append(context)
         return BindingEligibility(eligible=True)
 
 
@@ -251,7 +260,7 @@ def _source_control_dependencies(
             requirement_dependencies,
             clock,
         ),
-        eligibility=EligibleOwner(),
+        eligibility=EligibleActor([]),
         audit=SqlAlchemyTransactionalAuditAppender(),
         clock=clock,
         random=RandomValues(),
@@ -333,6 +342,50 @@ def _approve_sdd_baseline(
         )
 
 
+def _delivery_client(
+    requirement: IsolatedRequirementDatabase,
+    dependencies: RequirementDependencies,
+    *,
+    actor_id: str,
+) -> TestClient:
+    def principal() -> Actor:
+        return Actor(actor_id)
+
+    def capability_guard(
+        _principal: Any,
+        capability: str,
+        workspace_id: str | None,
+    ) -> None:
+        allowed = (
+            {"merge_request.merge"} if actor_id == "merge-operator-1" else {"work_item.execute"}
+        )
+        if workspace_id != WORKSPACE_ID or capability not in allowed:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    app = FastAPI()
+    app.middleware("http")(request_id_middleware)
+    register_problem_handlers(app)
+    app.include_router(
+        create_requirement_delivery_router(
+            lambda: RequirementHttpRuntime(
+                engine=requirement.runtime,
+                dependencies=dependencies,
+            ),
+            principal,
+            capability_guard,
+        )
+    )
+    return TestClient(app, raise_server_exceptions=False)
+
+
+def _versioned_headers(key: str, revision: int) -> dict[str, str]:
+    return {
+        **SAME_ORIGIN,
+        "Idempotency-Key": key,
+        "If-Match": f'"v{revision}"',
+    }
+
+
 def _requirement_callback_facts(
     requirement: IsolatedRequirementDatabase,
     *,
@@ -401,47 +454,51 @@ def test_human_integration_mr_flow_converges_through_only_public_batch_facades(
     assert gitlab.source_branch == task_branch
     assert gitlab.branches[task_branch] == "a" * 40
     gitlab.branches[task_branch] = HEAD_SHA
-
-    with isolated_requirement_database.runtime.begin() as db:
-        started = start_work_item(
-            db,
-            requirement_id=ready.requirement.id,
-            work_item_id=ready.work_items[0].id,
-            expected_revision=ready.requirement.revision,
-            actor=Actor(owner_id),
-            idempotency_key="task10-start",
-            dependencies=requirement_dependencies,
-        )
-    with isolated_requirement_database.runtime.begin() as db:
-        requested_mr = request_integration_merge_request(
-            db,
-            requirement_id=started.requirement.id,
-            work_item_id=started.work_item.id,
-            expected_revision=started.requirement.revision,
-            actor=Actor(owner_id),
-            idempotency_key="task10-request-mr",
-            dependencies=requirement_dependencies,
-        )
+    client = _delivery_client(
+        isolated_requirement_database,
+        requirement_dependencies,
+        actor_id=owner_id,
+    )
+    delivery_url = (
+        f"/api/v1/requirements/{ready.requirement.id}/work-items/{ready.work_items[0].id}"
+    )
+    started = client.post(
+        f"{delivery_url}:start",
+        headers=_versioned_headers("task10-start", ready.requirement.revision),
+    )
+    assert started.status_code == 200, started.text
+    requested_mr = client.post(
+        f"{delivery_url}:request-integration-mr",
+        headers=_versioned_headers(
+            "task10-request-mr",
+            started.json()["requirement"]["revision"],
+        ),
+    )
+    assert requested_mr.status_code == 202, requested_mr.text
 
     first_relay = relay_due_source_control_requests(limit=2, dependencies=dependencies)
     first_process = process_due_source_control_inboxes(limit=3, dependencies=dependencies)
     with isolated_requirement_database.runtime.connect() as db:
         mr_ready = get_requirement(
             db,
-            requirement_id=requested_mr.requirement.id,
+            requirement_id=ready.requirement.id,
             dependencies=requirement_dependencies,
         )
     clock.advance(timedelta(minutes=1))
-    with isolated_requirement_database.runtime.begin() as db:
-        requested_merge = request_integration_merge(
-            db,
-            requirement_id=mr_ready.requirement.id,
-            work_item_id=mr_ready.work_items[0].id,
-            expected_revision=mr_ready.requirement.revision,
-            actor=Actor(owner_id),
-            idempotency_key="task10-request-merge",
-            dependencies=requirement_dependencies,
-        )
+    merge_actor_id = "merge-operator-1"
+    merge_client = _delivery_client(
+        isolated_requirement_database,
+        requirement_dependencies,
+        actor_id=merge_actor_id,
+    )
+    requested_merge = merge_client.post(
+        f"{delivery_url}:request-integration-merge",
+        headers=_versioned_headers(
+            "task10-request-merge",
+            mr_ready.requirement.revision,
+        ),
+    )
+    assert requested_merge.status_code == 202, requested_merge.text
     second_relay = relay_due_source_control_requests(limit=2, dependencies=dependencies)
     second_process = process_due_source_control_inboxes(limit=3, dependencies=dependencies)
 
@@ -455,16 +512,14 @@ def test_human_integration_mr_flow_converges_through_only_public_batch_facades(
         isolated_requirement_database,
         work_item_id=created.work_item.id,
     )
-    with isolated_requirement_database.runtime.begin() as db:
-        same_key_replay = request_integration_merge(
-            db,
-            requirement_id=mr_ready.requirement.id,
-            work_item_id=mr_ready.work_items[0].id,
-            expected_revision=mr_ready.requirement.revision,
-            actor=Actor(owner_id),
-            idempotency_key="task10-request-merge",
-            dependencies=requirement_dependencies,
-        )
+    same_key_replay = merge_client.post(
+        f"{delivery_url}:request-integration-merge",
+        headers=_versioned_headers(
+            "task10-request-merge",
+            mr_ready.requirement.revision,
+        ),
+    )
+    assert same_key_replay.status_code == 202, same_key_replay.text
     duplicate_relay = relay_due_source_control_requests(limit=2, dependencies=dependencies)
     duplicate_process = process_due_source_control_inboxes(limit=3, dependencies=dependencies)
     with isolated_requirement_database.runtime.connect() as db:
@@ -510,10 +565,13 @@ def test_human_integration_mr_flow_converges_through_only_public_batch_facades(
     assert (first_relay.claimed, first_process.claimed) == (1, 1)
     assert (second_relay.claimed, second_process.claimed) == (1, 1)
     assert duplicate_relay.claimed == duplicate_process.claimed == 0
-    assert same_key_replay == requested_merge
+    assert same_key_replay.json() == requested_merge.json()
     assert final.requirement.revision == converged.requirement.revision
     assert final.work_items[0].revision == converged.work_items[0].revision
     assert callback_facts_after == callback_facts_before
+    assert isinstance(dependencies.eligibility, EligibleActor)
+    assert dependencies.eligibility.seen[-1].actor_id == merge_actor_id
+    assert dependencies.eligibility.seen[-1].required_capabilities == ("merge_request.merge",)
     assert final.requirement.state is RequirementState.VERIFYING
     assert final.work_items[0].state is WorkItemState.VERIFYING
     assert final.work_items[0].integration_delivery_state is IntegrationDeliveryState.INTEGRATED

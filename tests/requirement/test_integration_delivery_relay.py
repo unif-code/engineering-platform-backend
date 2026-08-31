@@ -83,6 +83,7 @@ def _requested_merge(
     database: IsolatedRequirementDatabase,
     *,
     key_suffix: str = "default",
+    actor_id: str = "employee-1",
 ) -> WorkItemDeliveryResult:
     ready = _ready_mr(database, key_suffix=key_suffix)
     with database.runtime.begin() as db:
@@ -91,10 +92,41 @@ def _requested_merge(
             requirement_id=ready.requirement.id,
             work_item_id=ready.work_item.id,
             expected_revision=ready.requirement.revision,
-            actor=Actor("employee-1"),
+            actor=Actor(actor_id),
             idempotency_key=f"request-merge-relay-{key_suffix}",
             dependencies=_gate_dependencies(),
         )
+
+
+def test_context_uses_the_latest_command_revision_when_outbox_timestamps_tie(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    requested = _requested_merge(
+        isolated_requirement_database,
+        key_suffix="context-equal-time",
+        actor_id="merge-operator-1",
+    )
+    with isolated_requirement_database.owner.connect() as db:
+        timestamps = db.execute(
+            text(
+                "SELECT count(DISTINCT created_at) FROM requirement.outbox_message "
+                "WHERE aggregate_id=:requirement_id AND topic IN ("
+                "'requirement.integration-merge-request.requested', "
+                "'requirement.integration-merge.requested')"
+            ),
+            {"requirement_id": requested.requirement.id},
+        ).scalar_one()
+    with isolated_requirement_database.runtime.connect() as db:
+        context = get_integration_delivery_context(
+            db,
+            work_item_id=requested.work_item.id,
+            dependencies=_gate_dependencies(),
+        )
+
+    assert timestamps == 1
+    assert context.work_item_revision == requested.work_item.revision
+    assert context.integration_delivery_state is IntegrationDeliveryState.MERGE_PENDING
+    assert context.request_actor_id == "merge-operator-1"
 
 
 def test_claim_delivery_requests_only_returns_two_allowlisted_topics(

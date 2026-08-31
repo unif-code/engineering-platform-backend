@@ -68,7 +68,7 @@ def test_fresh_database_upgrade_heads_installs_all_visible_module_heads(
             "0010_identity_policy_reauth",
             "0001_organization_base",
             "0001_workspace_base",
-            "0007_auth_v04_routes",
+            "0008_auth_v05_routes",
             "0005_req_sdd_human_gate",
             "0006_sc_mr_reconcile",
         }
@@ -78,7 +78,7 @@ def test_fresh_database_upgrade_heads_installs_all_visible_module_heads(
         assert installed_heads == {
             "0008_audit_requirement_grant",
             "0010_identity_policy_reauth",
-            "0007_auth_v04_routes",
+            "0008_auth_v05_routes",
             "0005_req_sdd_human_gate",
             "0006_sc_mr_reconcile",
         }
