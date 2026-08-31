@@ -396,7 +396,7 @@ def test_requirement_rw_has_only_expected_module_and_audit_privileges(
     isolated_requirement_database: IsolatedRequirementDatabase,
 ) -> None:
     expected = {
-        "requirement": {"SELECT", "INSERT", "UPDATE"},
+        "requirement": {"SELECT", "INSERT"},
         "sdd_artifact_version": {"SELECT", "INSERT"},
         "work_item": {"SELECT", "INSERT", "UPDATE"},
         "work_item_assignment": {"SELECT", "INSERT"},
@@ -451,6 +451,7 @@ def test_requirement_rw_has_only_expected_module_and_audit_privileges(
                 ).scalar_one()
             }
             for table_name in (
+                "requirement",
                 "gate_instance",
                 "gate_assignment",
                 "work_item_assignment",
@@ -476,6 +477,15 @@ def test_requirement_rw_has_only_expected_module_and_audit_privileges(
     assert actual == expected
     assert schema_privileges == {"USAGE"}
     assert column_updates == {
+        "requirement": {
+            "state",
+            "requirement_version",
+            "required_work_item_set_version",
+            "required_work_item_set_hash",
+            "current_sdd_baseline_id",
+            "revision",
+            "updated_at",
+        },
         "gate_instance": {"state", "revision", "decided_at"},
         "gate_assignment": {"superseded_at"},
         "work_item_assignment": {"superseded_at"},
@@ -486,6 +496,27 @@ def test_requirement_rw_has_only_expected_module_and_audit_privileges(
         "audit.audit_event": False,
     }
     assert audit_execute is True
+
+
+def test_requirement_rw_cannot_mutate_the_frozen_route_snapshot(
+    isolated_requirement_rw_engine: Engine,
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    with isolated_requirement_database.owner.begin() as db:
+        _insert_requirement_for_integrity_test(db)
+
+    with (
+        isolated_requirement_rw_engine.begin() as db,
+        pytest.raises(ProgrammingError, match="permission denied"),
+    ):
+        db.execute(
+            text(
+                "UPDATE requirement.requirement "
+                "SET route_snapshot=jsonb_set(route_snapshot, "
+                "'{requiredCapabilities}', '[\"platform.authorization.manage\"]'::jsonb) "
+                "WHERE id='10000000-0000-0000-0000-000000000201'"
+            )
+        )
 
 
 def test_requirement_rw_cannot_delete_aggregate_or_create_tables(

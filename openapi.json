@@ -2069,14 +2069,14 @@
         "additionalProperties": false,
         "properties": {
           "artifactId": {
-            "minLength": 1,
+            "format": "uuid",
             "title": "Artifactid",
             "type": "string"
           },
           "artifactVersion": {
-            "minLength": 1,
+            "minimum": 1.0,
             "title": "Artifactversion",
-            "type": "string"
+            "type": "integer"
           }
         },
         "required": [

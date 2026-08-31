@@ -25,6 +25,7 @@ from control_plane.app.modules.requirement import (
     start_requirement_preparation,
 )
 from control_plane.app.modules.requirement.adapters import SqlAlchemyRequirementRepository
+from control_plane.app.modules.requirement.domain import canonical_route_snapshot_hash
 from control_plane.app.modules.requirement.ports import AssignmentGuardPort, RouteSnapshot
 from control_plane.app.shared.idempotency import IdempotencyConflict
 from control_plane.app.shared.security import SecretMaterial
@@ -58,9 +59,15 @@ class StaticSecrets:
 class StaticRouteSnapshots:
     def current(self, requirement_type: RequirementType) -> RouteSnapshot:
         assert requirement_type is RequirementType.FEAT
+        payload = {
+            "requirementType": requirement_type.value,
+            "requiredCapabilities": ["code.change"],
+            "steps": [],
+            "version": 1,
+        }
         return RouteSnapshot(
             version=1,
-            snapshot_hash="sha256:route-1",
+            snapshot_hash=canonical_route_snapshot_hash(payload),
             required_capabilities=("code.change",),
         )
 

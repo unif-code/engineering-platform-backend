@@ -1,7 +1,7 @@
-import hashlib
-import json
-
-from control_plane.app.modules.requirement.domain import RequirementType
+from control_plane.app.modules.requirement.domain import (
+    RequirementType,
+    canonical_route_snapshot_hash,
+)
 from control_plane.app.modules.requirement.ports import RouteSnapshot
 
 
@@ -17,15 +17,9 @@ class V03RouteSnapshotCatalog:
             "requiredCapabilities": list(self._CAPABILITIES),
             "version": self._VERSION,
         }
-        canonical = json.dumps(
-            payload,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
         return RouteSnapshot(
             version=self._VERSION,
-            snapshot_hash=f"sha256:{hashlib.sha256(canonical).hexdigest()}",
+            snapshot_hash=canonical_route_snapshot_hash(payload),
             required_capabilities=self._CAPABILITIES,
             requirement_type=requirement_type,
         )
@@ -72,15 +66,9 @@ class V04RouteSnapshotCatalog:
             "steps": list(steps),
             "version": self._VERSION,
         }
-        canonical = json.dumps(
-            payload,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
         return RouteSnapshot(
             version=self._VERSION,
-            snapshot_hash=f"sha256:{hashlib.sha256(canonical).hexdigest()}",
+            snapshot_hash=canonical_route_snapshot_hash(payload),
             required_capabilities=self._CAPABILITIES,
             requirement_type=requirement_type,
             steps=steps,

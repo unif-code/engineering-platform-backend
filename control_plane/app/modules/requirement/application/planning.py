@@ -7,6 +7,7 @@ from control_plane.app.modules.requirement.application.common import (
     actor_id,
     audit,
     requirement_dto,
+    validate_frozen_route_snapshot,
     work_item_assignment_dto,
     work_item_dto,
 )
@@ -63,7 +64,12 @@ def _work_item_set_hash(work_item_ids: tuple[str, ...]) -> str:
 
 
 def _route_capabilities(requirement: Any) -> tuple[str, ...]:
-    route = requirement["route_snapshot"]
+    route = validate_frozen_route_snapshot(
+        requirement["route_snapshot"],
+        expected_hash=requirement["route_snapshot_hash"],
+        expected_version=requirement["route_snapshot_version"],
+        expected_requirement_type=requirement["type"],
+    )
     raw = route.get("requiredCapabilities") if isinstance(route, dict) else None
     if (
         not isinstance(raw, list)

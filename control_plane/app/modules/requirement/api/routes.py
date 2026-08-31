@@ -544,8 +544,8 @@ def create_requirement_baseline_router(
                 registered = register_sdd_baseline(
                     db,
                     requirement_id=str(requirement_id),
-                    artifact_id=body.artifact_id,
-                    artifact_version=body.artifact_version,
+                    artifact_id=str(body.artifact_id),
+                    artifact_version=str(body.artifact_version),
                     expected_revision=preflight.expected_revision,
                     actor=principal,
                     idempotency_key=preflight.idempotency_key,

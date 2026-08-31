@@ -149,9 +149,21 @@ def upgrade() -> None:
         "requirement.work_item_assignment TO requirement_rw"
     )
     op.execute("GRANT UPDATE (superseded_at) ON requirement.work_item_assignment TO requirement_rw")
+    op.execute("REVOKE UPDATE ON requirement.requirement FROM requirement_rw")
+    op.execute(
+        "GRANT UPDATE (state, requirement_version, required_work_item_set_version, "
+        "required_work_item_set_hash, current_sdd_baseline_id, revision, updated_at) "
+        "ON requirement.requirement TO requirement_rw"
+    )
 
 
 def downgrade() -> None:
+    op.execute(
+        "REVOKE UPDATE (state, requirement_version, required_work_item_set_version, "
+        "required_work_item_set_hash, current_sdd_baseline_id, revision, updated_at) "
+        "ON requirement.requirement FROM requirement_rw"
+    )
+    op.execute("GRANT UPDATE ON requirement.requirement TO requirement_rw")
     op.execute(
         "REVOKE UPDATE (superseded_at) ON requirement.work_item_assignment FROM requirement_rw"
     )

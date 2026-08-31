@@ -1092,7 +1092,7 @@ def test_access_governance_closes_the_real_cli_http_grant_and_audit_loop(
 
     baseline_v1 = admin.post(
         f"/api/v1/requirements/{requirement_id}/sdd-baselines",
-        json={"artifactId": artifact_id, "artifactVersion": "1"},
+        json={"artifactId": artifact_id, "artifactVersion": 1},
         headers={
             **SAME_ORIGIN,
             "Idempotency-Key": "e2e-v04-baseline-v1",
@@ -1146,7 +1146,7 @@ def test_access_governance_closes_the_real_cli_http_grant_and_audit_loop(
     assert artifact_v2.json()["artifact"]["version"] == 2
     baseline_v2 = admin.post(
         f"/api/v1/requirements/{requirement_id}/sdd-baselines",
-        json={"artifactId": artifact_id, "artifactVersion": "2"},
+        json={"artifactId": artifact_id, "artifactVersion": 2},
         headers={
             **SAME_ORIGIN,
             "Idempotency-Key": "e2e-v04-baseline-v2",

@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field, replace
 from typing import Any, cast
 
+import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import text
@@ -36,11 +37,12 @@ from control_plane.app.modules.requirement.api import (
 from control_plane.app.shared.api.problem import register_problem_handlers
 from control_plane.app.shared.api.request_id import request_id_middleware
 from tests.requirement.conftest import IsolatedRequirementDatabase
-from tests.requirement.test_baseline_gate import _gate_dependencies
+from tests.requirement.test_baseline_gate import ARTIFACT_HASH_V1, _gate_dependencies
 from tests.requirement.test_commands import WORKSPACE_ID, Actor
 from tests.requirement.test_delivery_commands import _merge_ready_work_item, _ready_requirement
 
 SAME_ORIGIN = {"Origin": "http://testserver"}
+HTTP_ARTIFACT_ID = "30000000-0000-0000-0000-000000000401"
 
 
 def test_bootstrap_exposes_v04_planning_and_gate_without_v05_delivery() -> None:
@@ -409,12 +411,12 @@ def test_write_preflight_and_strict_browser_dto_return_problem_details(
     valid_requirement_id = "00000000-0000-0000-0000-000000000301"
     missing_if_match = client.post(
         f"/api/v1/requirements/{valid_requirement_id}/sdd-baselines",
-        json={"artifactId": "sdd-1", "artifactVersion": "version-1"},
+        json={"artifactId": HTTP_ARTIFACT_ID, "artifactVersion": 1},
         headers={**SAME_ORIGIN, "Idempotency-Key": "requirement-missing-revision"},
     )
     missing_versioned_key = client.post(
         f"/api/v1/requirements/{valid_requirement_id}/sdd-baselines",
-        json={"artifactId": "sdd-1", "artifactVersion": "version-1"},
+        json={"artifactId": HTTP_ARTIFACT_ID, "artifactVersion": 1},
         headers={**SAME_ORIGIN, "If-Match": '"v1"'},
     )
     invalid_subject_id = client.post(
@@ -487,7 +489,7 @@ def test_baseline_registration_reassignment_and_decision_use_exact_etags(
 
     malformed = client.post(
         f"/api/v1/requirements/{requirement_id}/sdd-baselines",
-        json={"artifactId": "sdd-1", "artifactVersion": "version-1"},
+        json={"artifactId": HTTP_ARTIFACT_ID, "artifactVersion": 1},
         headers={
             **SAME_ORIGIN,
             "Idempotency-Key": "requirement-baseline-malformed",
@@ -499,7 +501,7 @@ def test_baseline_registration_reassignment_and_decision_use_exact_etags(
 
     registered = client.post(
         f"/api/v1/requirements/{requirement_id}/sdd-baselines",
-        json={"artifactId": "sdd-1", "artifactVersion": "version-1"},
+        json={"artifactId": HTTP_ARTIFACT_ID, "artifactVersion": 1},
         headers={
             **SAME_ORIGIN,
             "Idempotency-Key": "requirement-baseline-register",
@@ -508,7 +510,7 @@ def test_baseline_registration_reassignment_and_decision_use_exact_etags(
     )
     assert registered.status_code == 201
     assert registered.headers["etag"] == '"v3"'
-    assert registered.json()["baseline"]["artifactHash"] == "sha256:sdd-1"
+    assert registered.json()["baseline"]["artifactHash"] == ARTIFACT_HASH_V1
 
     confirmed = client.post(
         f"/api/v1/requirements/{requirement_id}/baseline-confirmations",
@@ -577,6 +579,51 @@ def test_baseline_registration_reassignment_and_decision_use_exact_etags(
     assert detail.json()["currentDecision"]["reviewerId"] == "reviewer-2"
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"artifactId": "not-a-uuid", "artifactVersion": "1"},
+        {
+            "artifactId": HTTP_ARTIFACT_ID,
+            "artifactVersion": "version-1",
+        },
+        {
+            "artifactId": HTTP_ARTIFACT_ID,
+            "artifactVersion": 0,
+        },
+    ],
+)
+def test_baseline_registration_rejects_malformed_artifact_subjects(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+    body: dict[str, object],
+) -> None:
+    client, holder, _guard, dependencies = _client(isolated_requirement_database)
+    created = _create_via_api(client, key="requirement-subject-create")
+    requirement_id = created["requirement"]["id"]
+    with isolated_requirement_database.runtime.begin() as db:
+        prepared = start_requirement_preparation(
+            db,
+            requirement_id=requirement_id,
+            expected_revision=1,
+            actor=holder.value,
+            idempotency_key="requirement-subject-start",
+            dependencies=dependencies,
+        )
+
+    response = client.post(
+        f"/api/v1/requirements/{requirement_id}/sdd-baselines",
+        json=body,
+        headers={
+            **SAME_ORIGIN,
+            "Idempotency-Key": "requirement-subject-register",
+            "If-Match": f'"v{prepared.revision}"',
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.headers["content-type"].startswith("application/problem+json")
+
+
 def test_dependency_unavailable_is_a_503_problem_and_not_a_fake_success(
     isolated_requirement_database: IsolatedRequirementDatabase,
 ) -> None:
@@ -599,7 +646,7 @@ def test_dependency_unavailable_is_a_503_problem_and_not_a_fake_success(
 
     response = client.post(
         f"/api/v1/requirements/{requirement_id}/sdd-baselines",
-        json={"artifactId": "sdd-1", "artifactVersion": "version-1"},
+        json={"artifactId": HTTP_ARTIFACT_ID, "artifactVersion": 1},
         headers={
             **SAME_ORIGIN,
             "Idempotency-Key": "requirement-unavailable-register",

@@ -19,6 +19,7 @@ from control_plane.app.modules.requirement.domain import (
     RecordState,
     RepositoryBindingBlockedReason,
     RepositoryState,
+    RequirementDependencyUnavailable,
     RequirementDto,
     RequirementState,
     RequirementType,
@@ -27,6 +28,7 @@ from control_plane.app.modules.requirement.domain import (
     WorkItemAssignmentDto,
     WorkItemDto,
     WorkItemState,
+    canonical_route_snapshot_hash,
 )
 from control_plane.app.modules.requirement.ports import RequirementRepository
 from control_plane.app.shared.api.request_id import current_request_id
@@ -43,6 +45,29 @@ def validated_correlation_id(value: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise InvalidRequirementInput("correlation ID is invalid")
     return value
+
+
+def validate_frozen_route_snapshot(
+    snapshot: object,
+    *,
+    expected_hash: object,
+    expected_version: object,
+    expected_requirement_type: object,
+) -> dict[str, object]:
+    if not isinstance(snapshot, dict):
+        raise RequirementDependencyUnavailable("Frozen Route Snapshot is invalid")
+    if (
+        snapshot.get("version") != expected_version
+        or snapshot.get("requirementType") != expected_requirement_type
+    ):
+        raise RequirementDependencyUnavailable("Frozen Route Snapshot subject is invalid")
+    try:
+        actual_hash = canonical_route_snapshot_hash(snapshot)
+    except (TypeError, ValueError) as error:
+        raise RequirementDependencyUnavailable("Frozen Route Snapshot is invalid") from error
+    if not isinstance(expected_hash, str) or actual_hash != expected_hash:
+        raise RequirementDependencyUnavailable("Frozen Route Snapshot hash is invalid")
+    return snapshot
 
 
 def requirement_dto(row: Any) -> RequirementDto:

@@ -16,4 +16,6 @@ def test_v04_requirement_migration_declares_frozen_planning_facts_and_minimum_gr
     assert "GRANT SELECT, INSERT ON requirement.sdd_artifact_version, " in source
     assert "requirement.work_item_assignment TO requirement_rw" in source
     assert "GRANT UPDATE (superseded_at)" in source
+    assert "REVOKE UPDATE ON requirement.requirement FROM requirement_rw" in source
+    assert "GRANT UPDATE (state, requirement_version" in source
     assert "LOGIN PASSWORD" not in source.upper()

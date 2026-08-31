@@ -8,6 +8,7 @@ from control_plane.app.modules.requirement import (
     AssignmentState,
     RepositoryBindingBlockedReason,
     RepositoryState,
+    RequirementDependencyUnavailable,
     StaleWorkItemRevision,
     WorkItemAssigneeIneligible,
     add_work_item,
@@ -86,6 +87,41 @@ def test_add_work_item_uses_frozen_route_versions_plan_and_clears_stale_baseline
             {"id": created.requirement.id},
         ).one()
     assert facts == (2, 2, 1)
+
+
+def test_add_work_item_rejects_a_tampered_route_payload_with_its_original_hash(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    created, prepared = _prepare(isolated_requirement_database)
+    with isolated_requirement_database.owner.begin() as db:
+        db.execute(
+            text(
+                "UPDATE requirement.requirement "
+                "SET route_snapshot=jsonb_set(route_snapshot, "
+                "'{requiredCapabilities}', '[\"platform.authorization.manage\"]'::jsonb) "
+                "WHERE id=:requirement_id"
+            ),
+            {"requirement_id": created.requirement.id},
+        )
+
+    with pytest.raises(RequirementDependencyUnavailable):
+        with isolated_requirement_database.runtime.begin() as db:
+            add_work_item(
+                db,
+                requirement_id=created.requirement.id,
+                repository_id="repository-2",
+                expected_revision=prepared.revision,
+                actor=Actor("employee-1"),
+                idempotency_key="planning-tampered-route",
+                dependencies=_gate_dependencies(),
+            )
+
+    with isolated_requirement_database.owner.connect() as db:
+        work_item_count = db.execute(
+            text("SELECT count(*) FROM requirement.work_item WHERE requirement_id=:requirement_id"),
+            {"requirement_id": created.requirement.id},
+        ).scalar_one()
+    assert work_item_count == 1
 
 
 def test_assign_and_reassign_work_item_append_responsibility_history_with_cas(

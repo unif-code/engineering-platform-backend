@@ -12,6 +12,7 @@ from control_plane.app.modules.requirement.application.common import (
     gate_instance_dto,
     requirement_dto,
     sdd_baseline_dto,
+    validate_frozen_route_snapshot,
     validated_correlation_id,
     work_item_dto,
 )
@@ -94,11 +95,8 @@ def _normalized_text(value: str, *, field: str) -> str:
 def _is_canonical_sha256(value: str) -> bool:
     if not value.startswith("sha256:") or len(value) != 71:
         return False
-    try:
-        int(value.removeprefix("sha256:"), 16)
-    except ValueError:
-        return False
-    return True
+    digest = value.removeprefix("sha256:")
+    return all(character in "0123456789abcdef" for character in digest)
 
 
 def _work_item_set_hash(work_item_id: str) -> str:
@@ -746,6 +744,12 @@ def _register_sdd_baseline_once(
         raise StaleRequirementRevision(requirement_id)
     if RequirementState(requirement["state"]) is not RequirementState.PREPARING:
         raise StaleBaselineSubject("Requirement is not preparing an SDD baseline")
+    validate_frozen_route_snapshot(
+        requirement["route_snapshot"],
+        expected_hash=requirement["route_snapshot_hash"],
+        expected_version=requirement["route_snapshot_version"],
+        expected_requirement_type=requirement["type"],
+    )
     artifacts = dependencies.artifacts
     if artifacts is None:
         raise RequirementDependencyUnavailable("Artifact service is unavailable")
@@ -767,10 +771,10 @@ def _register_sdd_baseline_once(
     if (
         snapshot.state is not ArtifactState.AVAILABLE
         or snapshot.trust is not ArtifactTrust.TRUSTED_PLAIN_TEXT
-        or not snapshot.media_type.split(";", 1)[0].strip().startswith("text/")
+        or snapshot.media_type != "text/markdown; charset=utf-8"
         or snapshot.id != normalized_artifact_id
         or snapshot.version != normalized_artifact_version
-        or not snapshot.sha256
+        or not _is_canonical_sha256(snapshot.sha256)
     ):
         raise ArtifactUnavailable(normalized_artifact_id)
     existing = repository.sdd_baseline_by_artifact(
@@ -1121,6 +1125,12 @@ def _reassign_baseline_gate_once(
         raise StaleGateRevision(gate_id)
     if GateState(gate["state"]) is not GateState.OPEN:
         raise GateAlreadyDecided(gate_id)
+    validate_frozen_route_snapshot(
+        requirement["route_snapshot"],
+        expected_hash=requirement["route_snapshot_hash"],
+        expected_version=requirement["route_snapshot_version"],
+        expected_requirement_type=requirement["type"],
+    )
     current = repository.current_gate_assignment(gate_id, for_update=True)
     if current is None:
         raise RequirementDependencyUnavailable("Gate has no current reviewer assignment")
@@ -1285,8 +1295,30 @@ def _decide_baseline_once(
         raise GateNotFound(gate_id)
     if GateState(gate["state"]) is not GateState.OPEN:
         raise GateAlreadyDecided(gate_id)
+    try:
+        validate_frozen_route_snapshot(
+            requirement["route_snapshot"],
+            expected_hash=requirement["route_snapshot_hash"],
+            expected_version=requirement["route_snapshot_version"],
+            expected_requirement_type=requirement["type"],
+        )
+    except RequirementDependencyUnavailable as error:
+        raise StaleBaselineSubject(gate_id) from error
+    baseline_id = str(gate["sdd_baseline_id"])
+    baseline = repository.sdd_baseline_by_id(baseline_id)
     if (
-        gate["requirement_version"] != requirement["requirement_version"]
+        requirement["current_sdd_baseline_id"] is None
+        or str(requirement["current_sdd_baseline_id"]) != baseline_id
+        or baseline is None
+        or str(baseline["id"]) != baseline_id
+        or str(baseline["requirement_id"]) != requirement_id
+        or baseline["requirement_version"] != gate["requirement_version"]
+        or baseline["artifact_id"] != gate["artifact_id"]
+        or baseline["artifact_version"] != gate["artifact_version"]
+        or baseline["artifact_hash"] != gate["artifact_hash"]
+        or baseline["route_snapshot_version"] != gate["route_snapshot_version"]
+        or baseline["route_snapshot_hash"] != gate["route_snapshot_hash"]
+        or gate["requirement_version"] != requirement["requirement_version"]
         or gate["route_snapshot_version"] != requirement["route_snapshot_version"]
         or gate["route_snapshot_hash"] != requirement["route_snapshot_hash"]
     ):

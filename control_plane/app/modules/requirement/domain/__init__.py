@@ -40,6 +40,7 @@ from control_plane.app.modules.requirement.domain.models import (
     WorkItemDto,
     WorkItemState,
 )
+from control_plane.app.modules.requirement.domain.routes import canonical_route_snapshot_hash
 from control_plane.app.modules.requirement.domain.transitions import (
     ArtifactUnavailable,
     GateAlreadyDecided,
@@ -130,6 +131,7 @@ __all__ = [
     "WorkItemAssignmentDto",
     "WorkItemNotFound",
     "WorkItemState",
+    "canonical_route_snapshot_hash",
     "derive_work_item_state",
     "transition_requirement",
     "transition_human_work_started",

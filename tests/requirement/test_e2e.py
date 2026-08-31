@@ -20,7 +20,13 @@ from control_plane.app.modules.requirement import (
 )
 from control_plane.app.modules.requirement.adapters import SqlAlchemySddArtifactReader
 from tests.requirement.conftest import IsolatedRequirementDatabase
-from tests.requirement.test_api import SAME_ORIGIN, PrincipalHolder, _client, _create_via_api
+from tests.requirement.test_api import (
+    HTTP_ARTIFACT_ID,
+    SAME_ORIGIN,
+    PrincipalHolder,
+    _client,
+    _create_via_api,
+)
 from tests.requirement.test_baseline_gate import _gate_dependencies
 from tests.requirement.test_commands import Actor
 
@@ -69,7 +75,7 @@ def _submit_gate(
 ) -> tuple[str, str]:
     registered = client.post(
         f"/api/v1/requirements/{requirement_id}/sdd-baselines",
-        json={"artifactId": f"{key}-sdd", "artifactVersion": "version-1"},
+        json={"artifactId": HTTP_ARTIFACT_ID, "artifactVersion": 1},
         headers={
             **SAME_ORIGIN,
             "Idempotency-Key": f"{key}-register",
@@ -292,7 +298,7 @@ def test_v04_http_journey_preserves_versions_and_readies_only_bound_work_items(
 
     baseline_v1 = client.post(
         f"/api/v1/requirements/{requirement_id}/sdd-baselines",
-        json={"artifactId": artifact_id, "artifactVersion": "1"},
+        json={"artifactId": artifact_id, "artifactVersion": 1},
         headers=_versioned_headers(
             "e2e-v04-baseline-v1",
             added.headers["etag"],
@@ -337,7 +343,7 @@ def test_v04_http_journey_preserves_versions_and_readies_only_bound_work_items(
     assert artifact_v2.json()["artifact"]["version"] == 2
     baseline_v2 = client.post(
         f"/api/v1/requirements/{requirement_id}/sdd-baselines",
-        json={"artifactId": artifact_id, "artifactVersion": "2"},
+        json={"artifactId": artifact_id, "artifactVersion": 2},
         headers=_versioned_headers(
             "e2e-v04-baseline-v2",
             artifact_v2.headers["etag"],
@@ -619,3 +625,125 @@ def test_stale_revision_and_tampered_subject_hash_cannot_create_a_decision(
             },
         ).one()
     assert facts == (0, 2)
+
+
+def test_tampered_route_payload_with_original_hash_cannot_create_a_decision(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    dependencies = replace(
+        _gate_dependencies(),
+        denial_audit=SqlAlchemyAuditEventRepository(isolated_requirement_database.owner),
+    )
+    client, holder, _guard, _resolved = _client(
+        isolated_requirement_database,
+        dependencies=dependencies,
+    )
+    requirement_id, _work_item_id, prepared_etag = _prepare(
+        client,
+        holder,
+        isolated_requirement_database,
+        dependencies,
+        key="e2e-tampered-route-payload",
+    )
+    gate_id, gate_etag = _submit_gate(
+        client,
+        requirement_id,
+        prepared_etag,
+        key="e2e-tampered-route-payload",
+    )
+    with isolated_requirement_database.owner.begin() as db:
+        db.execute(
+            text(
+                "UPDATE requirement.requirement "
+                "SET route_snapshot=jsonb_set(route_snapshot, "
+                "'{requiredCapabilities}', '[\"platform.authorization.manage\"]'::jsonb) "
+                "WHERE id=:requirement_id"
+            ),
+            {"requirement_id": requirement_id},
+        )
+    holder.value = Actor("reviewer-1")
+
+    denied = _decision(
+        client,
+        requirement_id,
+        gate_id,
+        gate_etag,
+        key="e2e-tampered-route-payload",
+        outcome=DecisionOutcome.APPROVED,
+        request_id="req-e2etamperedroutepayload",
+    )
+
+    assert denied.status_code == 409
+    with isolated_requirement_database.owner.connect() as db:
+        facts = db.execute(
+            text(
+                "SELECT "
+                "(SELECT state FROM requirement.gate_instance WHERE id=:gate_id), "
+                "(SELECT count(*) FROM requirement.decision WHERE gate_instance_id=:gate_id), "
+                "(SELECT count(*) FROM audit.audit_event "
+                "WHERE request_id='req-e2etamperedroutepayload' "
+                "AND action='requirement.baseline_confirmation.decide_denied')"
+            ),
+            {"gate_id": gate_id},
+        ).one()
+    assert facts == ("OPEN", 0, 1)
+
+
+def test_tampered_current_baseline_pointer_cannot_create_a_decision(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    dependencies = replace(
+        _gate_dependencies(),
+        denial_audit=SqlAlchemyAuditEventRepository(isolated_requirement_database.owner),
+    )
+    client, holder, _guard, _resolved = _client(
+        isolated_requirement_database,
+        dependencies=dependencies,
+    )
+    requirement_id, _work_item_id, prepared_etag = _prepare(
+        client,
+        holder,
+        isolated_requirement_database,
+        dependencies,
+        key="e2e-tampered-baseline-pointer",
+    )
+    gate_id, gate_etag = _submit_gate(
+        client,
+        requirement_id,
+        prepared_etag,
+        key="e2e-tampered-baseline-pointer",
+    )
+    with isolated_requirement_database.owner.begin() as db:
+        db.execute(
+            text(
+                "UPDATE requirement.requirement SET current_sdd_baseline_id=NULL "
+                "WHERE id=:requirement_id"
+            ),
+            {"requirement_id": requirement_id},
+        )
+    holder.value = Actor("reviewer-1")
+
+    denied = _decision(
+        client,
+        requirement_id,
+        gate_id,
+        gate_etag,
+        key="e2e-tampered-baseline-pointer",
+        outcome=DecisionOutcome.APPROVED,
+        request_id="req-e2etamperedbaselinepointer",
+    )
+
+    assert denied.status_code == 409
+    with isolated_requirement_database.owner.connect() as db:
+        facts = db.execute(
+            text(
+                "SELECT "
+                "(SELECT state FROM requirement.gate_instance WHERE id=:gate_id), "
+                "(SELECT count(*) FROM requirement.decision WHERE gate_instance_id=:gate_id), "
+                "(SELECT count(*) FROM audit.audit_event "
+                "WHERE request_id='req-e2etamperedbaselinepointer' "
+                "AND action='requirement.baseline_confirmation.decide_denied')"
+            ),
+            {"gate_id": gate_id},
+        ).one()
+    assert facts == ("OPEN", 0, 1)

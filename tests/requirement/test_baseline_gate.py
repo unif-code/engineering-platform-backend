@@ -45,12 +45,17 @@ from tests.requirement.test_commands import (
     _dependencies,
 )
 
+ARTIFACT_HASH_V1 = "sha256:" + "1" * 64
+ARTIFACT_HASH_V2 = "sha256:" + "2" * 64
+ARTIFACT_HASH_MUTATED = "sha256:" + "3" * 64
+
 
 @dataclass(frozen=True, slots=True)
 class StaticArtifacts:
     available: bool = True
     trusted: bool = True
-    sha256: str = "sha256:sdd-1"
+    sha256: str = ARTIFACT_HASH_V1
+    media_type: str = "text/markdown; charset=utf-8"
 
     def get_snapshot(
         self,
@@ -64,7 +69,7 @@ class StaticArtifacts:
             version=artifact_version,
             sha256=self.sha256,
             state=(ArtifactState.AVAILABLE if self.available else ArtifactState.UNAVAILABLE),
-            media_type="text/markdown",
+            media_type=self.media_type,
             trust=(ArtifactTrust.TRUSTED_PLAIN_TEXT if self.trusted else ArtifactTrust.UNTRUSTED),
         )
 
@@ -110,13 +115,19 @@ def _gate_dependencies(
     *,
     artifact_available: bool = True,
     artifact_trusted: bool = True,
-    artifact_hash: str = "sha256:sdd-1",
+    artifact_hash: str = ARTIFACT_HASH_V1,
+    artifact_media_type: str = "text/markdown; charset=utf-8",
     reviewer_allowed: bool = True,
     denial_audit: DurableDenialAudit | None = None,
 ) -> RequirementDependencies:
     return replace(
         _dependencies(denial_audit=denial_audit),
-        artifacts=StaticArtifacts(artifact_available, artifact_trusted, artifact_hash),
+        artifacts=StaticArtifacts(
+            available=artifact_available,
+            trusted=artifact_trusted,
+            sha256=artifact_hash,
+            media_type=artifact_media_type,
+        ),
         gate_policies=StaticGatePolicies(),
         reviewer_guard=StaticReviewerGuard(reviewer_allowed),
     )
@@ -197,9 +208,9 @@ def test_approved_sdd_gate_advances_requirement_to_ready_without_readying_work_i
         1,
         "sdd-1",
         "version-1",
-        "sha256:sdd-1",
+        ARTIFACT_HASH_V1,
         1,
-        "sha256:route-1",
+        created.requirement.route_snapshot_hash,
         7,
         "DECIDED",
     )
@@ -482,6 +493,43 @@ def test_unavailable_or_untrusted_artifact_fails_closed_before_baseline_is_saved
     assert denial_audit.events[0].result == "DENIED"
 
 
+@pytest.mark.parametrize(
+    ("media_type", "artifact_hash"),
+    [
+        ("text/html; charset=utf-8", ARTIFACT_HASH_V1),
+        ("text/markdown", ARTIFACT_HASH_V1),
+        ("text/markdown; charset=utf-8", "sha256:" + "A" * 64),
+        ("text/markdown; charset=utf-8", "sha256:" + "a" * 63),
+    ],
+)
+def test_artifact_snapshot_requires_exact_markdown_media_type_and_canonical_hash(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+    media_type: str,
+    artifact_hash: str,
+) -> None:
+    created, prepared = _prepare(isolated_requirement_database)
+
+    with pytest.raises(ArtifactUnavailable):
+        with isolated_requirement_database.runtime.begin() as db:
+            register_sdd_baseline(
+                db,
+                requirement_id=created.requirement.id,
+                artifact_id="sdd-1",
+                artifact_version="version-1",
+                expected_revision=prepared.revision,
+                actor=Actor("employee-1"),
+                idempotency_key=f"invalid-artifact-snapshot-{len(artifact_hash)}-{media_type}",
+                dependencies=_gate_dependencies(
+                    artifact_hash=artifact_hash,
+                    artifact_media_type=media_type,
+                ),
+            )
+
+    with isolated_requirement_database.owner.connect() as db:
+        count = db.execute(text("SELECT count(*) FROM requirement.sdd_baseline")).scalar_one()
+    assert count == 0
+
+
 def test_stale_requirement_revision_cannot_register_a_baseline(
     isolated_requirement_database: IsolatedRequirementDatabase,
 ) -> None:
@@ -573,7 +621,7 @@ def test_only_latest_registered_sdd_baseline_can_be_submitted(
     isolated_requirement_database: IsolatedRequirementDatabase,
 ) -> None:
     created, prepared = _prepare(isolated_requirement_database)
-    first_dependencies = _gate_dependencies(artifact_hash="sha256:sdd-1")
+    first_dependencies = _gate_dependencies(artifact_hash=ARTIFACT_HASH_V1)
     with isolated_requirement_database.runtime.begin() as db:
         first = register_sdd_baseline(
             db,
@@ -585,7 +633,7 @@ def test_only_latest_registered_sdd_baseline_can_be_submitted(
             idempotency_key="current-register-1",
             dependencies=first_dependencies,
         )
-    second_dependencies = _gate_dependencies(artifact_hash="sha256:sdd-2")
+    second_dependencies = _gate_dependencies(artifact_hash=ARTIFACT_HASH_V2)
     with isolated_requirement_database.runtime.begin() as db:
         second = register_sdd_baseline(
             db,
@@ -937,7 +985,7 @@ def test_changed_artifact_hash_is_rejected_and_new_version_creates_a_new_gate(
     isolated_requirement_database: IsolatedRequirementDatabase,
 ) -> None:
     created, prepared = _prepare(isolated_requirement_database)
-    original = _gate_dependencies(artifact_hash="sha256:sdd-1")
+    original = _gate_dependencies(artifact_hash=ARTIFACT_HASH_V1)
     with isolated_requirement_database.runtime.begin() as db:
         baseline_1 = register_sdd_baseline(
             db,
@@ -984,7 +1032,7 @@ def test_changed_artifact_hash_is_rejected_and_new_version_creates_a_new_gate(
                 dependencies=original,
             )
 
-    changed_hash = _gate_dependencies(artifact_hash="sha256:mutated")
+    changed_hash = _gate_dependencies(artifact_hash=ARTIFACT_HASH_MUTATED)
     with pytest.raises(ArtifactUnavailable):
         with isolated_requirement_database.runtime.begin() as db:
             register_sdd_baseline(
@@ -998,7 +1046,7 @@ def test_changed_artifact_hash_is_rejected_and_new_version_creates_a_new_gate(
                 dependencies=changed_hash,
             )
 
-    changed_version = _gate_dependencies(artifact_hash="sha256:sdd-2")
+    changed_version = _gate_dependencies(artifact_hash=ARTIFACT_HASH_V2)
     with isolated_requirement_database.runtime.begin() as db:
         baseline_2 = register_sdd_baseline(
             db,
@@ -1023,9 +1071,9 @@ def test_changed_artifact_hash_is_rejected_and_new_version_creates_a_new_gate(
 
     assert baseline_2.baseline.id != baseline_1.baseline.id
     assert baseline_2.baseline.artifact_version == "version-2"
-    assert baseline_2.baseline.artifact_hash == "sha256:sdd-2"
+    assert baseline_2.baseline.artifact_hash == ARTIFACT_HASH_V2
     assert confirmation_2.gate.id != confirmation_1.gate.id
-    assert confirmation_2.gate.artifact_hash == "sha256:sdd-2"
+    assert confirmation_2.gate.artifact_hash == ARTIFACT_HASH_V2
 
 
 @pytest.mark.parametrize(
