@@ -15,6 +15,9 @@ from tests.source_control.conftest import IsolatedSourceControlDatabase
 pytestmark = pytest.mark.integration
 
 EXPECTED_TABLES = {
+    "agent_delivery_fact",
+    "agent_delivery_fence",
+    "agent_push_request",
     "binding_request_inbox",
     "delivery_request_inbox",
     "merge_request_binding",
@@ -259,6 +262,9 @@ def test_source_control_rw_has_minimum_privileges(
         "delivery_request_inbox": {"SELECT", "INSERT", "UPDATE"},
         "merge_request_binding": {"SELECT", "INSERT"},
         "merge_request_observation": {"SELECT", "INSERT"},
+        "agent_push_request": {"SELECT", "INSERT", "UPDATE"},
+        "agent_delivery_fence": {"SELECT", "INSERT", "UPDATE"},
+        "agent_delivery_fact": {"SELECT", "INSERT"},
     }
     privileges = ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE")
     with isolated_source_control_database.runtime.connect() as db:
@@ -393,6 +399,202 @@ def test_merge_request_webhook_summary_columns_and_checks_are_installed(
         "ck_source_control_webhook_mr_shape",
         "ck_source_control_webhook_mr_refs",
     } <= constraints
+
+
+def test_agent_delivery_tables_install_exact_security_and_concurrency_shape(
+    source_control_owner_engine: Engine,
+) -> None:
+    inspector = inspect(source_control_owner_engine)
+    request_columns = {
+        column["name"]: column
+        for column in inspector.get_columns("agent_push_request", schema="source_control")
+    }
+    request_checks = {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints(
+            "agent_push_request",
+            schema="source_control",
+        )
+    }
+    request_uniques = {
+        constraint["name"]: tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints(
+            "agent_push_request",
+            schema="source_control",
+        )
+    }
+    request_indexes = {
+        index["name"]: tuple(index["column_names"])
+        for index in inspector.get_indexes(
+            "agent_push_request",
+            schema="source_control",
+        )
+    }
+    fence_checks = {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints(
+            "agent_delivery_fence",
+            schema="source_control",
+        )
+    }
+    fact_checks = {
+        constraint["name"]
+        for constraint in inspector.get_check_constraints(
+            "agent_delivery_fact",
+            schema="source_control",
+        )
+    }
+    fact_uniques = {
+        constraint["name"]: tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints(
+            "agent_delivery_fact",
+            schema="source_control",
+        )
+    }
+
+    assert {
+        "id",
+        "idempotency_key",
+        "request_fingerprint",
+        "attempt_id",
+        "attempt_generation",
+        "execution_binding_digest",
+        "requirement_id",
+        "work_item_id",
+        "workspace_id",
+        "repository_id",
+        "branch_binding_id",
+        "branch_name",
+        "expected_remote_head_sha",
+        "target_commit_sha",
+        "content_digest",
+        "artifact_refs",
+        "grant_digest",
+        "correlation_id",
+        "state",
+        "attempts",
+        "issued_at",
+        "expires_at",
+        "next_reconcile_at",
+        "consumed_at",
+        "observed_at",
+        "completed_at",
+        "remote_head_sha",
+        "last_error_code",
+        "created_at",
+        "updated_at",
+    } == request_columns.keys()
+    assert all(
+        forbidden not in column_name
+        for forbidden in ("credential", "secret", "token", "environment", "path", "command")
+        for column_name in request_columns
+    )
+    assert {
+        "ck_sc_agent_push_refs",
+        "ck_sc_agent_push_hashes",
+        "ck_sc_agent_push_ttl",
+        "ck_sc_agent_push_state",
+        "ck_sc_agent_push_state_shape",
+        "ck_sc_agent_push_artifacts",
+    } <= request_checks
+    assert request_uniques["uq_sc_agent_push_idempotency"] == (
+        "workspace_id",
+        "idempotency_key",
+    )
+    assert request_uniques["uq_sc_agent_push_coordinate"] == (
+        "attempt_id",
+        "repository_id",
+        "branch_name",
+        "target_commit_sha",
+        "content_digest",
+    )
+    assert request_indexes["ix_sc_agent_push_reconcile"] == (
+        "next_reconcile_at",
+        "id",
+    )
+    assert {
+        "ck_sc_agent_fence_generation",
+        "ck_sc_agent_fence_refs",
+        "ck_sc_agent_fence_revocation",
+    } <= fence_checks
+    assert {
+        "ck_sc_agent_fact_topic",
+        "ck_sc_agent_fact_payload",
+    } <= fact_checks
+    assert fact_uniques["uq_sc_agent_fact_request"] == ("push_request_id",)
+
+
+def test_database_rejects_agent_delivery_success_without_exact_observation(
+    isolated_source_control_database: IsolatedSourceControlDatabase,
+) -> None:
+    with isolated_source_control_database.owner.begin() as db:
+        _insert_integration_graph(db)
+
+    with pytest.raises(IntegrityError):
+        with isolated_source_control_database.owner.begin() as db:
+            db.execute(
+                text(
+                    "INSERT INTO source_control.agent_push_request "
+                    "(id, idempotency_key, request_fingerprint, attempt_id, "
+                    "attempt_generation, execution_binding_digest, requirement_id, "
+                    "work_item_id, workspace_id, repository_id, branch_binding_id, "
+                    "branch_name, expected_remote_head_sha, target_commit_sha, "
+                    "content_digest, artifact_refs, grant_digest, correlation_id, state, "
+                    "attempts, issued_at, expires_at, created_at, updated_at) VALUES "
+                    "('91000000-0000-0000-0000-000000000301', 'agent-delivery-301', "
+                    "'sha256:" + "1" * 64 + "', "
+                    "'92000000-0000-0000-0000-000000000301', 1, "
+                    "'sha256:" + "2" * 64 + "', "
+                    "'40000000-0000-0000-0000-000000000301', "
+                    "'50000000-0000-0000-0000-000000000301', "
+                    "'20000000-0000-0000-0000-000000000301', "
+                    "'10000000-0000-0000-0000-000000000301', "
+                    "'70000000-0000-0000-0000-000000000301', "
+                    "'feat/wi-301-source-control', "
+                    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', "
+                    "'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', "
+                    "'sha256:" + "3" * 64 + "', '[]'::jsonb, "
+                    "'sha256:" + "4" * 64 + "', 'correlation-301', 'SUCCEEDED', 0, "
+                    "now(), now() + interval '1 minute', now(), now())"
+                )
+            )
+
+
+def test_database_rejects_oversized_agent_delivery_artifact_reference(
+    isolated_source_control_database: IsolatedSourceControlDatabase,
+) -> None:
+    with isolated_source_control_database.owner.begin() as db:
+        _insert_integration_graph(db)
+
+    with pytest.raises(IntegrityError):
+        with isolated_source_control_database.owner.begin() as db:
+            db.execute(
+                text(
+                    "INSERT INTO source_control.agent_push_request "
+                    "(id, idempotency_key, request_fingerprint, attempt_id, "
+                    "attempt_generation, execution_binding_digest, requirement_id, "
+                    "work_item_id, workspace_id, repository_id, branch_binding_id, "
+                    "branch_name, expected_remote_head_sha, target_commit_sha, "
+                    "content_digest, artifact_refs, grant_digest, correlation_id, state, "
+                    "attempts, issued_at, expires_at, created_at, updated_at) VALUES "
+                    "('91000000-0000-0000-0000-000000000302', 'agent-delivery-302', "
+                    "'sha256:" + "1" * 64 + "', "
+                    "'92000000-0000-0000-0000-000000000302', 1, "
+                    "'sha256:" + "2" * 64 + "', "
+                    "'40000000-0000-0000-0000-000000000301', "
+                    "'50000000-0000-0000-0000-000000000301', "
+                    "'20000000-0000-0000-0000-000000000301', "
+                    "'10000000-0000-0000-0000-000000000301', "
+                    "'70000000-0000-0000-0000-000000000301', "
+                    "'feat/wi-301-source-control', "
+                    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', "
+                    "'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', "
+                    "'sha256:" + "3" * 64 + "', CAST(:artifact_refs AS JSONB), "
+                    "'sha256:" + "4" * 64 + "', 'correlation-302', 'AUTHORIZED', 0, "
+                    "now(), now() + interval '1 minute', now(), now())"
+                ),
+                {"artifact_refs": '["' + "x" * 257 + '"]'},
+            )
 
 
 def test_mr_binding_and_observation_are_append_only_for_runtime_role(
@@ -865,6 +1067,50 @@ def test_database_rejects_invalid_mr_webhook_summary_shape(
                     "head_sha": head_sha,
                 },
             )
+
+
+def test_0010_downgrade_refuses_to_discard_agent_delivery_facts(
+    fresh_source_control_migration_database_url: URL,
+) -> None:
+    config = _config(fresh_source_control_migration_database_url)
+    command.upgrade(config, "heads")
+    engine = create_engine(fresh_source_control_migration_database_url)
+    try:
+        with engine.begin() as db:
+            _insert_integration_graph(db)
+            db.execute(
+                text(
+                    "INSERT INTO source_control.agent_push_request "
+                    "(id, idempotency_key, request_fingerprint, attempt_id, "
+                    "attempt_generation, execution_binding_digest, requirement_id, "
+                    "work_item_id, workspace_id, repository_id, branch_binding_id, "
+                    "branch_name, expected_remote_head_sha, target_commit_sha, "
+                    "content_digest, artifact_refs, grant_digest, correlation_id, state, "
+                    "attempts, issued_at, expires_at, created_at, updated_at) VALUES "
+                    "('91000000-0000-0000-0000-000000000302', 'agent-delivery-302', "
+                    "'sha256:" + "1" * 64 + "', "
+                    "'92000000-0000-0000-0000-000000000302', 1, "
+                    "'sha256:" + "2" * 64 + "', "
+                    "'40000000-0000-0000-0000-000000000301', "
+                    "'50000000-0000-0000-0000-000000000301', "
+                    "'20000000-0000-0000-0000-000000000301', "
+                    "'10000000-0000-0000-0000-000000000301', "
+                    "'70000000-0000-0000-0000-000000000301', "
+                    "'feat/wi-301-source-control', "
+                    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', "
+                    "'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', "
+                    "'sha256:" + "3" * 64 + "', '[]'::jsonb, "
+                    "'sha256:" + "4" * 64 + "', 'correlation-302', 'AUTHORIZED', 0, "
+                    "now(), now() + interval '1 minute', now(), now())"
+                )
+            )
+
+        with pytest.raises(Exception, match="agent delivery facts"):
+            command.downgrade(config, "source_control@0006_sc_mr_reconcile")
+
+        assert inspect(engine).has_table("agent_push_request", schema="source_control")
+    finally:
+        engine.dispose()
 
 
 def test_source_control_downgrade_refuses_business_rows_and_preserves_requirement(

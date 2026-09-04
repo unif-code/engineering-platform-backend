@@ -1,5 +1,15 @@
 """Source Control use cases."""
 
+from control_plane.app.modules.source_control.application.agent_delivery import (
+    authorize_agent_push,
+    execute_agent_push,
+    get_agent_delivery,
+)
+from control_plane.app.modules.source_control.application.agent_delivery_reconciliation import (
+    fence_agent_attempt,
+    reconcile_agent_pushes,
+    reconcile_agent_revocations,
+)
 from control_plane.app.modules.source_control.application.batches import (
     process_due_source_control_inboxes,
     reconcile_due_source_control_effects,
@@ -48,6 +58,12 @@ from control_plane.app.modules.source_control.application.webhooks import (
 )
 
 __all__ = [
+    "authorize_agent_push",
+    "execute_agent_push",
+    "get_agent_delivery",
+    "fence_agent_attempt",
+    "reconcile_agent_pushes",
+    "reconcile_agent_revocations",
     "SourceControlDependencies",
     "ProcessIntegrationRequestResult",
     "process_due_source_control_inboxes",

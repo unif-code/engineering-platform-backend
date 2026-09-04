@@ -1,5 +1,13 @@
 """Source Control adapters."""
 
+from control_plane.app.modules.source_control.adapters.agent_delivery_dev import (
+    DevBrokerBehavior,
+    RestrictedDevAgentPushBroker,
+    SecureAgentPushGrantIssuer,
+)
+from control_plane.app.modules.source_control.adapters.agent_delivery_sqlalchemy import (
+    SqlAlchemyAgentDeliveryRepository,
+)
 from control_plane.app.modules.source_control.adapters.eligibility import (
     CurrentActorEligibilityAdapter,
 )
@@ -29,13 +37,17 @@ from control_plane.app.modules.source_control.adapters.sqlalchemy import (
 
 __all__ = [
     "CurrentActorEligibilityAdapter",
+    "DevBrokerBehavior",
     "DevSecretReferenceResolver",
     "HttpxGitLabAdapter",
     "HttpxGitLabMergeRequestAdapter",
     "SqlAlchemySourceControlIntegrationRepository",
     "RequirementFacadeBindingAdapter",
     "RequirementFacadeDeliveryAdapter",
+    "RestrictedDevAgentPushBroker",
+    "SecureAgentPushGrantIssuer",
     "SourceControlDevPolicy",
     "SourceControlDevSettings",
     "SqlAlchemySourceControlRepository",
+    "SqlAlchemyAgentDeliveryRepository",
 ]

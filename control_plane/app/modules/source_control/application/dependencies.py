@@ -5,6 +5,11 @@ from sqlalchemy import Engine
 from control_plane.app.modules.audit import TransactionalAuditAppender
 from control_plane.app.modules.source_control.ports import (
     ActorEligibilityPort,
+    AgentDeliveryPolicyPort,
+    AgentDeliveryRepositoryFactory,
+    AgentExecutionBindingPort,
+    AgentPushBrokerPort,
+    AgentPushGrantIssuerPort,
     ClockPort,
     GitLabMergeRequestPort,
     GitLabPort,
@@ -33,3 +38,8 @@ class SourceControlDependencies:
     delivery_repository_factory: SourceControlIntegrationRepositoryFactory | None = None
     requirement_delivery: RequirementDeliveryPort | None = None
     gitlab_merge_requests: GitLabMergeRequestPort | None = None
+    agent_delivery_repository_factory: AgentDeliveryRepositoryFactory | None = None
+    agent_execution_bindings: AgentExecutionBindingPort | None = None
+    agent_push_broker: AgentPushBrokerPort | None = None
+    agent_push_grants: AgentPushGrantIssuerPort | None = None
+    agent_delivery_policy: AgentDeliveryPolicyPort | None = None

@@ -1,5 +1,24 @@
 """Source Control seams."""
 
+from control_plane.app.modules.source_control.ports.agent_delivery import (
+    AgentDeliveryDependencyUnavailable,
+    AgentDeliveryPolicyPort,
+    AgentDeliveryRepository,
+    AgentDeliveryRepositoryFactory,
+    AgentExecutionBindingPort,
+    AgentPushBrokerPort,
+    AgentPushDenied,
+    AgentPushGrantIssuerPort,
+    AgentPushHeadConflict,
+    AgentPushResultUnknown,
+    BrokerFreezeResult,
+    BrokerGrantLocator,
+    BrokerPushLocator,
+    BrokerPushObservation,
+    BrokerPushRequest,
+    BrokerRevocationResult,
+    IssuedAgentPushGrant,
+)
 from control_plane.app.modules.source_control.ports.delivery_requirement import (
     ExternalMergeDriftResult,
     IntegrationDeliveryBlockedResult,
@@ -59,6 +78,23 @@ from control_plane.app.modules.source_control.ports.requirement import (
 from control_plane.app.modules.source_control.ports.runtime import ClockPort, RandomPort
 
 __all__ = [
+    "AgentDeliveryDependencyUnavailable",
+    "AgentDeliveryPolicyPort",
+    "AgentDeliveryRepository",
+    "AgentDeliveryRepositoryFactory",
+    "AgentExecutionBindingPort",
+    "AgentPushBrokerPort",
+    "AgentPushDenied",
+    "AgentPushGrantIssuerPort",
+    "AgentPushHeadConflict",
+    "AgentPushResultUnknown",
+    "BrokerFreezeResult",
+    "BrokerGrantLocator",
+    "BrokerPushLocator",
+    "BrokerPushObservation",
+    "BrokerPushRequest",
+    "BrokerRevocationResult",
+    "IssuedAgentPushGrant",
     "BranchSnapshot",
     "ClockPort",
     "ExternalMergeDriftResult",

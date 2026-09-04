@@ -70,8 +70,8 @@ def test_fresh_upgrade_heads_installs_workspace_and_independent_graph(
             "0001_workspace_base",
             "0008_auth_v05_routes",
             "0005_req_sdd_human_gate",
-            "0006_sc_mr_reconcile",
             "0003_event_acceptance_receipt",
+            "0010_sc_agent_delivery",
         }
         assert installed_heads == {
             "0003_agent_run_recovery",
@@ -79,8 +79,8 @@ def test_fresh_upgrade_heads_installs_workspace_and_independent_graph(
             "0010_identity_policy_reauth",
             "0008_auth_v05_routes",
             "0005_req_sdd_human_gate",
-            "0006_sc_mr_reconcile",
             "0003_event_acceptance_receipt",
+            "0010_sc_agent_delivery",
         }
         assert set(inspect(engine).get_table_names(schema="workspace")) == {
             "idempotency_record",

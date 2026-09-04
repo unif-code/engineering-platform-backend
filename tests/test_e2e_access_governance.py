@@ -227,6 +227,9 @@ def e2e_runtime(
                     "source_control.merge_request_observation, "
                     "source_control.merge_request_binding, "
                     "source_control.delivery_request_inbox, "
+                    "source_control.agent_delivery_fact, "
+                    "source_control.agent_push_request, "
+                    "source_control.agent_delivery_fence, "
                     "source_control.repository_branch_binding, "
                     "source_control.source_control_effect, "
                     "source_control.webhook_inbox, "
@@ -257,6 +260,9 @@ def e2e_runtime(
                         "source_control.merge_request_observation, "
                         "source_control.merge_request_binding, "
                         "source_control.delivery_request_inbox, "
+                        "source_control.agent_delivery_fact, "
+                        "source_control.agent_push_request, "
+                        "source_control.agent_delivery_fence, "
                         "source_control.repository_branch_binding, "
                         "source_control.source_control_effect, "
                         "source_control.webhook_inbox, "
@@ -1431,6 +1437,6 @@ def test_bootstrap_cli_recovers_same_command_after_authorization_outage(
     assert facts == (1, 3, 1, 3)
 
 
-def test_release_version_is_0_9_0() -> None:
-    assert __version__ == "0.9.0"
-    assert bootstrap.create_app().openapi()["info"]["version"] == "0.9.0"
+def test_contract_version_is_0_10_0() -> None:
+    assert __version__ == "0.10.0"
+    assert bootstrap.create_app().openapi()["info"]["version"] == "0.10.0"

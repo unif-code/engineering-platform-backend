@@ -106,10 +106,12 @@ from control_plane.app.modules.requirement.api import (
 )
 from control_plane.app.modules.source_control import SourceControlDependencies
 from control_plane.app.modules.source_control.adapters import (
+    SqlAlchemyAgentDeliveryRepository,
     SqlAlchemySourceControlRepository,
 )
 from control_plane.app.modules.source_control.api import (
     SourceControlQueryRuntime,
+    create_agent_delivery_query_router,
     create_repository_query_router,
 )
 from control_plane.app.modules.workspace import (
@@ -419,6 +421,7 @@ def source_control_dependencies() -> SourceControlDependencies:
         audit=SqlAlchemyTransactionalAuditAppender(),
         clock=SystemClock(),
         random=SystemRandom(),
+        agent_delivery_repository_factory=SqlAlchemyAgentDeliveryRepository,
     )
 
 
@@ -634,6 +637,13 @@ def create_app(
     )
     app.include_router(
         create_repository_query_router(
+            source_control_query_runtime_provider,
+            cast(Callable[[], Any], protected_principal),
+            authorization_capability_guard,
+        )
+    )
+    app.include_router(
+        create_agent_delivery_query_router(
             source_control_query_runtime_provider,
             cast(Callable[[], Any], protected_principal),
             authorization_capability_guard,

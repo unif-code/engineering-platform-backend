@@ -97,8 +97,8 @@ def test_fresh_upgrade_installs_independent_heads_and_deterministic_seed(
             "0001_workspace_base",
             "0008_auth_v05_routes",
             "0005_req_sdd_human_gate",
-            "0006_sc_mr_reconcile",
             "0003_event_acceptance_receipt",
+            "0010_sc_agent_delivery",
         }
         assert installed_heads == {
             "0003_agent_run_recovery",
@@ -106,8 +106,8 @@ def test_fresh_upgrade_installs_independent_heads_and_deterministic_seed(
             "0010_identity_policy_reauth",
             "0008_auth_v05_routes",
             "0005_req_sdd_human_gate",
-            "0006_sc_mr_reconcile",
             "0003_event_acceptance_receipt",
+            "0010_sc_agent_delivery",
         }
         assert counts == (7, 1, 1, 1)
     finally:

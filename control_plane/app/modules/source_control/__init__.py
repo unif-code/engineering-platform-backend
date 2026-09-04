@@ -6,7 +6,11 @@ from control_plane.app.modules.source_control.application import (
     ProcessIntegrationRequestResult,
     SourceControlDependencies,
     accept_binding_request,
+    authorize_agent_push,
     binding_request_payload_hash,
+    execute_agent_push,
+    fence_agent_attempt,
+    get_agent_delivery,
     get_repository_branch_binding,
     ingest_signed_gitlab_webhook,
     process_binding_request,
@@ -14,6 +18,8 @@ from control_plane.app.modules.source_control.application import (
     process_integration_merge_request,
     process_integration_mr_request,
     process_webhook_inbox,
+    reconcile_agent_pushes,
+    reconcile_agent_revocations,
     reconcile_due_effects,
     reconcile_due_integration_effects,
     reconcile_due_source_control_effects,
@@ -30,6 +36,17 @@ from control_plane.app.modules.source_control.application import (
     validate_authorized_repository_runtime as _validate_authorized_repository_runtime,
 )
 from control_plane.app.modules.source_control.domain import (
+    AgentDeliveryBatchResult,
+    AgentDeliveryDto,
+    AgentExecutionBindingSnapshot,
+    AgentFenceResult,
+    AgentPushBindingRejected,
+    AgentPushGrantResult,
+    AgentPushIdempotencyConflict,
+    AgentPushNotFound,
+    AgentPushRequestSpec,
+    AgentPushState,
+    AgentRevocationBatchResult,
     AuthorizedRepositorySummaryDto,
     BindingRequestEnvelope,
     BindingRequestInboxDto,
@@ -73,7 +90,10 @@ from control_plane.app.modules.source_control.domain import (
     build_task_branch_name,
     transition_effect,
 )
-from control_plane.app.modules.source_control.ports import SecretReferencePort
+from control_plane.app.modules.source_control.ports import (
+    AgentDeliveryDependencyUnavailable,
+    SecretReferencePort,
+)
 
 
 def list_authorized_repositories(
@@ -103,6 +123,18 @@ def validate_authorized_repository_runtime(
 
 
 __all__ = [
+    "AgentDeliveryDependencyUnavailable",
+    "AgentDeliveryBatchResult",
+    "AgentDeliveryDto",
+    "AgentExecutionBindingSnapshot",
+    "AgentFenceResult",
+    "AgentPushBindingRejected",
+    "AgentPushGrantResult",
+    "AgentPushIdempotencyConflict",
+    "AgentPushNotFound",
+    "AgentPushRequestSpec",
+    "AgentPushState",
+    "AgentRevocationBatchResult",
     "AuthorizedRepositorySummaryDto",
     "BindingRequestEnvelope",
     "BindingRequestInboxDto",
@@ -146,9 +178,13 @@ __all__ = [
     "WebhookSignatureInvalid",
     "WorkspaceRepositoryDto",
     "accept_binding_request",
+    "authorize_agent_push",
     "binding_request_payload_hash",
     "build_task_branch_name",
     "get_repository_branch_binding",
+    "execute_agent_push",
+    "fence_agent_attempt",
+    "get_agent_delivery",
     "ingest_signed_gitlab_webhook",
     "list_authorized_repositories",
     "process_binding_request",
@@ -158,6 +194,8 @@ __all__ = [
     "reconcile_due_integration_effects",
     "process_webhook_inbox",
     "reconcile_due_effects",
+    "reconcile_agent_pushes",
+    "reconcile_agent_revocations",
     "reconcile_due_source_control_effects",
     "register_workspace_repository",
     "relay_binding_requests",
