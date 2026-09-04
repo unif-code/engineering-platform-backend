@@ -268,9 +268,12 @@ def _read_admission(
         raise SourceControlDependencyUnavailable("Requirement Formal Delivery unavailable")
     admission = requirement.delivery_admission(str(request["work_item_id"]))
     kind = _kind_from_topic(request["topic"])
+    # Requirement revision is the HTTP command CAS, not a durable delivery
+    # coordinate: sibling requests/callbacks advance it without changing this
+    # accepted delivery. The owner revalidates Acceptance/Selection currentness;
+    # keep this WorkItem and its immutable delivery coordinates exact below.
     if (
         admission.requirement_id != str(request["requirement_id"])
-        or admission.requirement_revision != request["requirement_revision"]
         or admission.work_item_id != str(request["work_item_id"])
         or admission.work_item_revision != request["work_item_revision"]
         or admission.repository_id != str(request["repository_id"])

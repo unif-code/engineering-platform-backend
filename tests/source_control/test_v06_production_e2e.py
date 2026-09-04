@@ -1141,6 +1141,147 @@ def test_two_required_work_items_complete_only_after_both_formal_merges(journey:
     assert all(item["workItem"]["state"] == "COMPLETED" for item in delivery["workItems"])
 
 
+@pytest.mark.parametrize("operation", ["create", "merge"])
+def test_sibling_formal_requests_survive_aggregate_revision_changes(
+    journey: Journey, operation: str
+) -> None:
+    subject = _ready_subject(journey, count=2)
+    peer_id = subject.peers[0]
+    peer = replace(
+        subject, work_item_id=peer_id, work=f"{subject.base}/work-items/{peer_id}", peers=()
+    )
+    for item in (subject, peer):
+        _open_integration_mr(journey, item)
+    for item in (subject, peer):
+        _merge_integration(journey, item)
+    _accept(journey, subject, _open_acceptance(journey, subject))
+    if operation == "merge":
+        reviews = [_formal_review(journey, item) for item in (subject, peer)]
+        for review in reviews:
+            _write(
+                journey.leader,
+                f"{subject.base}/formal-review-decisions",
+                {"gateId": review["gate"]["id"], "outcome": "APPROVED", "reason": "Approve head"},
+                etag=journey.member.get(subject.base).headers["etag"],
+            )
+    action = "request-formal-mr" if operation == "create" else "request-formal-merge"
+    for item in (subject, peer):
+        _write(
+            journey.member,
+            f"{item.work}:{action}",
+            {},
+            status=202,
+            etag=journey.member.get(subject.base).headers["etag"],
+        )
+    # Both immutable requests must be queued before either provider dispatch/callback.
+    assert journey.worker("relay")["processed"] == 2
+    report = journey.worker("process")
+    assert (report["claimed"], report["processed"], report["released"]) == (2, 2, 0)
+    current = journey.member.get(subject.base).json()
+    expected = "MR_OPEN" if operation == "create" else "MERGED"
+    assert [item["formalDeliveryState"] for item in current["workItems"]] == [expected, expected]
+    assert current["requirement"]["state"] == (
+        "AWAITING_MERGE" if operation == "create" else "COMPLETED"
+    )
+    with journey.database.owner.connect() as db:
+        effects = db.execute(
+            text(
+                "SELECT state, requirement_callback_state "
+                "FROM source_control.source_control_effect "
+                "WHERE operation=:operation"
+            ),
+            {"operation": "CREATE_FORMAL_MR" if operation == "create" else "MERGE_FORMAL_MR"},
+        ).all()
+        assert [tuple(effect) for effect in effects] == [
+            ("SUCCEEDED", "ACKED"),
+            ("SUCCEEDED", "ACKED"),
+        ]
+
+
+@pytest.mark.parametrize("drift", ["work_item_revision", "provider_head"])
+def test_queued_formal_request_still_rejects_delivery_drift(journey: Journey, drift: str) -> None:
+    subject = _ready_subject(journey)
+    _integrate(journey, subject)
+    accepted = _accept(journey, subject, _open_acceptance(journey, subject))
+    _write(
+        journey.member,
+        f"{subject.work}:request-formal-mr",
+        {},
+        status=202,
+        etag=accepted.headers["etag"],
+    )
+    assert journey.worker("relay")["processed"] == 1
+    if drift == "work_item_revision":
+        with journey.database.owner.begin() as db:
+            db.execute(
+                text("UPDATE requirement.work_item SET revision=revision+1 WHERE id=:id"),
+                {"id": subject.work_item_id},
+            )
+        error = "FORMAL_DELIVERY_CONFLICT"
+    else:
+        item = journey.member.get(subject.base).json()["workItems"][0]
+        journey.provider.branches[item["taskBranch"]] = "e" * 40
+        error = "HEAD_SHA_CHANGED"
+    writes = list(journey.provider.writes)
+    journey.worker("process", errors=(error,))
+    assert journey.provider.writes == writes
+    with journey.database.owner.connect() as db:
+        assert (
+            db.execute(
+                text(
+                    "SELECT count(*) FROM source_control.merge_request_binding WHERE kind='FORMAL'"
+                )
+            ).scalar_one()
+            == 0
+        )
+
+
+def test_evidence_discovery_sql_failure_does_not_skip_healthy_formal_lane(journey: Journey) -> None:
+    subject = _ready_subject(journey)
+    _integrate(journey, subject)
+    accepted = _accept(journey, subject, _open_acceptance(journey, subject))
+    earlier = _ready_subject(journey)
+    earlier_current = journey.member.get(earlier.base)
+    earlier_item = earlier_current.json()["workItems"][0]
+    journey.provider.branches[earlier_item["taskBranch"]] = HEAD_SHA
+    _write(
+        journey.member,
+        f"{earlier.work}:request-integration-mr",
+        {},
+        status=202,
+        etag=earlier_current.headers["etag"],
+    )
+    _write(
+        journey.member,
+        f"{subject.work}:request-formal-mr",
+        {},
+        status=202,
+        etag=accepted.headers["etag"],
+    )
+    assert journey.worker("relay")["processed"] == 2
+    # Only this fixture's UUID-named database table loses SELECT. The real selector
+    # raises a PostgreSQL permission error, not a mocked helper exception.
+    with journey.database.owner.begin() as db:
+        db.execute(
+            text("REVOKE SELECT ON source_control.evidence_request_inbox FROM source_control_rw")
+        )
+    try:
+        report = journey.worker("process", errors=("CONNECTOR_UNAVAILABLE",))
+        assert (report["claimed"], report["processed"], report["released"]) == (2, 2, 0)
+        current = journey.member.get(subject.base).json()
+        assert current["workItems"][0]["formalDeliveryState"] == "MR_OPEN"
+        assert (
+            journey.member.get(earlier.base).json()["workItems"][0]["integrationDeliveryState"]
+            == "MR_OPEN"
+        )
+        assert len(report["effect_ids"]) == 2
+    finally:
+        with journey.database.owner.begin() as db:
+            db.execute(
+                text("GRANT SELECT ON source_control.evidence_request_inbox TO source_control_rw")
+            )
+
+
 def test_public_policy_publish_preserves_frozen_gate_and_changes_next_archive(
     journey: Journey, monkeypatch: pytest.MonkeyPatch
 ) -> None:

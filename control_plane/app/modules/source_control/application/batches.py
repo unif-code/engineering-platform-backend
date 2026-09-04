@@ -1,6 +1,9 @@
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal
+
+from sqlalchemy import Connection
 
 from control_plane.app.modules.source_control.application._batch_claim import (
     InboxClaimLost,
@@ -133,7 +136,7 @@ def _pending_process_candidates(
     *,
     limit: int,
     dependencies: SourceControlDependencies,
-) -> tuple[_ProcessCandidate, ...]:
+) -> tuple[tuple[_ProcessCandidate, ...], tuple[str, ...]]:
     repository_factory = dependencies.delivery_repository_factory
     if repository_factory is None:
         raise SourceControlDependencyUnavailable("Integration repository unavailable")
@@ -145,46 +148,60 @@ def _pending_process_candidates(
     binding_limit, delivery_limit, webhook_limit, evidence_limit, formal_limit = _lane_limits(
         limit, 5
     )
-    with dependencies.engine.connect() as db:
-        repository = dependencies.repository_factory(db)
-        delivery_repository = repository_factory(db)
-        binding = [
+    selectors: tuple[Callable[[Connection], list[_ProcessCandidate]], ...] = (
+        lambda db: [
             _ProcessCandidate("binding", message_id)
-            for message_id in repository.pending_binding_request_ids(
+            for message_id in dependencies.repository_factory(db).pending_binding_request_ids(
                 limit=binding_limit,
                 now=now,
             )[:binding_limit]
-        ]
-        delivery = [
+        ],
+        lambda db: [
             _ProcessCandidate(
                 "delivery",
                 str(row["message_id"]),
                 str(row["topic"]),
             )
-            for row in delivery_repository.pending_delivery_request_candidates(
+            for row in repository_factory(db).pending_delivery_request_candidates(
                 limit=delivery_limit,
                 now=now,
             )[:delivery_limit]
-        ]
-        webhook = [
+        ],
+        lambda db: [
             _ProcessCandidate("webhook", inbox_id)
-            for inbox_id in repository.pending_webhook_ids(limit=webhook_limit)[:webhook_limit]
-        ]
-        evidence = [
+            for inbox_id in dependencies.repository_factory(db).pending_webhook_ids(
+                limit=webhook_limit
+            )[:webhook_limit]
+        ],
+        lambda db: [
             _ProcessCandidate("evidence", message_id)
             for message_id in evidence_factory(db).pending_evidence_request_ids(
                 limit=evidence_limit,
                 now=now,
             )[:evidence_limit]
-        ]
-        formal = [
+        ],
+        lambda db: [
             _ProcessCandidate("formal", str(row["message_id"]))
             for row in formal_factory(db).pending_formal_request_candidates(
                 limit=formal_limit,
                 now=now,
             )[:formal_limit]
-        ]
-    return _round_robin_candidates((binding, delivery, webhook, evidence, formal), limit=limit)
+        ],
+    )
+    lanes: list[list[_ProcessCandidate]] = []
+    errors: list[str | None] = []
+    for select in selectors:
+        try:
+            # Closing each lane's connection rolls back failed SQL transactions
+            # before the pool can reuse it for a healthy later lane.
+            with dependencies.engine.connect() as db:
+                candidates = select(db)
+        except Exception as error:
+            lanes.append([])
+            errors.append(_candidate_error_code(error))
+        else:
+            lanes.append(candidates)
+    return _round_robin_candidates(tuple(lanes), limit=limit), _safe_error_codes(errors)
 
 
 def _result_facts(result: Any) -> tuple[str | None, str | None]:
@@ -203,9 +220,11 @@ def process_due_source_control_inboxes(
     if limit < 5:
         raise ValueError("Source Control process limit must be at least five")
     _require_processing_dependencies(dependencies)
-    candidates = _pending_process_candidates(limit=limit, dependencies=dependencies)
+    candidates, discovery_errors = _pending_process_candidates(
+        limit=limit, dependencies=dependencies
+    )
     effect_ids: list[str] = []
-    errors: list[str | None] = []
+    errors: list[str | None] = list(discovery_errors)
     claimed = processed = released = 0
     for candidate in candidates:
         result: Any

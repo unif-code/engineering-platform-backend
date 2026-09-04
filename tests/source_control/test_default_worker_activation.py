@@ -28,7 +28,7 @@ def test_worker_unobserved_claim_failure_reports_error_without_inventing_release
     monkeypatch.setattr(
         batches,
         "_pending_process_candidates",
-        lambda **_: (batches._ProcessCandidate("binding", "before-claim"),),
+        lambda **_: ((batches._ProcessCandidate("binding", "before-claim"),), ()),
     )
 
     def unavailable(**_: object) -> Any:
@@ -88,7 +88,7 @@ def test_folded_delivery_claim_loser_never_releases_another_workers_inbox(
     monkeypatch.setattr(
         batches,
         "_pending_process_candidates",
-        lambda **_: (batches._ProcessCandidate(cast(Any, lane), "concurrent-candidate"),),
+        lambda **_: ((batches._ProcessCandidate(cast(Any, lane), "concurrent-candidate"),), ()),
     )
     result = run_worker_once("process", limit=5, dependencies=cast(Any, dependencies))
     assert mutations == []
@@ -146,7 +146,7 @@ def test_evidence_preclaim_exception_never_mutates_pending_or_winner_lease(
     monkeypatch.setattr(
         batches,
         "_pending_process_candidates",
-        lambda **_: (batches._ProcessCandidate("evidence", "scanned-before-lease-change"),),
+        lambda **_: ((batches._ProcessCandidate("evidence", "scanned-before-lease-change"),), ()),
     )
     result = run_worker_once("process", limit=5, dependencies=cast(Any, dependencies))
     assert current == initial
@@ -194,7 +194,7 @@ def test_formal_failure_after_expiry_never_adopts_the_reclaimed_attempt(
     monkeypatch.setattr(
         batches,
         "_pending_process_candidates",
-        lambda **_: (batches._ProcessCandidate("formal", "reclaimed"),),
+        lambda **_: ((batches._ProcessCandidate("formal", "reclaimed"),), ()),
     )
     result = run_worker_once("process", limit=5, dependencies=cast(Any, dependencies))
     assert current == {"state": "PROCESSING", "attempts": 8}
