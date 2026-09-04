@@ -90,6 +90,7 @@ def test_fresh_upgrade_installs_independent_heads_and_deterministic_seed(
                 )
             ).one()
         assert expected_heads == {
+            "0003_agent_run_recovery",
             "0008_audit_requirement_grant",
             "0010_identity_policy_reauth",
             "0001_organization_base",
@@ -100,6 +101,7 @@ def test_fresh_upgrade_installs_independent_heads_and_deterministic_seed(
             "0003_event_acceptance_receipt",
         }
         assert installed_heads == {
+            "0003_agent_run_recovery",
             "0008_audit_requirement_grant",
             "0010_identity_policy_reauth",
             "0008_auth_v05_routes",

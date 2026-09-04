@@ -1,0 +1,2266 @@
+{
+  "components": {
+    "schemas": {
+      "BoundaryManifestDto": {
+        "additionalProperties": false,
+        "properties": {
+          "allowedNetworkTargetRefs": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "title": "Allowednetworktargetrefs",
+            "type": "array"
+          },
+          "allowedToolIds": {
+            "items": {
+              "minLength": 1,
+              "type": "string"
+            },
+            "title": "Allowedtoolids",
+            "type": "array"
+          },
+          "networkPolicy": {
+            "$ref": "#/components/schemas/VersionedProfileRefDto"
+          },
+          "previewEnabled": {
+            "default": false,
+            "title": "Previewenabled",
+            "type": "boolean"
+          },
+          "repositoryCheckout": {
+            "$ref": "#/components/schemas/RepositoryCheckoutDto"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "default": 1,
+            "title": "Schemaversion",
+            "type": "integer"
+          },
+          "secretLeaseRef": {
+            "minLength": 1,
+            "title": "Secretleaseref",
+            "type": "string"
+          },
+          "secretScope": {
+            "$ref": "#/components/schemas/VersionedProfileRefDto"
+          },
+          "toolPolicy": {
+            "$ref": "#/components/schemas/VersionedProfileRefDto"
+          }
+        },
+        "required": [
+          "allowedToolIds",
+          "allowedNetworkTargetRefs",
+          "secretLeaseRef",
+          "repositoryCheckout",
+          "toolPolicy",
+          "networkPolicy",
+          "secretScope"
+        ],
+        "title": "BoundaryManifestDto",
+        "type": "object"
+      },
+      "CancelExecutionRequestDto": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "$ref": "#/components/schemas/CancellationReason"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "CancelExecutionRequestDto",
+        "type": "object"
+      },
+      "CancellationReason": {
+        "enum": [
+          "CANCELED",
+          "TIMED_OUT",
+          "TERMINATED",
+          "SECURITY_VIOLATION"
+        ],
+        "title": "CancellationReason",
+        "type": "string"
+      },
+      "CanonicalDenialDto": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "minLength": 1,
+            "title": "Code",
+            "type": "string"
+          },
+          "diagnosticRef": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EvidenceRefDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "failureDimension": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failuredimension"
+          },
+          "policyVersion": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policyversion"
+          },
+          "retryable": {
+            "default": false,
+            "title": "Retryable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "CanonicalDenialDto",
+        "type": "object"
+      },
+      "EvidenceCleanupRequestDto": {
+        "additionalProperties": false,
+        "properties": {
+          "evidenceRefs": {
+            "items": {
+              "$ref": "#/components/schemas/EvidenceRefDto"
+            },
+            "title": "Evidencerefs",
+            "type": "array"
+          },
+          "fencingToken": {
+            "minLength": 1,
+            "title": "Fencingtoken",
+            "type": "string"
+          },
+          "generation": {
+            "minimum": 1.0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "leaseId": {
+            "minLength": 1,
+            "title": "Leaseid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "leaseId",
+          "generation",
+          "fencingToken",
+          "evidenceRefs"
+        ],
+        "title": "EvidenceCleanupRequestDto",
+        "type": "object"
+      },
+      "EvidenceKind": {
+        "enum": [
+          "CHECKPOINT",
+          "PATCH",
+          "LOG",
+          "TEST_RESULT",
+          "PREVIEW_METADATA",
+          "DIAGNOSTIC"
+        ],
+        "title": "EvidenceKind",
+        "type": "string"
+      },
+      "EvidenceRefDto": {
+        "additionalProperties": false,
+        "properties": {
+          "artifactId": {
+            "minLength": 1,
+            "title": "Artifactid",
+            "type": "string"
+          },
+          "classification": {
+            "minLength": 1,
+            "title": "Classification",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/EvidenceKind"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "default": 1,
+            "title": "Schemaversion",
+            "type": "integer"
+          },
+          "sha256": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Sha256",
+            "type": "string"
+          },
+          "version": {
+            "minLength": 1,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "artifactId",
+          "version",
+          "sha256",
+          "classification"
+        ],
+        "title": "EvidenceRefDto",
+        "type": "object"
+      },
+      "ExecutionKind": {
+        "enum": [
+          "SINGLE_REPOSITORY_FIX"
+        ],
+        "title": "ExecutionKind",
+        "type": "string"
+      },
+      "ExecutionRefDto": {
+        "additionalProperties": false,
+        "properties": {
+          "executionId": {
+            "minLength": 1,
+            "title": "Executionid",
+            "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ExecutionKind"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "default": 1,
+            "title": "Schemaversion",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "executionId",
+          "kind"
+        ],
+        "title": "ExecutionRefDto",
+        "type": "object"
+      },
+      "HandoffToChildRequestDto": {
+        "additionalProperties": false,
+        "properties": {
+          "childExecutionId": {
+            "minLength": 1,
+            "title": "Childexecutionid",
+            "type": "string"
+          },
+          "fencingToken": {
+            "minLength": 1,
+            "title": "Fencingtoken",
+            "type": "string"
+          },
+          "generation": {
+            "minimum": 1.0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "leaseId": {
+            "minLength": 1,
+            "title": "Leaseid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "leaseId",
+          "generation",
+          "fencingToken",
+          "childExecutionId"
+        ],
+        "title": "HandoffToChildRequestDto",
+        "type": "object"
+      },
+      "LeaseReconciliationItemDto": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "minLength": 1,
+            "title": "Action",
+            "type": "string"
+          },
+          "materializationId": {
+            "minLength": 1,
+            "title": "Materializationid",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "default": 1,
+            "title": "Schemaversion",
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/MaterializationState"
+          }
+        },
+        "required": [
+          "materializationId",
+          "state",
+          "revision",
+          "action"
+        ],
+        "title": "LeaseReconciliationItemDto",
+        "type": "object"
+      },
+      "LifecycleReceiptDto": {
+        "additionalProperties": false,
+        "properties": {
+          "denial": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CanonicalDenialDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "evidenceRefs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EvidenceRefDto"
+            },
+            "title": "Evidencerefs",
+            "type": "array"
+          },
+          "materializationId": {
+            "minLength": 1,
+            "title": "Materializationid",
+            "type": "string"
+          },
+          "operation": {
+            "minLength": 1,
+            "title": "Operation",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "default": 1,
+            "title": "Schemaversion",
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/MaterializationState"
+          }
+        },
+        "required": [
+          "operation",
+          "materializationId",
+          "state",
+          "revision"
+        ],
+        "title": "LifecycleReceiptDto",
+        "type": "object"
+      },
+      "MaterializationHandleDto": {
+        "additionalProperties": false,
+        "properties": {
+          "deadlineAt": {
+            "format": "date-time",
+            "title": "Deadlineat",
+            "type": "string"
+          },
+          "environmentId": {
+            "minLength": 1,
+            "title": "Environmentid",
+            "type": "string"
+          },
+          "executionId": {
+            "minLength": 1,
+            "title": "Executionid",
+            "type": "string"
+          },
+          "fencingToken": {
+            "minLength": 1,
+            "title": "Fencingtoken",
+            "type": "string"
+          },
+          "generation": {
+            "minimum": 1.0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "leaseId": {
+            "minLength": 1,
+            "title": "Leaseid",
+            "type": "string"
+          },
+          "materializationId": {
+            "minLength": 1,
+            "title": "Materializationid",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "default": 1,
+            "title": "Schemaversion",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "materializationId",
+          "environmentId",
+          "executionId",
+          "leaseId",
+          "generation",
+          "fencingToken",
+          "revision",
+          "deadlineAt"
+        ],
+        "title": "MaterializationHandleDto",
+        "type": "object"
+      },
+      "MaterializationReadyDto": {
+        "additionalProperties": false,
+        "properties": {
+          "bindingDigest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Bindingdigest",
+            "type": "string"
+          },
+          "handle": {
+            "$ref": "#/components/schemas/MaterializationHandleDto"
+          },
+          "kind": {
+            "const": "READY",
+            "default": "READY",
+            "title": "Kind",
+            "type": "string"
+          },
+          "labOnly": {
+            "title": "Labonly",
+            "type": "boolean"
+          },
+          "runnerProtocolVersion": {
+            "minLength": 1,
+            "title": "Runnerprotocolversion",
+            "type": "string"
+          }
+        },
+        "required": [
+          "handle",
+          "bindingDigest",
+          "runnerProtocolVersion",
+          "labOnly"
+        ],
+        "title": "MaterializationReadyDto",
+        "type": "object"
+      },
+      "MaterializationState": {
+        "enum": [
+          "PROVISIONING",
+          "READY",
+          "RELEASING",
+          "RELEASED",
+          "FINALIZING",
+          "FINALIZED",
+          "CANCELING",
+          "CANCELED",
+          "TIMED_OUT",
+          "FAILED",
+          "QUARANTINED"
+        ],
+        "title": "MaterializationState",
+        "type": "string"
+      },
+      "MaterializationStatusDto": {
+        "additionalProperties": false,
+        "properties": {
+          "bindingDigest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Bindingdigest",
+            "type": "string"
+          },
+          "deadlineAt": {
+            "format": "date-time",
+            "title": "Deadlineat",
+            "type": "string"
+          },
+          "denial": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CanonicalDenialDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "environmentId": {
+            "minLength": 1,
+            "title": "Environmentid",
+            "type": "string"
+          },
+          "evidenceRefs": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EvidenceRefDto"
+            },
+            "title": "Evidencerefs",
+            "type": "array"
+          },
+          "executionId": {
+            "minLength": 1,
+            "title": "Executionid",
+            "type": "string"
+          },
+          "generation": {
+            "minimum": 1.0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "materializationId": {
+            "minLength": 1,
+            "title": "Materializationid",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "default": 1,
+            "title": "Schemaversion",
+            "type": "integer"
+          },
+          "state": {
+            "$ref": "#/components/schemas/MaterializationState"
+          }
+        },
+        "required": [
+          "materializationId",
+          "environmentId",
+          "executionId",
+          "state",
+          "revision",
+          "generation",
+          "bindingDigest",
+          "deadlineAt"
+        ],
+        "title": "MaterializationStatusDto",
+        "type": "object"
+      },
+      "PreviewPublishedDto": {
+        "additionalProperties": false,
+        "properties": {
+          "accessRef": {
+            "minLength": 1,
+            "title": "Accessref",
+            "type": "string"
+          },
+          "expiresAt": {
+            "format": "date-time",
+            "title": "Expiresat",
+            "type": "string"
+          },
+          "kind": {
+            "const": "PUBLISHED",
+            "default": "PUBLISHED",
+            "title": "Kind",
+            "type": "string"
+          },
+          "previewId": {
+            "minLength": 1,
+            "title": "Previewid",
+            "type": "string"
+          },
+          "revision": {
+            "minimum": 1.0,
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "previewId",
+          "accessRef",
+          "expiresAt",
+          "revision"
+        ],
+        "title": "PreviewPublishedDto",
+        "type": "object"
+      },
+      "Problem": {
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          },
+          "requestId": {
+            "title": "Requestid",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Type"
+          }
+        },
+        "required": [
+          "title",
+          "status",
+          "requestId"
+        ],
+        "title": "Problem",
+        "type": "object"
+      },
+      "ProvisionMaterializationRequestDto": {
+        "additionalProperties": false,
+        "properties": {
+          "bindingDigest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Bindingdigest",
+            "type": "string"
+          },
+          "boundaries": {
+            "$ref": "#/components/schemas/BoundaryManifestDto"
+          },
+          "deadlineAt": {
+            "format": "date-time",
+            "title": "Deadlineat",
+            "type": "string"
+          },
+          "environment": {
+            "$ref": "#/components/schemas/SandboxEnvironmentRefDto"
+          },
+          "execution": {
+            "$ref": "#/components/schemas/ExecutionRefDto"
+          },
+          "policyVersions": {
+            "items": {
+              "$ref": "#/components/schemas/VersionedProfileRefDto"
+            },
+            "title": "Policyversions",
+            "type": "array"
+          },
+          "resourceProfile": {
+            "$ref": "#/components/schemas/ResourceProfileRefDto"
+          },
+          "runnerManifest": {
+            "$ref": "#/components/schemas/RunnerManifestRefDto"
+          },
+          "runtimeProfile": {
+            "$ref": "#/components/schemas/VersionedProfileRefDto"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "default": 1,
+            "title": "Schemaversion",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "execution",
+          "environment",
+          "bindingDigest",
+          "deadlineAt",
+          "runtimeProfile",
+          "resourceProfile",
+          "runnerManifest",
+          "boundaries",
+          "policyVersions"
+        ],
+        "title": "ProvisionMaterializationRequestDto",
+        "type": "object"
+      },
+      "PublishPreviewRequestDto": {
+        "additionalProperties": false,
+        "properties": {
+          "expiresAt": {
+            "format": "date-time",
+            "title": "Expiresat",
+            "type": "string"
+          },
+          "fencingToken": {
+            "minLength": 1,
+            "title": "Fencingtoken",
+            "type": "string"
+          },
+          "generation": {
+            "minimum": 1.0,
+            "title": "Generation",
+            "type": "integer"
+          },
+          "leaseId": {
+            "minLength": 1,
+            "title": "Leaseid",
+            "type": "string"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/EvidenceRefDto"
+          }
+        },
+        "required": [
+          "leaseId",
+          "generation",
+          "fencingToken",
+          "metadata",
+          "expiresAt"
+        ],
+        "title": "PublishPreviewRequestDto",
+        "type": "object"
+      },
+      "ReconcileLeaseRequestDto": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentId": {
+            "minLength": 1,
+            "title": "Environmentid",
+            "type": "string"
+          },
+          "executionId": {
+            "anyOf": [
+              {
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Executionid"
+          },
+          "observedAt": {
+            "format": "date-time",
+            "title": "Observedat",
+            "type": "string"
+          }
+        },
+        "required": [
+          "environmentId",
+          "observedAt"
+        ],
+        "title": "ReconcileLeaseRequestDto",
+        "type": "object"
+      },
+      "ReconciliationReceiptDto": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentId": {
+            "minLength": 1,
+            "title": "Environmentid",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LeaseReconciliationItemDto"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "observedAt": {
+            "format": "date-time",
+            "title": "Observedat",
+            "type": "string"
+          },
+          "reconciledCount": {
+            "minimum": 0.0,
+            "title": "Reconciledcount",
+            "type": "integer"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "default": 1,
+            "title": "Schemaversion",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "environmentId",
+          "observedAt",
+          "items",
+          "reconciledCount"
+        ],
+        "title": "ReconciliationReceiptDto",
+        "type": "object"
+      },
+      "RepositoryAccessMode": {
+        "enum": [
+          "READ_WRITE_WORKTREE"
+        ],
+        "title": "RepositoryAccessMode",
+        "type": "string"
+      },
+      "RepositoryCheckoutDto": {
+        "additionalProperties": false,
+        "properties": {
+          "accessMode": {
+            "$ref": "#/components/schemas/RepositoryAccessMode",
+            "default": "READ_WRITE_WORKTREE"
+          },
+          "baseCommitSha": {
+            "pattern": "^[0-9a-f]{40}$",
+            "title": "Basecommitsha",
+            "type": "string"
+          },
+          "branchName": {
+            "minLength": 1,
+            "title": "Branchname",
+            "type": "string"
+          },
+          "repositoryId": {
+            "minLength": 1,
+            "title": "Repositoryid",
+            "type": "string"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "default": 1,
+            "title": "Schemaversion",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "repositoryId",
+          "branchName",
+          "baseCommitSha"
+        ],
+        "title": "RepositoryCheckoutDto",
+        "type": "object"
+      },
+      "ResourceProfileRefDto": {
+        "additionalProperties": false,
+        "properties": {
+          "digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Digest",
+            "type": "string"
+          },
+          "id": {
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "default": 1,
+            "title": "Schemaversion",
+            "type": "integer"
+          },
+          "unitWeight": {
+            "minimum": 1.0,
+            "title": "Unitweight",
+            "type": "integer"
+          },
+          "version": {
+            "minLength": 1,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "digest",
+          "unitWeight"
+        ],
+        "title": "ResourceProfileRefDto",
+        "type": "object"
+      },
+      "RunnerManifestRefDto": {
+        "additionalProperties": false,
+        "properties": {
+          "adapterVersion": {
+            "minLength": 1,
+            "title": "Adapterversion",
+            "type": "string"
+          },
+          "bundleDigest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Bundledigest",
+            "type": "string"
+          },
+          "imageDigest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Imagedigest",
+            "type": "string"
+          },
+          "protocolVersion": {
+            "minLength": 1,
+            "title": "Protocolversion",
+            "type": "string"
+          },
+          "runtimeEngineId": {
+            "minLength": 1,
+            "title": "Runtimeengineid",
+            "type": "string"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "default": 1,
+            "title": "Schemaversion",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "imageDigest",
+          "protocolVersion",
+          "runtimeEngineId",
+          "adapterVersion",
+          "bundleDigest"
+        ],
+        "title": "RunnerManifestRefDto",
+        "type": "object"
+      },
+      "SandboxEnvironmentRefDto": {
+        "additionalProperties": false,
+        "properties": {
+          "environmentId": {
+            "minLength": 1,
+            "title": "Environmentid",
+            "type": "string"
+          },
+          "requirementId": {
+            "minLength": 1,
+            "title": "Requirementid",
+            "type": "string"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "default": 1,
+            "title": "Schemaversion",
+            "type": "integer"
+          },
+          "workspaceId": {
+            "minLength": 1,
+            "title": "Workspaceid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "environmentId",
+          "workspaceId",
+          "requirementId"
+        ],
+        "title": "SandboxEnvironmentRefDto",
+        "type": "object"
+      },
+      "SandboxProblemDto": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "failureDimension": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failuredimension"
+          },
+          "requestId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requestid"
+          },
+          "retryable": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retryable"
+          },
+          "revision": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Revision"
+          },
+          "status": {
+            "title": "Status",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "status"
+        ],
+        "title": "SandboxProblemDto",
+        "type": "object"
+      },
+      "VersionedProfileRefDto": {
+        "additionalProperties": false,
+        "properties": {
+          "digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Digest",
+            "type": "string"
+          },
+          "id": {
+            "minLength": 1,
+            "title": "Id",
+            "type": "string"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "default": 1,
+            "title": "Schemaversion",
+            "type": "integer"
+          },
+          "version": {
+            "minLength": 1,
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version",
+          "digest"
+        ],
+        "title": "VersionedProfileRefDto",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "WorkloadBearer": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "Private workload-to-workload Sandbox Controller API.\n\nJSON uses camelCase. Mutations require Idempotency-Key; current-materialization\nmutations also require a strong If-Match entity tag. Errors use RFC 9457 Problem\nDetails. This API is not mounted in the browser Control Plane application.\n",
+    "title": "engineering-platform-sandbox-controller",
+    "version": "0.9.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/v1/internal/sandbox/executions/{execution_id}/cancel": {
+      "post": {
+        "operationId": "sandbox_cancel_execution",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "execution_id",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Execution Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CancelExecutionRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleReceiptDto"
+                }
+              }
+            },
+            "description": "Success",
+            "headers": {
+              "ETag": {
+                "description": "Strong materialization or reconciliation entity tag",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Service unavailable"
+          }
+        },
+        "security": [
+          {
+            "WorkloadBearer": []
+          }
+        ],
+        "summary": "Cancel Execution",
+        "tags": [
+          "sandbox-controller"
+        ]
+      }
+    },
+    "/api/v1/internal/sandbox/leases/reconcile": {
+      "post": {
+        "operationId": "sandbox_reconcile_lease",
+        "parameters": [
+          {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconcileLeaseRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReconciliationReceiptDto"
+                }
+              }
+            },
+            "description": "Success",
+            "headers": {
+              "ETag": {
+                "description": "Strong materialization or reconciliation entity tag",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Service unavailable"
+          }
+        },
+        "security": [
+          {
+            "WorkloadBearer": []
+          }
+        ],
+        "summary": "Reconcile Lease",
+        "tags": [
+          "sandbox-controller"
+        ]
+      }
+    },
+    "/api/v1/internal/sandbox/materializations": {
+      "post": {
+        "operationId": "sandbox_provision_materialization",
+        "parameters": [
+          {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProvisionMaterializationRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaterializationReadyDto"
+                }
+              }
+            },
+            "description": "Created",
+            "headers": {
+              "ETag": {
+                "description": "Strong materialization or reconciliation entity tag",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Service unavailable"
+          }
+        },
+        "security": [
+          {
+            "WorkloadBearer": []
+          }
+        ],
+        "summary": "Provision Materialization",
+        "tags": [
+          "sandbox-controller"
+        ]
+      }
+    },
+    "/api/v1/internal/sandbox/materializations/{materialization_id}": {
+      "get": {
+        "operationId": "sandbox_get_materialization_status",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "materialization_id",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Materialization Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaterializationStatusDto"
+                }
+              }
+            },
+            "description": "Success",
+            "headers": {
+              "ETag": {
+                "description": "Strong materialization or reconciliation entity tag",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Service unavailable"
+          }
+        },
+        "security": [
+          {
+            "WorkloadBearer": []
+          }
+        ],
+        "summary": "Get Materialization Status",
+        "tags": [
+          "sandbox-controller"
+        ]
+      }
+    },
+    "/api/v1/internal/sandbox/materializations/{materialization_id}/checkpoint-release": {
+      "post": {
+        "operationId": "sandbox_checkpoint_and_release",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "materialization_id",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Materialization Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Strong entity tag in the form \"v<positive-version>\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "description": "Strong entity tag in the form \"v<positive-version>\"",
+              "examples": [
+                "\"v1\""
+              ],
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvidenceCleanupRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleReceiptDto"
+                }
+              }
+            },
+            "description": "Success",
+            "headers": {
+              "ETag": {
+                "description": "Strong materialization or reconciliation entity tag",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Service unavailable"
+          }
+        },
+        "security": [
+          {
+            "WorkloadBearer": []
+          }
+        ],
+        "summary": "Checkpoint And Release",
+        "tags": [
+          "sandbox-controller"
+        ]
+      }
+    },
+    "/api/v1/internal/sandbox/materializations/{materialization_id}/finalize": {
+      "post": {
+        "operationId": "sandbox_finalize_execution",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "materialization_id",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Materialization Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Strong entity tag in the form \"v<positive-version>\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "description": "Strong entity tag in the form \"v<positive-version>\"",
+              "examples": [
+                "\"v1\""
+              ],
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvidenceCleanupRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleReceiptDto"
+                }
+              }
+            },
+            "description": "Success",
+            "headers": {
+              "ETag": {
+                "description": "Strong materialization or reconciliation entity tag",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Service unavailable"
+          }
+        },
+        "security": [
+          {
+            "WorkloadBearer": []
+          }
+        ],
+        "summary": "Finalize Execution",
+        "tags": [
+          "sandbox-controller"
+        ]
+      }
+    },
+    "/api/v1/internal/sandbox/materializations/{materialization_id}/handoff": {
+      "post": {
+        "operationId": "sandbox_handoff_to_child",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "materialization_id",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Materialization Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Strong entity tag in the form \"v<positive-version>\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "description": "Strong entity tag in the form \"v<positive-version>\"",
+              "examples": [
+                "\"v1\""
+              ],
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HandoffToChildRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LifecycleReceiptDto"
+                }
+              }
+            },
+            "description": "Success",
+            "headers": {
+              "ETag": {
+                "description": "Strong materialization or reconciliation entity tag",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Service unavailable"
+          }
+        },
+        "security": [
+          {
+            "WorkloadBearer": []
+          }
+        ],
+        "summary": "Handoff To Child",
+        "tags": [
+          "sandbox-controller"
+        ]
+      }
+    },
+    "/api/v1/internal/sandbox/materializations/{materialization_id}/preview": {
+      "post": {
+        "operationId": "sandbox_publish_preview",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "materialization_id",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Materialization Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Strong entity tag in the form \"v<positive-version>\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "description": "Strong entity tag in the form \"v<positive-version>\"",
+              "examples": [
+                "\"v1\""
+              ],
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublishPreviewRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreviewPublishedDto"
+                }
+              }
+            },
+            "description": "Created",
+            "headers": {
+              "ETag": {
+                "description": "Strong materialization or reconciliation entity tag",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SandboxProblemDto"
+                }
+              }
+            },
+            "description": "Service unavailable"
+          }
+        },
+        "security": [
+          {
+            "WorkloadBearer": []
+          }
+        ],
+        "summary": "Publish Preview",
+        "tags": [
+          "sandbox-controller"
+        ]
+      }
+    }
+  }
+}

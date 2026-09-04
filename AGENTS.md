@@ -38,9 +38,11 @@ UPDATE/DELETE；Alembic 用 owner 账号执行 DDL，应用运行时只用受限
 
 ## OpenAPI Artifact 发布
 
-`openapi.json` 是入库的唯一导出，CI 校验与代码一致。正式发布打 `api-vX.Y.Z` tag，
-CI 将构件与 SHA-256 附到 GitHub Release；breaking 变更必须升 major（前端仓
-`openapi:check` 以 git 基线强制）。
+入库并由 CI 确定性校验的契约有两个：`openapi.json` 是公开浏览器 API；
+`sandbox-openapi.json` 是私有 workload Controller API，不挂载到浏览器 Control Plane。
+公开契约发布仍由 `api-vX.Y.Z` tag 触发，CI 将 `openapi.json` 与 SHA-256 附到
+GitHub Release；breaking 变更必须升 major（前端仓 `openapi:check` 以 git 基线强制）。
+私有契约入库与校验不代表部署、物理隔离或发布验收通过。
 
 ## 容器镜像发布
 

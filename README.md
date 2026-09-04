@@ -67,6 +67,10 @@ uv run pytest                  # 无 DB 时集成测试自动 skip（勿据此�
 | push 到 main | 容器镜像 `ghcr.io/unif-code/engineering-platform-backend:sha-<短哈希>`（digest 见 CI job summary） | gitops 仓按 **digest** 引用，部署进 k8s |
 | 打 `api-vX.Y.Z` tag | `openapi.json` + SHA-256 附到 GitHub Release | 前端仓生成类型化 client（breaking 变更必须升 major） |
 
+`openapi.json` 是公开浏览器 API 契约；`sandbox-openapi.json` 是独立私有 workload
+Controller 契约。两者均入库并由 CI 确定性校验，私有契约不挂载到浏览器 Control Plane，
+也不改变上述 tag 发布附件。私有契约的入库与校验不代表部署、物理隔离或发布验收通过。
+
 ## 运行契约（部署侧）
 
 - 端口 `8000`；liveness `/healthz`，readiness `/readyz`（DB 不可达返回 503 `application/problem+json`）。

@@ -1,0 +1,108 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from uuid import uuid4
+
+import pytest
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import Engine, create_engine, event, text
+from sqlalchemy.engine import URL
+
+from control_plane.app.shared.db.settings import DbSettings
+from tests.integration_database import parse_database_url
+from tests.integration_database import required_engine as _required_engine
+
+
+@pytest.fixture(scope="session")
+def agent_run_owner_engine() -> Iterator[Engine]:
+    engine = _required_engine(
+        parse_database_url(
+            DbSettings().migration_database_url,
+            setting_name="MIGRATION_DATABASE_URL",
+        ),
+        role="platform_owner",
+    )
+    yield engine
+    engine.dispose()
+
+
+@contextmanager
+def _temporary_agent_run_role_engine(owner_engine: Engine) -> Iterator[Engine]:
+    login_role = f"test_agent_run_login_{uuid4().hex}"
+    quoted_login_role = f'"{login_role}"'
+    test_password = "test-only-agent-run-password"
+    runtime_url = owner_engine.url.set(username=login_role, password=test_password)
+    engine = create_engine(runtime_url, pool_pre_ping=True)
+
+    @event.listens_for(engine, "checkout")
+    def _assume_privilege_role(dbapi_connection: object, *_args: object) -> None:
+        cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
+        try:
+            cursor.execute("SET ROLE agent_run_rw")
+        finally:
+            cursor.close()
+
+    try:
+        with owner_engine.begin() as db:
+            db.execute(text(f"CREATE ROLE {quoted_login_role} LOGIN PASSWORD '{test_password}'"))
+            db.execute(text(f"GRANT agent_run_rw TO {quoted_login_role}"))
+        with engine.connect() as db:
+            current_role, session_role = db.execute(text("SELECT current_user, session_user")).one()
+        assert current_role == "agent_run_rw"
+        assert session_role == login_role
+        yield engine
+    finally:
+        engine.dispose()
+        with owner_engine.begin() as db:
+            if db.execute(
+                text("SELECT EXISTS (SELECT FROM pg_roles WHERE rolname=:role_name)"),
+                {"role_name": login_role},
+            ).scalar_one():
+                db.execute(text(f"REVOKE agent_run_rw FROM {quoted_login_role}"))
+                db.execute(text(f"DROP ROLE {quoted_login_role}"))
+
+
+@dataclass(frozen=True, slots=True)
+class IsolatedAgentRunDatabase:
+    owner: Engine
+    runtime: Engine
+    url: URL = field(repr=False)
+
+
+@pytest.fixture
+def isolated_agent_run_database(
+    agent_run_owner_engine: Engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[IsolatedAgentRunDatabase]:
+    owner_url = agent_run_owner_engine.url
+    database_name = f"test_agent_run_{uuid4().hex}"
+    maintenance = create_engine(owner_url.set(database="postgres"), isolation_level="AUTOCOMMIT")
+    with maintenance.connect() as db:
+        db.execute(text(f'CREATE DATABASE "{database_name}"'))
+    target_url = owner_url.set(database=database_name)
+    monkeypatch.setenv(
+        "MIGRATION_DATABASE_URL",
+        target_url.render_as_string(hide_password=False),
+    )
+    command.upgrade(Config("alembic.ini"), "heads")
+    isolated_owner = create_engine(target_url, pool_pre_ping=True)
+    try:
+        with _temporary_agent_run_role_engine(isolated_owner) as runtime:
+            yield IsolatedAgentRunDatabase(
+                owner=isolated_owner,
+                runtime=runtime,
+                url=target_url,
+            )
+    finally:
+        isolated_owner.dispose()
+        with maintenance.connect() as db:
+            db.execute(text(f'DROP DATABASE "{database_name}"'))
+        maintenance.dispose()
+
+
+@pytest.fixture
+def isolated_agent_run_rw_engine(
+    isolated_agent_run_database: IsolatedAgentRunDatabase,
+) -> Engine:
+    return isolated_agent_run_database.runtime

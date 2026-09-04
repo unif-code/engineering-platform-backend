@@ -11,14 +11,15 @@ from control_plane.app.bootstrap.source_control_connector import (
     create_source_control_connector_app,
 )
 from scripts import export_openapi
-from scripts.export_openapi import render
+from scripts.export_openapi import render, render_sandbox
 
 
 def test_render_is_deterministic_and_versioned() -> None:
     first, second = render(), render()
     assert first == second
     assert f'"version": "{__version__}"' in first
-    assert json.loads(first)["info"]["version"] == "0.8.0"
+    assert json.loads(first)["info"]["version"] == "0.9.0"
+    assert json.loads(render_sandbox())["info"]["version"] == "0.9.0"
 
 
 def test_render_contains_the_typed_requirement_contract() -> None:
@@ -116,11 +117,14 @@ def test_check_mode_passes_after_export(
     before = committed.read_bytes()
 
     artifact = tmp_path / "openapi.json"
+    sandbox_artifact = tmp_path / "sandbox-openapi.json"
     monkeypatch.setattr(export_openapi, "OUT", artifact)
+    monkeypatch.setattr(export_openapi, "SANDBOX_OUT", sandbox_artifact)
 
     monkeypatch.setattr(sys, "argv", ["export_openapi.py"])
     assert export_openapi.main() == 0
     assert artifact.read_text(encoding="utf-8") == render()
+    assert sandbox_artifact.read_text(encoding="utf-8") == render_sandbox()
 
     monkeypatch.setattr(sys, "argv", ["export_openapi.py", "--check"])
     assert export_openapi.main() == 0
@@ -142,6 +146,8 @@ def test_check_detects_tampered_artifact(
     artifact.write_text(tampered, encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["export_openapi.py", "--check"])
     monkeypatch.setattr(export_openapi, "OUT", artifact)
+    monkeypatch.setattr(export_openapi, "SANDBOX_OUT", tmp_path / "sandbox-openapi.json")
+    (tmp_path / "sandbox-openapi.json").write_text(render_sandbox(), encoding="utf-8")
     assert export_openapi.main() == 1
     assert "不一致" in capsys.readouterr().err
 
@@ -162,6 +168,8 @@ def test_check_rejects_semantically_equal_crlf_artifact(
     assert json.loads(artifact.read_bytes()) == json.loads(render())
 
     monkeypatch.setattr(export_openapi, "OUT", artifact)
+    monkeypatch.setattr(export_openapi, "SANDBOX_OUT", tmp_path / "sandbox-openapi.json")
+    (tmp_path / "sandbox-openapi.json").write_text(render_sandbox(), encoding="utf-8")
     monkeypatch.setattr(sys, "argv", ["export_openapi.py", "--check"])
 
     assert export_openapi.main() == 1

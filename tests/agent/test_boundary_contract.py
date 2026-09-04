@@ -9,6 +9,7 @@ import pytest
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import text
 
+from control_plane.app import __version__
 from control_plane.app.bootstrap.app import create_app
 from control_plane.app.modules.agent import accept_workflow_event
 from control_plane.app.modules.agent.domain import AgentAuditAppend, CanonicalEventInput
@@ -59,7 +60,7 @@ def test_domain_dto_annotations_are_platform_or_standard_library_types() -> None
 
 def test_v08_openapi_artifact_is_versioned_and_exposes_only_public_platform_fields() -> None:
     schema = create_app().openapi()
-    assert schema["info"]["version"] == "0.8.0"
+    assert schema["info"]["version"] == __version__
     schemas = schema["components"]["schemas"]
     expected = {
         "AgentAttemptResponseDto": (
