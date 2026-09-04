@@ -1,7 +1,7 @@
 from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -38,6 +38,10 @@ from control_plane.app.modules.source_control import (
 from control_plane.app.modules.source_control.adapters import (
     RequirementFacadeBindingAdapter,
     RequirementFacadeDeliveryAdapter,
+    RequirementFacadeEvidenceAdapter,
+    RequirementFacadeFormalDeliveryAdapter,
+    SqlAlchemySourceControlEvidenceRepository,
+    SqlAlchemySourceControlFormalRepository,
     SqlAlchemySourceControlIntegrationRepository,
     SqlAlchemySourceControlRepository,
 )
@@ -272,6 +276,16 @@ def _source_control_dependencies(
             requirement_dependencies,
         ),
         gitlab_merge_requests=gitlab,
+        evidence_repository_factory=SqlAlchemySourceControlEvidenceRepository,
+        formal_repository_factory=SqlAlchemySourceControlFormalRepository,
+        requirement_evidence=RequirementFacadeEvidenceAdapter(
+            requirement.runtime, requirement_dependencies
+        ),
+        requirement_formal_delivery=RequirementFacadeFormalDeliveryAdapter(
+            requirement.runtime, requirement_dependencies
+        ),
+        gitlab_formal_merge_requests=cast(Any, gitlab),
+        formal_review_routing=cast(Any, object()),
     )
 
 
@@ -437,8 +451,8 @@ def test_human_integration_mr_flow_converges_through_only_public_batch_facades(
     )
     _register_repository(isolated_source_control_database, dependencies)
 
-    binding_relay = relay_due_source_control_requests(limit=2, dependencies=dependencies)
-    binding_process = process_due_source_control_inboxes(limit=3, dependencies=dependencies)
+    binding_relay = relay_due_source_control_requests(limit=4, dependencies=dependencies)
+    binding_process = process_due_source_control_inboxes(limit=5, dependencies=dependencies)
     _approve_sdd_baseline(
         isolated_requirement_database,
         requirement_id=created.requirement.id,
@@ -476,8 +490,8 @@ def test_human_integration_mr_flow_converges_through_only_public_batch_facades(
     )
     assert requested_mr.status_code == 202, requested_mr.text
 
-    first_relay = relay_due_source_control_requests(limit=2, dependencies=dependencies)
-    first_process = process_due_source_control_inboxes(limit=3, dependencies=dependencies)
+    first_relay = relay_due_source_control_requests(limit=4, dependencies=dependencies)
+    first_process = process_due_source_control_inboxes(limit=5, dependencies=dependencies)
     with isolated_requirement_database.runtime.connect() as db:
         mr_ready = get_requirement(
             db,
@@ -499,8 +513,8 @@ def test_human_integration_mr_flow_converges_through_only_public_batch_facades(
         ),
     )
     assert requested_merge.status_code == 202, requested_merge.text
-    second_relay = relay_due_source_control_requests(limit=2, dependencies=dependencies)
-    second_process = process_due_source_control_inboxes(limit=3, dependencies=dependencies)
+    second_relay = relay_due_source_control_requests(limit=4, dependencies=dependencies)
+    second_process = process_due_source_control_inboxes(limit=5, dependencies=dependencies)
 
     with isolated_requirement_database.runtime.connect() as db:
         converged = get_requirement(
@@ -520,8 +534,8 @@ def test_human_integration_mr_flow_converges_through_only_public_batch_facades(
         ),
     )
     assert same_key_replay.status_code == 202, same_key_replay.text
-    duplicate_relay = relay_due_source_control_requests(limit=2, dependencies=dependencies)
-    duplicate_process = process_due_source_control_inboxes(limit=3, dependencies=dependencies)
+    duplicate_relay = relay_due_source_control_requests(limit=4, dependencies=dependencies)
+    duplicate_process = process_due_source_control_inboxes(limit=5, dependencies=dependencies)
     with isolated_requirement_database.runtime.connect() as db:
         final = get_requirement(
             db,

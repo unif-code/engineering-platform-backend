@@ -195,7 +195,7 @@ def test_identity_tables_exist(identity_owner_engine: Engine) -> None:
                 )
             ).scalars()
         )
-    assert tables == IDENTITY_TABLES | IDENTITY_CONFIGURATION_TABLES
+    assert tables == IDENTITY_TABLES | IDENTITY_CONFIGURATION_TABLES | {"policy_reauth_consumption"}
 
 
 def test_identity_columns_types_nullability_and_defaults_match_contract(
@@ -275,12 +275,12 @@ def test_current_alembic_heads_are_installed(identity_owner_engine: Engine) -> N
         installed = set(conn.execute(text("SELECT version_num FROM alembic_version")).scalars())
     assert installed == {
         "0003_agent_run_recovery",
-        "0005_req_sdd_human_gate",
+        "0009_req_formal_owner_denial",
         "0008_audit_requirement_grant",
-        "0010_identity_policy_reauth",
-        "0008_auth_v05_routes",
+        "0011_identity_reauth_consumption",
+        "0009_auth_v06_routes",
         "0003_event_acceptance_receipt",
-        "0010_sc_agent_delivery",
+        "0011_sc_delivery_join",
     }
 
 

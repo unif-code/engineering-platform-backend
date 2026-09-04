@@ -53,12 +53,16 @@ def discover_create_candidate(
         raise ReconciliationProviderUnknown
     try:
         project = gitlab.get_project_delivery_profile(context.profile)
-        candidates = gitlab.list_merge_requests(
-            context.profile,
-            source_branch=context.source_branch,
-            target_branch=TARGET_BRANCH,
-            state="all",
-        )
+        candidates = [
+            candidate
+            for candidate in gitlab.list_merge_requests(
+                context.profile,
+                source_branch=context.source_branch,
+                target_branch=TARGET_BRANCH,
+                state="all",
+            )
+            if (candidate.project_id, candidate.iid) not in context.bound_merge_requests
+        ]
     except GitLabProjectPolicyUnsupported:
         raise ReconciliationProviderBlocked(
             SourceControlReason.PROJECT_PROFILE_UNSUPPORTED

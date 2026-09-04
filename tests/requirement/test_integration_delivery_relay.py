@@ -553,6 +553,77 @@ def test_callback_idempotency_conflicts_on_same_key_with_different_binding(
             )
 
 
+def test_no_delivery_commit_returns_create_request_to_retryable_implementing_state(
+    isolated_requirement_database: IsolatedRequirementDatabase,
+) -> None:
+    requested = _requested_mr(
+        isolated_requirement_database,
+        key_suffix="same-head-no-delivery-commit",
+    )
+    dependencies = _gate_dependencies()
+    callback_key = "inbox:same-head:no-delivery-commit"
+    correlation_id = "source-control:inbox:same-head:no-delivery-commit"
+
+    with isolated_requirement_database.runtime.begin() as db:
+        released = record_integration_delivery_blocked(
+            db,
+            work_item_id=requested.work_item.id,
+            binding_id=None,
+            reason_code=IntegrationDeliveryBlockedReason.NO_DELIVERY_COMMIT,
+            expected_revision=requested.work_item.revision,
+            actor=SYSTEM_ACTOR,
+            idempotency_key=callback_key,
+            correlation_id=correlation_id,
+            dependencies=dependencies,
+        )
+    with isolated_requirement_database.runtime.begin() as db:
+        replay = record_integration_delivery_blocked(
+            db,
+            work_item_id=requested.work_item.id,
+            binding_id=None,
+            reason_code=IntegrationDeliveryBlockedReason.NO_DELIVERY_COMMIT,
+            expected_revision=requested.work_item.revision,
+            actor=SYSTEM_ACTOR,
+            idempotency_key=callback_key,
+            correlation_id="source-control:inbox:same-head:replay",
+            dependencies=dependencies,
+        )
+    with isolated_requirement_database.runtime.begin() as db:
+        retried = request_integration_merge_request(
+            db,
+            requirement_id=released.requirement.id,
+            work_item_id=released.work_item.id,
+            expected_revision=released.requirement.revision,
+            actor=Actor("employee-1"),
+            idempotency_key="request-mr-after-new-head",
+            dependencies=dependencies,
+        )
+
+    assert replay == released
+    assert released.requirement.state is RequirementState.IN_PROGRESS
+    assert released.work_item.state is WorkItemState.IN_PROGRESS
+    assert released.work_item.integration_delivery_state is IntegrationDeliveryState.IMPLEMENTING
+    assert released.work_item.integration_merge_request_binding_id is None
+    assert released.work_item.integration_blocked_reason_code is None
+    assert retried.work_item.integration_delivery_state is IntegrationDeliveryState.MR_PENDING
+    with isolated_requirement_database.owner.connect() as db:
+        events = db.execute(
+            text(
+                "SELECT correlation_id, reason FROM audit.audit_event "
+                "WHERE target_id=:work_item_id "
+                "AND action='requirement.integration_delivery.blocked'"
+            ),
+            {"work_item_id": requested.work_item.id},
+        ).all()
+    assert [tuple(event) for event in events] == [
+        (
+            correlation_id,
+            "bindingId=none; reasonCode=NO_DELIVERY_COMMIT; "
+            f"revision={released.work_item.revision}",
+        )
+    ]
+
+
 def test_old_blocked_callback_cannot_regress_a_newer_mr_ready_result(
     isolated_requirement_database: IsolatedRequirementDatabase,
 ) -> None:

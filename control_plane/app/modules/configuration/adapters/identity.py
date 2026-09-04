@@ -1,8 +1,14 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Any
 
-from sqlalchemy import Connection
+from sqlalchemy import Connection, Engine
 
+from control_plane.app.modules.configuration.application.dependencies import (
+    ConfigurationDependencies,
+)
+from control_plane.app.modules.configuration.application.lifecycle import PolicyLifecycle
 from control_plane.app.modules.configuration.domain import (
     Draft,
     PolicyKey,
@@ -13,6 +19,7 @@ from control_plane.app.modules.configuration.domain import (
     ValidationIssue,
 )
 from control_plane.app.modules.identity import (
+    IdentityPolicyCommandRuntime,
     OwnedPolicySnapshotUnavailable,
     active_policy_archive_settings,
     active_policy_snapshot,
@@ -32,6 +39,7 @@ from control_plane.app.modules.identity import (
     update_policy_draft,
     validate_policy_candidate,
 )
+from control_plane.app.shared.idempotency import IdempotentResponse
 
 
 class IdentityPolicyOwner:
@@ -253,3 +261,32 @@ class IdentityPolicyOwner:
 
     def archive_draft(self, **values: Any) -> bool:
         return archive_policy_draft(self.db, **values)
+
+
+class IdentityPolicyRuntime:
+    def __init__(
+        self,
+        engine: Engine,
+        dependencies: ConfigurationDependencies,
+        commands: IdentityPolicyCommandRuntime | None = None,
+    ) -> None:
+        self.engine, self.dependencies, self.commands = engine, dependencies, commands
+
+    @contextmanager
+    def transaction(self) -> Iterator[PolicyLifecycle]:
+        with self.engine.begin() as db:
+            yield PolicyLifecycle(db, IdentityPolicyOwner(db), self.dependencies)
+
+    def archive(self, *, now: datetime) -> int:
+        with self.transaction() as lifecycle:
+            return lifecycle.archive(now=now, namespace="identity")
+
+    def publish(self, *, raw_session: str, **values: Any) -> IdempotentResponse:
+        if self.commands is None:
+            raise PolicySnapshotUnavailable("Identity commands unavailable")
+        return self.commands.publish(**values)
+
+    def rollback(self, *, raw_session: str, **values: Any) -> IdempotentResponse:
+        if self.commands is None:
+            raise PolicySnapshotUnavailable("Identity commands unavailable")
+        return self.commands.rollback(**values)

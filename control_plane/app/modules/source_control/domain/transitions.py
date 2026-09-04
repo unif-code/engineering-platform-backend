@@ -41,6 +41,18 @@ class RequirementCallbackUnavailable(SourceControlError):
     pass
 
 
+class EvidenceMessageConflict(SourceControlError):
+    pass
+
+
+class EvidenceUnavailable(SourceControlError):
+    pass
+
+
+class EvidenceStale(SourceControlError):
+    pass
+
+
 class WebhookSignatureInvalid(SourceControlError):
     pass
 

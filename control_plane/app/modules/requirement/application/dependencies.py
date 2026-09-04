@@ -5,8 +5,11 @@ from control_plane.app.modules.requirement.ports import (
     ArtifactPort,
     AssignmentGuardPort,
     ClockPort,
+    DeliveryGatePolicyPort,
+    DeliveryReviewerGuardPort,
     GatePolicyPort,
     GateReviewerGuardPort,
+    IntegrationBaselineEvidencePort,
     RandomPort,
     RequirementRepositoryFactory,
     RouteSnapshotPort,
@@ -27,3 +30,6 @@ class RequirementDependencies:
     artifacts: ArtifactPort | None = None
     gate_policies: GatePolicyPort | None = None
     reviewer_guard: GateReviewerGuardPort | None = None
+    integration_evidence: IntegrationBaselineEvidencePort | None = None
+    delivery_gate_policies: DeliveryGatePolicyPort | None = None
+    delivery_reviewer_guard: DeliveryReviewerGuardPort | None = None

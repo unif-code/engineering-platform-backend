@@ -19,6 +19,9 @@ from control_plane.app.modules.organization.application.queries import get_tree 
 from control_plane.app.modules.organization.application.queries import (
     is_effective_leader as _is_effective_leader,
 )
+from control_plane.app.modules.organization.application.queries import (
+    reporting_context as _reporting_context,
+)
 from control_plane.app.modules.organization.domain import (
     AccountRef,
     CorruptStructure,
@@ -26,6 +29,18 @@ from control_plane.app.modules.organization.domain import (
     OrgKind,
     OrgTreeDto,
 )
+from control_plane.app.modules.organization.domain.reporting import ReportingContext
+
+
+def reporting_context(
+    db: Connection,
+    *,
+    account_id: str,
+    dependencies: OrganizationDependencies,
+) -> ReportingContext:
+    return _reporting_context(
+        dependencies.repository_factory(db), account_id=account_id, dependencies=dependencies
+    )
 
 
 def set_superior(
@@ -82,6 +97,8 @@ def is_effective_leader(
 
 
 __all__ = [
+    "ReportingContext",
+    "reporting_context",
     "AccountRef",
     "CorruptStructure",
     "InvalidParticipant",

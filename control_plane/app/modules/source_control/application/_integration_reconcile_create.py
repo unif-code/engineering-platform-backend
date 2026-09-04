@@ -58,6 +58,7 @@ def reconcile_create_effect(
                 branch_binding_id=local.branch_binding_id,
                 source_branch=local.source_branch,
                 profile=local.profile,
+                bound_merge_requests=local.bound_merge_requests,
             )
             iid = retry_create_merge_request(local, dependencies=dependencies)
             origin = MergeRequestCreationOrigin.PLATFORM_CREATED

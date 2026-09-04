@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Any, Literal
 
 from control_plane.app.modules.identity.application.accounts import (
@@ -36,6 +36,7 @@ from control_plane.app.modules.identity.domain.errors import (
     TotpChallengeFailed,
 )
 from control_plane.app.modules.identity.domain.models import Principal
+from control_plane.app.modules.identity.domain.policy_reauthentication import POLICY_REAUTH_TTL
 from control_plane.app.modules.identity.ports.repository import IdentityRepository
 from control_plane.app.shared.security import unseal, verify_totp
 
@@ -53,7 +54,7 @@ _RECOVERY_DENIAL_CODES = frozenset(
         "TARGET_STILL_USABLE",
     }
 )
-_CHALLENGE_TTL = timedelta(minutes=5)
+_CHALLENGE_TTL = POLICY_REAUTH_TTL
 SuperAdminOperation = Literal["ADD", "REMOVE", "POLICY_PUBLISH", "POLICY_ROLLBACK"]
 
 

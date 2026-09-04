@@ -115,6 +115,20 @@ class SourceControlIntegrationRepository(Protocol):
 
     def merge_request_binding_by_work_item(self, work_item_id: str) -> Any: ...
 
+    def merge_request_binding_by_effect(self, effect_id: str) -> Any: ...
+
+    def integration_merge_request_bindings_by_work_item(
+        self,
+        work_item_id: str,
+    ) -> list[Any]: ...
+
+    def supersede_current_integration_binding(
+        self,
+        work_item_id: str,
+        *,
+        now: datetime,
+    ) -> Any: ...
+
     def append_merge_request_observation(self, **values: Any) -> Any: ...
 
     def latest_merge_request_observation(self, binding_id: str) -> Any: ...

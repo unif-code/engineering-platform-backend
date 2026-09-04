@@ -4,6 +4,8 @@ from typing import Any
 
 from sqlalchemy import Connection, text
 
+from control_plane.app.modules.requirement.domain import FormalDeliveryConflict
+
 
 class SqlAlchemyRequirementRepository:
     def __init__(self, db: Connection) -> None:
@@ -119,13 +121,15 @@ class SqlAlchemyRequirementRepository:
                 text(
                     "INSERT INTO requirement.requirement "
                     "(id, workspace_id, type, title, description, acceptance_criteria, "
+                    "acceptance_criteria_version, acceptance_criteria_hash, "
                     "created_by, initial_repository_id, route_snapshot_version, "
                     "route_snapshot_hash, route_snapshot, state, record_state, "
                     "requirement_version, "
                     "required_work_item_set_version, required_work_item_set_hash, revision, "
                     "created_at, updated_at) VALUES "
                     "(:id, :workspace_id, :type, :title, :description, "
-                    "CAST(:acceptance_criteria AS JSONB), :created_by, :initial_repository_id, "
+                    "CAST(:acceptance_criteria AS JSONB), :acceptance_criteria_version, "
+                    ":acceptance_criteria_hash, :created_by, :initial_repository_id, "
                     ":route_snapshot_version, :route_snapshot_hash, "
                     "CAST(:route_snapshot AS JSONB), :state, :record_state, "
                     ":requirement_version, :required_work_item_set_version, "
@@ -148,6 +152,618 @@ class SqlAlchemyRequirementRepository:
             self.db.execute(
                 text(f"SELECT * FROM requirement.requirement WHERE id=:id{suffix}"),
                 {"id": requirement_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def insert_delivery_snapshot(self, **values: Any) -> Any:
+        parameters = {
+            **values,
+            "work_item_ids": json.dumps(values["work_item_ids"], separators=(",", ":")),
+        }
+        return (
+            self.db.execute(
+                text(
+                    "INSERT INTO requirement.requirement_delivery_snapshot "
+                    "(id, requirement_id, requirement_version, "
+                    "required_work_item_set_version, required_work_item_set_hash, "
+                    "work_item_ids, snapshot_hash, created_by, created_at) VALUES "
+                    "(:id, :requirement_id, :requirement_version, "
+                    ":required_work_item_set_version, :required_work_item_set_hash, "
+                    "CAST(:work_item_ids AS JSONB), :snapshot_hash, :created_by, :now) "
+                    "ON CONFLICT (requirement_id, snapshot_hash) DO NOTHING "
+                    "RETURNING *"
+                ),
+                parameters,
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def delivery_snapshot_by_hash(
+        self,
+        requirement_id: str,
+        snapshot_hash: str,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "SELECT * FROM requirement.requirement_delivery_snapshot "
+                    "WHERE requirement_id=:requirement_id AND snapshot_hash=:snapshot_hash"
+                ),
+                {"requirement_id": requirement_id, "snapshot_hash": snapshot_hash},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def delivery_snapshot_by_id(self, snapshot_id: str) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "SELECT * FROM requirement.requirement_delivery_snapshot WHERE id=:snapshot_id"
+                ),
+                {"snapshot_id": snapshot_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def latest_delivery_snapshot(self, requirement_id: str) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "SELECT * FROM requirement.requirement_delivery_snapshot "
+                    "WHERE requirement_id=:requirement_id "
+                    "ORDER BY created_at DESC, id DESC LIMIT 1"
+                ),
+                {"requirement_id": requirement_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def integration_baseline_selection_by_id(self, selection_id: str) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "SELECT * FROM requirement.integration_baseline_selection "
+                    "WHERE id=:selection_id"
+                ),
+                {"selection_id": selection_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def current_integration_baseline_selection(
+        self,
+        requirement_id: str,
+        *,
+        for_update: bool = False,
+    ) -> Any:
+        suffix = " FOR UPDATE" if for_update else ""
+        return (
+            self.db.execute(
+                text(
+                    "SELECT * FROM requirement.integration_baseline_selection "
+                    "WHERE requirement_id=:requirement_id AND invalidated_at IS NULL"
+                    f"{suffix}"
+                ),
+                {"requirement_id": requirement_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def insert_integration_baseline_selection(self, **values: Any) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "INSERT INTO requirement.integration_baseline_selection "
+                    "(id, requirement_id, delivery_snapshot_id, delivery_snapshot_hash, "
+                    "integration_baseline_id, integration_baseline_hash, "
+                    "evidence_requirement_version, "
+                    "evidence_required_work_item_set_version, "
+                    "evidence_required_work_item_set_hash, requirement_version_before, "
+                    "requirement_version_after, selected_by, selected_at) VALUES "
+                    "(:id, :requirement_id, :delivery_snapshot_id, :delivery_snapshot_hash, "
+                    ":integration_baseline_id, :integration_baseline_hash, "
+                    ":evidence_requirement_version, "
+                    ":evidence_required_work_item_set_version, "
+                    ":evidence_required_work_item_set_hash, :requirement_version_before, "
+                    ":requirement_version_after, :selected_by, :now) RETURNING *"
+                ),
+                values,
+            )
+            .mappings()
+            .one()
+        )
+
+    def apply_integration_baseline_selection(
+        self,
+        requirement_id: str,
+        *,
+        selection_id: str,
+        expected_revision: int,
+        expected_requirement_version: int,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.requirement SET "
+                    "current_integration_baseline_selection_id=:selection_id, "
+                    "current_acceptance_gate_id=NULL, state='AWAITING_ACCEPTANCE', "
+                    "requirement_version=requirement_version + 1, revision=revision + 1, "
+                    "updated_at=:now WHERE id=:requirement_id "
+                    "AND state='VERIFYING' AND revision=:expected_revision "
+                    "AND requirement_version=:expected_requirement_version "
+                    "AND current_integration_baseline_selection_id IS NULL RETURNING *"
+                ),
+                {
+                    "requirement_id": requirement_id,
+                    "selection_id": selection_id,
+                    "expected_revision": expected_revision,
+                    "expected_requirement_version": expected_requirement_version,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def insert_delivery_gate(self, **values: Any) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "INSERT INTO requirement.delivery_gate "
+                    "(id, gate_type, requirement_id, work_item_id, selection_id, "
+                    "requirement_version, acceptance_criteria_version, "
+                    "acceptance_criteria_hash, integration_baseline_id, "
+                    "integration_baseline_hash, formal_merge_request_binding_id, "
+                    "subject_head_sha, policy_code, policy_version, policy_snapshot_hash, "
+                    "state, revision, created_at) VALUES "
+                    "(:id, :gate_type, :requirement_id, :work_item_id, :selection_id, "
+                    ":requirement_version, :acceptance_criteria_version, "
+                    ":acceptance_criteria_hash, :integration_baseline_id, "
+                    ":integration_baseline_hash, :formal_merge_request_binding_id, "
+                    ":subject_head_sha, :policy_code, :policy_version, "
+                    ":policy_snapshot_hash, 'OPEN', 1, :now) RETURNING *"
+                ),
+                values,
+            )
+            .mappings()
+            .one()
+        )
+
+    def delivery_gate_by_id(
+        self,
+        gate_id: str,
+        *,
+        for_update: bool = False,
+    ) -> Any:
+        suffix = " FOR UPDATE" if for_update else ""
+        return (
+            self.db.execute(
+                text(f"SELECT * FROM requirement.delivery_gate WHERE id=:gate_id{suffix}"),
+                {"gate_id": gate_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def insert_delivery_gate_assignment(self, **values: Any) -> Any:
+        parameters = {
+            "revision": 1,
+            **values,
+            "resolution_snapshot": json.dumps(
+                values["resolution_snapshot"],
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        }
+        return (
+            self.db.execute(
+                text(
+                    "INSERT INTO requirement.delivery_gate_assignment "
+                    "(id, gate_id, default_reviewer_id, current_reviewer_id, "
+                    "resolution_snapshot, revision, assigned_at) VALUES "
+                    "(:id, :gate_id, :default_reviewer_id, :current_reviewer_id, "
+                    "CAST(:resolution_snapshot AS JSONB), :revision, :now) RETURNING *"
+                ),
+                parameters,
+            )
+            .mappings()
+            .one()
+        )
+
+    def advance_delivery_gate_assignment(self, gate_id: str, *, expected_revision: int) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.delivery_gate SET revision=revision+1 "
+                    "WHERE id=:gate_id AND revision=:revision AND state='OPEN' RETURNING *"
+                ),
+                {"gate_id": gate_id, "revision": expected_revision},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def supersede_delivery_gate_assignment(self, assignment_id: str, *, now: datetime) -> bool:
+        result = self.db.execute(
+            text(
+                "UPDATE requirement.delivery_gate_assignment SET superseded_at=:now "
+                "WHERE id=:id AND superseded_at IS NULL"
+            ),
+            {"id": assignment_id, "now": now},
+        )
+        return result.rowcount == 1
+
+    def current_delivery_gate_assignment(
+        self,
+        gate_id: str,
+        *,
+        for_update: bool = False,
+    ) -> Any:
+        suffix = " FOR UPDATE" if for_update else ""
+        return (
+            self.db.execute(
+                text(
+                    "SELECT * FROM requirement.delivery_gate_assignment "
+                    "WHERE gate_id=:gate_id AND superseded_at IS NULL"
+                    f"{suffix}"
+                ),
+                {"gate_id": gate_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def set_current_acceptance_gate(
+        self,
+        requirement_id: str,
+        *,
+        selection_id: str,
+        gate_id: str,
+        expected_revision: int,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.requirement SET current_acceptance_gate_id=:gate_id, "
+                    "revision=revision + 1, updated_at=:now WHERE id=:requirement_id "
+                    "AND state='AWAITING_ACCEPTANCE' AND revision=:expected_revision "
+                    "AND current_integration_baseline_selection_id=:selection_id "
+                    "AND current_acceptance_gate_id IS NULL RETURNING *"
+                ),
+                {
+                    "requirement_id": requirement_id,
+                    "selection_id": selection_id,
+                    "gate_id": gate_id,
+                    "expected_revision": expected_revision,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def insert_delivery_decision(self, **values: Any) -> Any:
+        parameters = {
+            **values,
+            "eligibility_snapshot": json.dumps(
+                values["eligibility_snapshot"],
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        }
+        return (
+            self.db.execute(
+                text(
+                    "INSERT INTO requirement.delivery_decision "
+                    "(id, gate_id, gate_assignment_id, reviewer_id, outcome, reason, "
+                    "subject_revision, requirement_version, acceptance_criteria_version, "
+                    "acceptance_criteria_hash, integration_baseline_id, "
+                    "integration_baseline_hash, subject_head_sha, eligibility_snapshot, "
+                    "validity, decided_at) VALUES "
+                    "(:id, :gate_id, :gate_assignment_id, :reviewer_id, :outcome, "
+                    ":reason, :subject_revision, :requirement_version, "
+                    ":acceptance_criteria_version, :acceptance_criteria_hash, "
+                    ":integration_baseline_id, :integration_baseline_hash, "
+                    ":subject_head_sha, CAST(:eligibility_snapshot AS JSONB), 'CURRENT', "
+                    ":now) RETURNING *"
+                ),
+                parameters,
+            )
+            .mappings()
+            .one()
+        )
+
+    def delivery_decision_by_gate(self, gate_id: str) -> Any:
+        return (
+            self.db.execute(
+                text("SELECT * FROM requirement.delivery_decision WHERE gate_id=:gate_id"),
+                {"gate_id": gate_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def current_formal_delivery_projections(self, requirement_id: str) -> list[Any]:
+        return list(
+            self.db.execute(
+                text(
+                    "SELECT work_item.id AS work_item_id, to_jsonb(formal_gate) AS gate, "
+                    "to_jsonb(assignment) AS assignment, to_jsonb(decision) AS decision "
+                    "FROM requirement.work_item AS work_item "
+                    "LEFT JOIN LATERAL ("
+                    "SELECT gate.* FROM requirement.delivery_gate AS gate "
+                    "WHERE gate.requirement_id=work_item.requirement_id "
+                    "AND gate.work_item_id=work_item.id "
+                    "AND gate.gate_type='FORMAL_MR_REVIEW' "
+                    "AND gate.invalidated_at IS NULL "
+                    "AND gate.formal_merge_request_binding_id="
+                    "work_item.formal_merge_request_binding_id "
+                    "ORDER BY gate.created_at DESC, gate.id DESC LIMIT 1"
+                    ") AS formal_gate ON TRUE "
+                    "LEFT JOIN LATERAL ("
+                    "SELECT value.* FROM requirement.delivery_gate_assignment AS value "
+                    "WHERE value.gate_id=formal_gate.id AND value.superseded_at IS NULL "
+                    "ORDER BY value.assigned_at DESC, value.id DESC LIMIT 1"
+                    ") AS assignment ON TRUE "
+                    "LEFT JOIN requirement.delivery_decision AS decision "
+                    "ON decision.gate_id=formal_gate.id "
+                    "WHERE work_item.requirement_id=:requirement_id "
+                    "ORDER BY work_item.created_at, work_item.id"
+                ),
+                {"requirement_id": requirement_id},
+            ).mappings()
+        )
+
+    def list_delivery_history(
+        self,
+        requirement_id: str,
+        *,
+        before_occurred_at: datetime | None,
+        before_fact_type: str | None,
+        before_fact_id: str | None,
+        limit: int,
+    ) -> list[Any]:
+        cursor_clause = ""
+        if before_occurred_at is not None:
+            cursor_clause = (
+                "WHERE (occurred_at, fact_type, fact_id) < "
+                "(CAST(:before_occurred_at AS TIMESTAMPTZ), :before_fact_type, "
+                "CAST(:before_fact_id AS UUID)) "
+            )
+        statement = text(
+            "WITH history AS ("
+            "SELECT 'DELIVERY_SNAPSHOT'::TEXT AS fact_type, snapshot.created_at AS occurred_at, "
+            "snapshot.id AS fact_id, to_jsonb(snapshot) AS fact "
+            "FROM requirement.requirement_delivery_snapshot AS snapshot "
+            "WHERE snapshot.requirement_id=:requirement_id "
+            "UNION ALL "
+            "SELECT 'INTEGRATION_BASELINE_SELECTION', selection.selected_at, selection.id, "
+            "to_jsonb(selection) FROM requirement.integration_baseline_selection AS selection "
+            "WHERE selection.requirement_id=:requirement_id "
+            "UNION ALL "
+            "SELECT 'DELIVERY_GATE', gate.created_at, gate.id, to_jsonb(gate) "
+            "FROM requirement.delivery_gate AS gate "
+            "WHERE gate.requirement_id=:requirement_id "
+            "UNION ALL "
+            "SELECT 'DELIVERY_GATE_ASSIGNMENT', assignment.assigned_at, assignment.id, "
+            "to_jsonb(assignment) FROM requirement.delivery_gate_assignment AS assignment "
+            "JOIN requirement.delivery_gate AS assignment_gate "
+            "ON assignment_gate.id=assignment.gate_id "
+            "WHERE assignment_gate.requirement_id=:requirement_id "
+            "UNION ALL "
+            "SELECT 'DELIVERY_DECISION', decision.decided_at, decision.id, to_jsonb(decision) "
+            "FROM requirement.delivery_decision AS decision "
+            "JOIN requirement.delivery_gate AS decision_gate ON decision_gate.id=decision.gate_id "
+            "WHERE decision_gate.requirement_id=:requirement_id"
+            ") SELECT fact_type, occurred_at, fact_id, fact FROM history "
+            + cursor_clause
+            + "ORDER BY occurred_at DESC, fact_type DESC, fact_id DESC LIMIT :limit"
+        )
+        return list(
+            self.db.execute(
+                statement,
+                {
+                    "requirement_id": requirement_id,
+                    "before_occurred_at": before_occurred_at,
+                    "before_fact_type": before_fact_type,
+                    "before_fact_id": before_fact_id,
+                    "limit": limit,
+                },
+            ).mappings()
+        )
+
+    def decide_delivery_gate(
+        self,
+        gate_id: str,
+        *,
+        expected_revision: int,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.delivery_gate SET state='DECIDED', "
+                    "decided_at=:now, revision=revision + 1 WHERE id=:gate_id "
+                    "AND state='OPEN' AND revision=:expected_revision RETURNING *"
+                ),
+                {"gate_id": gate_id, "expected_revision": expected_revision, "now": now},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def apply_acceptance_decision(
+        self,
+        requirement_id: str,
+        *,
+        gate_id: str,
+        expected_revision: int,
+        state: str,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.requirement SET state=:state, "
+                    "revision=revision + 1, updated_at=:now WHERE id=:requirement_id "
+                    "AND state='AWAITING_ACCEPTANCE' AND revision=:expected_revision "
+                    "AND current_acceptance_gate_id=:gate_id RETURNING *"
+                ),
+                {
+                    "requirement_id": requirement_id,
+                    "gate_id": gate_id,
+                    "expected_revision": expected_revision,
+                    "state": state,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def invalidate_current_delivery_evidence(
+        self,
+        requirement_id: str,
+        *,
+        reason: str,
+        now: datetime,
+    ) -> None:
+        formal_cycle_busy = self.db.execute(
+            text(
+                "SELECT EXISTS (SELECT 1 FROM requirement.work_item "
+                "WHERE requirement_id=:requirement_id AND formal_delivery_state IN ("
+                "'MR_PENDING', 'MERGE_PENDING', 'RECONCILIATION_PENDING'))"
+            ),
+            {"requirement_id": requirement_id},
+        ).scalar_one()
+        if formal_cycle_busy:
+            raise FormalDeliveryConflict("Formal Delivery cycle is busy")
+        self.db.execute(
+            text(
+                "UPDATE requirement.work_item SET state='VERIFYING', "
+                "revision=revision + 1, updated_at=:now "
+                "WHERE requirement_id=:requirement_id AND state='AWAITING_MERGE' "
+                "AND integration_delivery_state='INTEGRATED'"
+            ),
+            {"requirement_id": requirement_id, "now": now},
+        )
+        self.db.execute(
+            text(
+                "UPDATE requirement.delivery_decision AS decision "
+                "SET validity='INVALIDATED', invalidated_at=:now, "
+                "invalidation_reason=:reason FROM requirement.delivery_gate AS gate "
+                "WHERE decision.gate_id=gate.id AND gate.requirement_id=:requirement_id "
+                "AND decision.validity='CURRENT'"
+            ),
+            {"requirement_id": requirement_id, "reason": reason, "now": now},
+        )
+        self.db.execute(
+            text(
+                "UPDATE requirement.delivery_gate SET state='INVALIDATED', "
+                "invalidated_at=:now, invalidation_reason=:reason, revision=revision + 1 "
+                "WHERE requirement_id=:requirement_id AND state IN ('OPEN', 'DECIDED')"
+            ),
+            {"requirement_id": requirement_id, "reason": reason, "now": now},
+        )
+        self.db.execute(
+            text(
+                "UPDATE requirement.integration_baseline_selection "
+                "SET invalidated_at=:now, invalidation_reason=:reason "
+                "WHERE requirement_id=:requirement_id AND invalidated_at IS NULL"
+            ),
+            {"requirement_id": requirement_id, "reason": reason, "now": now},
+        )
+        self.db.execute(
+            text(
+                "UPDATE requirement.requirement SET "
+                "current_integration_baseline_selection_id=NULL, "
+                "current_acceptance_gate_id=NULL WHERE id=:requirement_id"
+            ),
+            {"requirement_id": requirement_id},
+        )
+
+    def formal_invalidation_block_reason(self, requirement_id: str) -> str | None:
+        return self.db.execute(
+            text(
+                "SELECT formal_blocked_reason_code FROM requirement.work_item "
+                "WHERE requirement_id=:requirement_id "
+                "AND formal_delivery_state='BLOCKED' "
+                "AND formal_blocked_reason_code IN ("
+                "'EXTERNAL_MERGE_DRIFT', 'HEAD_SHA_CHANGED', "
+                "'NO_DELIVERY_COMMIT', 'SOURCE_BRANCH_MISSING_AFTER_INTEGRATION') "
+                "ORDER BY formal_updated_at, id LIMIT 1"
+            ),
+            {"requirement_id": requirement_id},
+        ).scalar_one_or_none()
+
+    def has_pending_formal_delivery(self, requirement_id: str) -> bool:
+        return bool(
+            self.db.execute(
+                text(
+                    "SELECT EXISTS (SELECT 1 FROM requirement.work_item "
+                    "WHERE requirement_id=:requirement_id "
+                    "AND formal_delivery_state IN ("
+                    "'MR_PENDING', 'MERGE_PENDING', 'RECONCILIATION_PENDING'))"
+                ),
+                {"requirement_id": requirement_id},
+            ).scalar_one()
+        )
+
+    def advance_evidence_input(
+        self,
+        requirement_id: str,
+        *,
+        expected_revision: int,
+        state: str,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.requirement SET state=:state, "
+                    "requirement_version=requirement_version + 1, revision=revision + 1, "
+                    "updated_at=:now WHERE id=:requirement_id AND revision=:expected_revision "
+                    "RETURNING *"
+                ),
+                {
+                    "requirement_id": requirement_id,
+                    "expected_revision": expected_revision,
+                    "state": state,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def touch_requirement(
+        self,
+        requirement_id: str,
+        *,
+        expected_revision: int,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.requirement SET revision=revision + 1, updated_at=:now "
+                    "WHERE id=:requirement_id AND revision=:expected_revision RETURNING *"
+                ),
+                {
+                    "requirement_id": requirement_id,
+                    "expected_revision": expected_revision,
+                    "now": now,
+                },
             )
             .mappings()
             .one_or_none()
@@ -198,10 +814,12 @@ class SqlAlchemyRequirementRepository:
                     "INSERT INTO requirement.work_item "
                     "(id, requirement_id, created_by, human_owner_id, executor_type, "
                     "executor_id, required_capabilities, assignment_state, repository_state, "
-                    "state, repository_id, revision, created_at, updated_at) VALUES "
+                    "state, repository_id, formal_delivery_state, revision, created_at, "
+                    "updated_at) VALUES "
                     "(:id, :requirement_id, :created_by, :human_owner_id, :executor_type, "
                     ":executor_id, CAST(:required_capabilities AS JSONB), :assignment_state, "
-                    ":repository_state, :state, :repository_id, :revision, :now, :now) "
+                    ":repository_state, :state, :repository_id, 'NOT_STARTED', :revision, "
+                    ":now, :now) "
                     "RETURNING *"
                 ),
                 parameters,
@@ -555,6 +1173,207 @@ class SqlAlchemyRequirementRepository:
             .one_or_none()
         )
 
+    def update_work_item_formal_delivery(
+        self,
+        work_item_id: str,
+        *,
+        expected_revision: int,
+        state: str,
+        formal_state: str,
+        binding_id: str | None,
+        blocked_reason: str | None,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.work_item SET state=:state, "
+                    "formal_delivery_state=:formal_state, "
+                    "formal_merge_request_binding_id=CAST(:binding_id AS UUID), "
+                    "formal_blocked_reason_code=:blocked_reason, formal_updated_at=:now, "
+                    "revision=revision + 1, updated_at=:now "
+                    "WHERE id=:id AND revision=:expected_revision RETURNING *"
+                ),
+                {
+                    "id": work_item_id,
+                    "expected_revision": expected_revision,
+                    "state": state,
+                    "formal_state": formal_state,
+                    "binding_id": binding_id,
+                    "blocked_reason": blocked_reason,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def reopen_work_item_for_rework(
+        self,
+        work_item_id: str,
+        *,
+        expected_revision: int,
+        formal_state: str,
+        formal_binding_id: str | None,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.work_item SET state='IN_PROGRESS', "
+                    "integration_delivery_state='IMPLEMENTING', "
+                    "integration_merge_request_binding_id=NULL, "
+                    "integration_blocked_reason_code=NULL, integration_updated_at=:now, "
+                    "formal_delivery_state=:formal_state, "
+                    "formal_merge_request_binding_id=CAST(:formal_binding_id AS UUID), "
+                    "formal_blocked_reason_code=NULL, formal_updated_at=:now, "
+                    "revision=revision + 1, updated_at=:now "
+                    "WHERE id=:id AND revision=:expected_revision RETURNING *"
+                ),
+                {
+                    "id": work_item_id,
+                    "expected_revision": expected_revision,
+                    "formal_state": formal_state,
+                    "formal_binding_id": formal_binding_id,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def reopen_integrated_work_items_for_rework(
+        self,
+        requirement_id: str,
+        *,
+        now: datetime,
+    ) -> list[Any]:
+        return list(
+            self.db.execute(
+                text(
+                    "UPDATE requirement.work_item SET state='IN_PROGRESS', "
+                    "integration_delivery_state='IMPLEMENTING', "
+                    "integration_merge_request_binding_id=NULL, "
+                    "integration_blocked_reason_code=NULL, integration_updated_at=:now, "
+                    "formal_delivery_state=CASE "
+                    "WHEN formal_merge_request_binding_id IS NULL THEN 'NOT_STARTED' "
+                    "ELSE 'MR_OPEN' END, "
+                    "formal_blocked_reason_code=NULL, formal_updated_at=:now, "
+                    "revision=revision + 1, updated_at=:now "
+                    "WHERE requirement_id=:requirement_id "
+                    "AND integration_delivery_state='INTEGRATED' "
+                    "AND formal_delivery_state<>'MERGED' RETURNING *"
+                ),
+                {"requirement_id": requirement_id, "now": now},
+            ).mappings()
+        )
+
+    def reopen_formal_invalidation_blocks_for_rework(
+        self,
+        requirement_id: str,
+        *,
+        now: datetime,
+    ) -> list[Any]:
+        return list(
+            self.db.execute(
+                text(
+                    "UPDATE requirement.work_item SET state='IN_PROGRESS', "
+                    "integration_delivery_state='IMPLEMENTING', "
+                    "integration_merge_request_binding_id=NULL, "
+                    "integration_blocked_reason_code=NULL, integration_updated_at=:now, "
+                    "formal_delivery_state=CASE "
+                    "WHEN formal_merge_request_binding_id IS NULL THEN 'NOT_STARTED' "
+                    "ELSE 'MR_OPEN' END, "
+                    "formal_blocked_reason_code=NULL, formal_updated_at=:now, "
+                    "revision=revision + 1, updated_at=:now "
+                    "WHERE requirement_id=:requirement_id "
+                    "AND formal_delivery_state='BLOCKED' "
+                    "AND formal_blocked_reason_code IN ("
+                    "'EXTERNAL_MERGE_DRIFT', 'HEAD_SHA_CHANGED', "
+                    "'NO_DELIVERY_COMMIT', 'SOURCE_BRANCH_MISSING_AFTER_INTEGRATION') "
+                    "RETURNING *"
+                ),
+                {"requirement_id": requirement_id, "now": now},
+            ).mappings()
+        )
+
+    def formal_delivery_context(self, work_item_id: str) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "SELECT requirement.id AS requirement_id, "
+                    "requirement.revision AS requirement_revision, "
+                    "requirement.requirement_version, requirement.workspace_id, "
+                    "requirement.state AS requirement_state, "
+                    "requirement.current_integration_baseline_selection_id, "
+                    "requirement.current_acceptance_gate_id, "
+                    "work_item.id AS work_item_id, work_item.revision AS work_item_revision, "
+                    "work_item.state AS work_item_state, work_item.repository_id, "
+                    "work_item.task_branch, work_item.human_owner_id, "
+                    "work_item.integration_delivery_state, "
+                    "work_item.formal_delivery_state, "
+                    "work_item.formal_merge_request_binding_id, "
+                    "acceptance.id AS acceptance_decision_id, "
+                    "acceptance.outcome AS acceptance_outcome, "
+                    "acceptance.validity AS acceptance_validity, "
+                    "acceptance.integration_baseline_id, "
+                    "acceptance.integration_baseline_hash, "
+                    "formal_gate.id AS formal_gate_id, "
+                    "formal_gate.selection_id AS formal_gate_selection_id, "
+                    "formal_gate.subject_head_sha AS formal_gate_head_sha, "
+                    "formal_gate.state AS formal_gate_state, "
+                    "formal_decision.id AS formal_review_decision_id, "
+                    "formal_decision.outcome AS formal_review_outcome, "
+                    "formal_decision.validity AS formal_review_validity "
+                    "FROM requirement.work_item AS work_item "
+                    "JOIN requirement.requirement AS requirement "
+                    "ON requirement.id=work_item.requirement_id "
+                    "LEFT JOIN requirement.delivery_decision AS acceptance "
+                    "ON acceptance.gate_id=requirement.current_acceptance_gate_id "
+                    "LEFT JOIN LATERAL ("
+                    "SELECT * FROM requirement.delivery_gate "
+                    "WHERE requirement_id=requirement.id AND work_item_id=work_item.id "
+                    "AND gate_type='FORMAL_MR_REVIEW' "
+                    "ORDER BY "
+                    "(selection_id=requirement.current_integration_baseline_selection_id) "
+                    "DESC, created_at DESC, id DESC LIMIT 1"
+                    ") AS formal_gate ON TRUE "
+                    "LEFT JOIN requirement.delivery_decision AS formal_decision "
+                    "ON formal_decision.gate_id=formal_gate.id "
+                    "WHERE work_item.id=:work_item_id"
+                ),
+                {"work_item_id": work_item_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def delivery_gate_by_formal_binding(self, binding_id: str) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "SELECT * FROM requirement.delivery_gate "
+                    "WHERE gate_type='FORMAL_MR_REVIEW' "
+                    "AND formal_merge_request_binding_id=:binding_id "
+                    "ORDER BY created_at DESC, id DESC LIMIT 1"
+                ),
+                {"binding_id": binding_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def required_formal_delivery_states(self, requirement_id: str) -> tuple[str, ...]:
+        return tuple(
+            self.db.execute(
+                text(
+                    "SELECT formal_delivery_state FROM requirement.work_item "
+                    "WHERE requirement_id=:requirement_id ORDER BY created_at, id"
+                ),
+                {"requirement_id": requirement_id},
+            ).scalars()
+        )
+
     def required_work_item_states(self, requirement_id: str) -> tuple[str, ...]:
         return tuple(
             self.db.execute(
@@ -666,6 +1485,68 @@ class SqlAlchemyRequirementRepository:
                     "CASE topic "
                     "WHEN 'requirement.integration-merge-request.requested' THEN 0 "
                     "ELSE 1 END, id FOR UPDATE SKIP LOCKED LIMIT :limit"
+                    ") UPDATE requirement.outbox_message AS message "
+                    "SET attempts=message.attempts + 1, available_at=:lease_until "
+                    "FROM candidates WHERE message.id=candidates.id RETURNING message.*"
+                ),
+                {
+                    "available_before": available_before,
+                    "lease_until": lease_until,
+                    "limit": limit,
+                },
+            ).mappings()
+        )
+
+    def claim_evidence_requests(
+        self,
+        *,
+        limit: int,
+        available_before: datetime,
+        lease_until: datetime,
+    ) -> list[Any]:
+        return list(
+            self.db.execute(
+                text(
+                    "WITH candidates AS ("
+                    "SELECT id FROM requirement.outbox_message "
+                    "WHERE topic IN ('requirement.external-validation.submitted', "
+                    "'requirement.integration-baseline.requested') "
+                    "AND state IN ('PENDING', 'FAILED') "
+                    "AND available_at <= :available_before "
+                    "ORDER BY available_at, created_at, "
+                    "CASE topic WHEN 'requirement.external-validation.submitted' "
+                    "THEN 0 ELSE 1 END, id FOR UPDATE SKIP LOCKED LIMIT :limit"
+                    ") UPDATE requirement.outbox_message AS message "
+                    "SET attempts=message.attempts + 1, available_at=:lease_until "
+                    "FROM candidates WHERE message.id=candidates.id RETURNING message.*"
+                ),
+                {
+                    "available_before": available_before,
+                    "lease_until": lease_until,
+                    "limit": limit,
+                },
+            ).mappings()
+        )
+
+    def claim_formal_delivery_requests(
+        self,
+        *,
+        limit: int,
+        available_before: datetime,
+        lease_until: datetime,
+    ) -> list[Any]:
+        return list(
+            self.db.execute(
+                text(
+                    "WITH candidates AS ("
+                    "SELECT id FROM requirement.outbox_message "
+                    "WHERE topic IN ('requirement.formal-merge-request.requested', "
+                    "'requirement.formal-merge.requested') "
+                    "AND state IN ('PENDING', 'FAILED') "
+                    "AND available_at <= :available_before "
+                    "ORDER BY available_at, created_at, "
+                    "CASE topic WHEN 'requirement.formal-merge-request.requested' "
+                    "THEN 0 ELSE 1 END, id FOR UPDATE SKIP LOCKED LIMIT :limit"
                     ") UPDATE requirement.outbox_message AS message "
                     "SET attempts=message.attempts + 1, available_at=:lease_until "
                     "FROM candidates WHERE message.id=candidates.id RETURNING message.*"

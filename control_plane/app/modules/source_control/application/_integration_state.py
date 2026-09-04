@@ -149,11 +149,12 @@ def _validated_effect_payload(
     repository_id: str,
     request_fingerprint: str,
     branch_binding_id: str,
+    work_item_id: str,
 ) -> CreateIntegrationMergeRequestEffectPayload | None:
     if (
         effect.operation is not _CREATE_OPERATION
         or effect.subject_key != subject_key
-        or effect.work_item_id != subject_key.removeprefix("work-item:")
+        or effect.work_item_id != work_item_id
         or effect.requirement_id != requirement_id
         or effect.repository_id != repository_id
         or effect.request_fingerprint != request_fingerprint
@@ -161,6 +162,7 @@ def _validated_effect_payload(
             effect.payload,
             CreateIntegrationMergeRequestEffectPayload,
         )
+        or effect.subject_key != f"integration-work-item:{work_item_id}:{effect.payload.head_sha}"
         or effect.payload.branch_binding_id != branch_binding_id
     ):
         return None
@@ -178,7 +180,7 @@ def _acquire_in_flight_effect(
     if repository_factory is None:
         raise SourceControlDependencyUnavailable("Integration repository unavailable")
     context = admission.context
-    subject_key = f"work-item:{context.work_item_id}"
+    subject_key = f"integration-work-item:{context.work_item_id}:{payload.head_sha}"
     try:
         with dependencies.engine.begin() as db:
             repository = repository_factory(db)
@@ -190,7 +192,10 @@ def _acquire_in_flight_effect(
             if effect_row is None:
                 effect_row = repository.insert_effect(
                     id=str(dependencies.random.uuid4()),
-                    effect_key=f"source-control:create-integration-mr:{context.work_item_id}",
+                    effect_key=(
+                        f"source-control:create-integration-mr:"
+                        f"{context.work_item_id}:{payload.head_sha}"
+                    ),
                     operation=_CREATE_OPERATION.value,
                     subject_key=subject_key,
                     payload=payload,
@@ -231,6 +236,7 @@ def _acquire_in_flight_effect(
         repository_id=context.repository_id,
         request_fingerprint=request_fingerprint,
         branch_binding_id=admission.branch_binding_id,
+        work_item_id=context.work_item_id,
     )
     if validated_payload != payload:
         raise _EffectCollision
@@ -282,6 +288,10 @@ def _commit_final_facts(
     completed_at = dependencies.clock.now()
     with dependencies.engine.begin() as db:
         repository = repository_factory(db)
+        repository.supersede_current_integration_binding(
+            context.work_item_id,
+            now=completed_at,
+        )
         binding_row = repository.insert_merge_request_binding(
             id=str(dependencies.random.uuid4()),
             kind=MergeRequestKind.INTEGRATION.value,

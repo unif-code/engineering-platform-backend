@@ -9,9 +9,10 @@ from control_plane.app.modules.configuration.domain import (
     PublishedVersion,
     ValidationIssue,
 )
+from control_plane.app.shared.idempotency import IdempotencyRepository
 
 
-class PolicyOwnerPort(Protocol):
+class PolicyOwnerPort(IdempotencyRepository, Protocol):
     def catalog(self, namespace: str) -> list[PolicyKey]: ...
 
     def active_snapshot(self, namespace: str) -> PolicySnapshot: ...

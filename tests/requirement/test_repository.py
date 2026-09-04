@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from sqlalchemy import Engine
 
 from control_plane.app.modules.requirement.adapters import SqlAlchemyRequirementRepository
+from control_plane.app.modules.requirement.domain import canonical_acceptance_criteria_hash
 
 REQUIREMENT_ID = "10000000-0000-0000-0000-000000000101"
 WORK_ITEM_ID = "10000000-0000-0000-0000-000000000102"
@@ -18,6 +19,8 @@ def _insert_requirement(repository: SqlAlchemyRequirementRepository) -> None:
         title="Govern delivery",
         description="Create an auditable delivery workflow.",
         acceptance_criteria=("baseline approved",),
+        acceptance_criteria_version=1,
+        acceptance_criteria_hash=canonical_acceptance_criteria_hash(("baseline approved",)),
         created_by="employee-1",
         initial_repository_id="repository-1",
         route_snapshot_version=1,

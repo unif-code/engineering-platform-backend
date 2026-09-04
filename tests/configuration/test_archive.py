@@ -176,18 +176,16 @@ class _BrokenEngine:
 
 
 def test_archive_cli_has_stable_safe_success_and_failure_output() -> None:
+    from control_plane.app.modules.configuration import PolicyRuntimeRegistry
     from control_plane.tools.archive_drafts import main
 
-    class _NoopContext:
-        def __enter__(self) -> object:
-            return object()
+    class _NoopOwner:
+        def archive(self, **values: Any) -> int:
+            return 0
 
-        def __exit__(self, *_args: object) -> None:
-            return None
-
-    class _NoopEngine:
-        def begin(self) -> _NoopContext:
-            return _NoopContext()
+    class _BrokenOwner:
+        def archive(self, **values: Any) -> int:
+            raise RuntimeError("credential-sentinel")
 
     success_stdout = StringIO()
     success_stderr = StringIO()
@@ -198,9 +196,8 @@ def test_archive_cli_has_stable_safe_success_and_failure_output() -> None:
     )
     success = main(
         [],
-        engine=_NoopEngine(),  # type: ignore[arg-type]
+        owners=PolicyRuntimeRegistry(_NoopOwner(), _NoopOwner()),  # type: ignore[arg-type]
         dependencies=dependencies,
-        archive=lambda _db, **_values: 0,
         stdout=success_stdout,
         stderr=success_stderr,
     )
@@ -208,7 +205,7 @@ def test_archive_cli_has_stable_safe_success_and_failure_output() -> None:
     failed_stderr = StringIO()
     failed = main(
         [],
-        engine=_BrokenEngine(),  # type: ignore[arg-type]
+        owners=PolicyRuntimeRegistry(_BrokenOwner(), _NoopOwner()),  # type: ignore[arg-type]
         dependencies=dependencies,
         stdout=failed_stdout,
         stderr=failed_stderr,

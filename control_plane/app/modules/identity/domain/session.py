@@ -76,3 +76,5 @@ class SessionPrincipal(BaseModel):
     session_kind: SessionKind
     bootstrap_purpose: BootstrapPurpose | None = None
     is_super_admin: bool
+    session_reference: str | None = None
+    account_version: int | None = None

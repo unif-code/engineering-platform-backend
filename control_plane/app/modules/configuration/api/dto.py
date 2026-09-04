@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import Field
+from pydantic import ConfigDict, Field
 
 from control_plane.app.modules.configuration.domain import (
     Draft,
@@ -52,6 +52,7 @@ class PolicyCatalogResponseDto(CamelModel):
 
 
 class DraftValuesRequestDto(CamelModel):
+    model_config = ConfigDict(extra="forbid")
     values: dict[str, Any] = Field(default_factory=dict)
 
 

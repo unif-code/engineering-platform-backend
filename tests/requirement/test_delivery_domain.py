@@ -56,3 +56,9 @@ def test_mr_ready_keeps_requirement_in_progress_until_all_required_items_verify(
         )
         is RequirementState.VERIFYING
     )
+    assert (
+        transition_integration_mr_ready(
+            (WorkItemState.VERIFYING, WorkItemState.COMPLETED),
+        )
+        is RequirementState.VERIFYING
+    )

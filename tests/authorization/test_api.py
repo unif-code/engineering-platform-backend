@@ -1,3 +1,4 @@
+import json
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
@@ -11,6 +12,7 @@ from fastapi.testclient import TestClient
 from httpx import Response as HttpxResponse
 from sqlalchemy import Engine, create_engine, text
 
+from control_plane.app.bootstrap.app import _DEFAULT_NAVIGATION_ACTION_CAPABILITIES
 from control_plane.app.modules.authorization import (
     V02_SUPER_ADMIN_PLATFORM_CAPABILITIES,
     AuthorizationPrincipal,
@@ -77,7 +79,12 @@ def _client(runtime_provider: Callable[[], AuthorizationHttpRuntime]) -> TestCli
     app = FastAPI()
     register_problem_handlers(app)
     app.middleware("http")(request_id_middleware)
-    app.include_router(create_authorization_router(runtime_provider))
+    app.include_router(
+        create_authorization_router(
+            runtime_provider,
+            published_action_capabilities=_DEFAULT_NAVIGATION_ACTION_CAPABILITIES,
+        )
+    )
     return TestClient(
         app,
         base_url="https://testserver",
@@ -261,7 +268,32 @@ def test_real_me_navigation_and_grant_lifecycle_are_protected_and_compatible(
         (AUTHORIZATION_MANAGE_CAPABILITY, "PLATFORM", None),
     }
 
-    navigation = client.get("/api/v1/navigation")
+    with authorization_owner_engine.begin() as db:
+        original_meta = db.execute(
+            text("SELECT meta FROM \"authorization\".route_registry WHERE route_key='requirements'")
+        ).scalar_one()
+        db.execute(
+            text(
+                'UPDATE "authorization".route_registry '
+                "SET meta=jsonb_set(meta, '{actionCapabilities}', "
+                "(meta->'actionCapabilities') || "
+                "jsonb_build_array(jsonb_build_object("
+                "'capability', 'future.unpublished.action', "
+                "'scopeType', 'WORKSPACE')), true) "
+                "WHERE route_key='requirements'"
+            )
+        )
+    try:
+        navigation = client.get("/api/v1/navigation")
+    finally:
+        with authorization_owner_engine.begin() as db:
+            db.execute(
+                text(
+                    'UPDATE "authorization".route_registry SET meta=CAST(:meta AS JSONB) '
+                    "WHERE route_key='requirements'"
+                ),
+                {"meta": json.dumps(original_meta)},
+            )
     assert navigation.status_code == 200
     assert navigation.json() == [
         {
@@ -306,6 +338,14 @@ def test_real_me_navigation_and_grant_lifecycle_are_protected_and_compatible(
                     },
                     {"capability": "work_item.execute", "scopeType": "WORKSPACE"},
                     {"capability": "merge_request.merge", "scopeType": "WORKSPACE"},
+                    {"capability": "work_item.validation.submit", "scopeType": "WORKSPACE"},
+                    {"capability": "requirement.evidence.request", "scopeType": "WORKSPACE"},
+                    {"capability": "requirement.evidence.select", "scopeType": "WORKSPACE"},
+                    {"capability": "requirement.acceptance.submit", "scopeType": "WORKSPACE"},
+                    {"capability": "requirement.acceptance.decide", "scopeType": "WORKSPACE"},
+                    {"capability": "formal_merge_request.request", "scopeType": "WORKSPACE"},
+                    {"capability": "merge_request.review", "scopeType": "WORKSPACE"},
+                    {"capability": "requirement.delivery_gate.assign", "scopeType": "WORKSPACE"},
                 ],
             },
         },

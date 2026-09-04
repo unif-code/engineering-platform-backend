@@ -29,7 +29,7 @@ def test_authorization_0008_registers_v05_delivery_actions_without_super_admin_b
     ]
     command.downgrade(config, "0007_auth_v04_routes")
     try:
-        command.upgrade(config, "heads")
+        command.upgrade(config, "0008_auth_v05_routes")
         with authorization_owner_engine.connect() as db:
             registered = db.execute(
                 text(

@@ -32,6 +32,8 @@ class OrganizationRepository(Protocol):
 
     def all_edges(self) -> list[Any]: ...
 
+    def reporting_edges(self, account_id: str) -> list[Any]: ...
+
     def upsert_edge(
         self,
         *,

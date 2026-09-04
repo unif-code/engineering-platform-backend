@@ -6,6 +6,7 @@ from control_plane.app.shared.security.password import (
     validate_password_floor,
     verify_password,
 )
+from control_plane.app.shared.security.references import sanitize_external_reference
 from control_plane.app.shared.security.sealed import seal, unseal
 from control_plane.app.shared.security.secrets import (
     FileSecretManager,
@@ -22,6 +23,7 @@ __all__ = [
     "SecretMaterialUnavailable",
     "assert_same_origin",
     "hash_password",
+    "sanitize_external_reference",
     "seal",
     "totp_provisioning_uri",
     "unseal",

@@ -10,7 +10,18 @@ import pytest
 from sqlalchemy import Connection, Engine, text
 
 from control_plane.app.modules.audit import AuditEnvelope
-from control_plane.app.modules.requirement import get_requirement
+from control_plane.app.modules.requirement import (
+    DecisionOutcome,
+    get_requirement,
+    request_integration_merge_request,
+)
+from control_plane.app.modules.requirement.adapters import SqlAlchemyRequirementRepository
+from control_plane.app.modules.requirement.application.formal import (
+    decide_formal_review,
+    record_formal_mr_ready,
+    request_formal_merge_request,
+)
+from control_plane.app.modules.requirement.ports import DeliveryGatePolicySnapshot
 from control_plane.app.modules.source_control import (
     EffectOperation,
     EffectState,
@@ -60,7 +71,10 @@ from tests.requirement.conftest import (
     _temporary_requirement_role_engine,
 )
 from tests.requirement.test_baseline_gate import _gate_dependencies
+from tests.requirement.test_commands import Actor
 from tests.requirement.test_integration_delivery_relay import _requested_mr
+from tests.requirement.test_v06_formal_delivery_commands import _approved_requirement
+from tests.source_control.test_v06_e2e import _seed_source_control_graph
 
 NOW = datetime(2026, 8, 26, 8, 0, tzinfo=UTC)
 MESSAGE_ID = "30000000-0000-0000-0000-000000000701"
@@ -374,6 +388,10 @@ class FakeGitLabMergeRequests:
         self.expected_effect_head = HEAD_SHA
         self.expected_effect_state = EffectState.IN_FLIGHT
         self.expected_source_branch = TASK_BRANCH
+        self.expected_iid = 17
+        self.expected_work_item_id = WORK_ITEM_ID
+        self.expected_requirement_id = REQUIREMENT_ID
+        self.expected_branch_binding_id = BRANCH_BINDING_ID
 
     def get_project_delivery_profile(self, _repository: object) -> GitLabProjectDeliveryProfile:
         self.calls.append("profile")
@@ -439,28 +457,28 @@ class FakeGitLabMergeRequests:
         with self.engine.connect() as db:
             effect = SqlAlchemySourceControlIntegrationRepository(db).effect_by_operation_subject(
                 EffectOperation.CREATE_INTEGRATION_MR.value,
-                f"work-item:{WORK_ITEM_ID}",
+                f"integration-work-item:{self.expected_work_item_id}:{self.expected_effect_head}",
             )
         assert effect is not None
         assert effect["state"] == self.expected_effect_state.value
         assert dict(effect["payload"]) == {
-            "branchBindingId": BRANCH_BINDING_ID,
-            "headSha": HEAD_SHA,
+            "branchBindingId": self.expected_branch_binding_id,
+            "headSha": self.expected_effect_head,
         }
         assert source_branch == TASK_BRANCH
         assert target_branch == "dev"
         assert expected_head_sha == self.expected_effect_head
         assert title == self.expected_title
         assert description == (
-            f"Requirement: {REQUIREMENT_ID}\n"
-            f"Work-Item: {WORK_ITEM_ID}\n"
+            f"Requirement: {self.expected_requirement_id}\n"
+            f"Work-Item: {self.expected_work_item_id}\n"
             f"Source-Control-Effect: {effect['id']}"
         )
         if self.create_error is not None:
             raise self.create_error
         return GitLabMergeRequestLocator(
             project_id="101",
-            iid=17,
+            iid=self.expected_iid,
             source_branch=TASK_BRANCH,
             target_branch="dev",
         )
@@ -476,7 +494,7 @@ class FakeGitLabMergeRequests:
             raise self.get_error
         if self.before_readback is not None:
             self.before_readback()
-        assert iid == 17
+        assert iid == self.expected_iid
         return self.readback
 
     def merge_merge_request(
@@ -630,9 +648,9 @@ def _seed_integration_effect(
     with engine.begin() as db:
         SqlAlchemySourceControlIntegrationRepository(db).insert_effect(
             id="80000000-0000-0000-0000-000000000701",
-            effect_key=f"source-control:create-integration-mr:{WORK_ITEM_ID}",
+            effect_key=f"source-control:create-integration-mr:{WORK_ITEM_ID}:{head_sha}",
             operation=EffectOperation.CREATE_INTEGRATION_MR.value,
-            subject_key=f"work-item:{WORK_ITEM_ID}",
+            subject_key=f"integration-work-item:{WORK_ITEM_ID}:{head_sha}",
             payload={"branchBindingId": branch_binding_id, "headSha": head_sha},
             work_item_id=WORK_ITEM_ID,
             requirement_id=requirement_id,
@@ -840,17 +858,21 @@ def test_mismatched_originating_requirement_revision_fails_closed_before_provide
 
 
 @pytest.mark.parametrize(
-    "effect_values",
+    ("effect_values", "expected_provider_calls"),
     [
-        {"request_fingerprint": "sha256:other-request"},
-        {"requirement_id": "40000000-0000-0000-0000-000000000799"},
-        {"branch_binding_id": "70000000-0000-0000-0000-000000000799"},
+        (
+            {"request_fingerprint": "sha256:other-request"},
+            ["profile", "source_branch"],
+        ),
+        ({"requirement_id": "40000000-0000-0000-0000-000000000799"}, []),
+        ({"branch_binding_id": "70000000-0000-0000-0000-000000000799"}, []),
     ],
     ids=("fingerprint", "requirement", "branch-binding"),
 )
-def test_existing_planned_effect_local_collision_blocks_without_provider_calls(
+def test_existing_planned_effect_local_collision_blocks_before_provider_write(
     isolated_source_control_database: Any,
     effect_values: _IntegrationEffectOverrides,
+    expected_provider_calls: list[str],
 ) -> None:
     engine = isolated_source_control_database.runtime
     _seed_source_control(engine)
@@ -866,7 +888,7 @@ def test_existing_planned_effect_local_collision_blocks_without_provider_calls(
     assert result.effect is None
     assert result.blocked_reason == "MR_CONFLICT"
     assert requirement.blocked[0].reason_code == "MR_CONFLICT"
-    assert gitlab.calls == []
+    assert gitlab.calls == expected_provider_calls
 
 
 def test_existing_planned_effect_frozen_head_change_blocks_before_list_or_post(
@@ -948,6 +970,463 @@ def test_create_mr_saga_persists_effect_before_post_and_reads_back(
     ]
 
 
+def test_same_work_item_creates_two_append_only_integration_bindings_and_replays_old_request(
+    isolated_source_control_database: Any,
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_source_control(engine)
+    dependencies, requirement, gitlab = _dependencies(engine)
+
+    first = process_integration_mr_request(
+        message_id=MESSAGE_ID,
+        dependencies=dependencies,
+    )
+    assert first.effect is not None
+    assert first.binding is not None
+
+    second_head = "d" * 40
+    second_message_id = "30000000-0000-0000-0000-000000000703"
+    with engine.begin() as db:
+        SqlAlchemySourceControlIntegrationRepository(db).accept_delivery_request(
+            message_id=second_message_id,
+            topic="requirement.integration-merge-request.requested",
+            payload_hash="sha256:delivery-request-second-head",
+            requirement_id=REQUIREMENT_ID,
+            requirement_revision=3,
+            work_item_id=WORK_ITEM_ID,
+            work_item_revision=5,
+            repository_id=REPOSITORY_ID,
+            actor_id="employee-1",
+            integration_merge_request_binding_id=None,
+            now=NOW,
+        )
+    gitlab.source_head = second_head
+    gitlab.expected_effect_head = second_head
+    gitlab.expected_iid = 18
+    historical = _mr_snapshot(iid=17, state="merged").model_copy(
+        update={
+            "merge_commit_sha": "c" * 40,
+            "merge_user_id": "provider-user-17",
+            "merged_at": NOW,
+        }
+    )
+    replacement = _mr_snapshot(iid=18, head_sha=second_head)
+    gitlab.candidates = [historical, replacement]
+    gitlab.readback = replacement
+
+    second = process_integration_mr_request(
+        message_id=second_message_id,
+        dependencies=dependencies,
+    )
+    replayed_first = process_integration_mr_request(
+        message_id=MESSAGE_ID,
+        dependencies=dependencies,
+    )
+
+    assert second.effect is not None
+    assert second.binding is not None
+    assert second.effect.id != first.effect.id
+    assert second.binding.id != first.binding.id
+    assert second.binding.head_sha == second_head
+    assert replayed_first.effect == first.effect
+    assert replayed_first.binding == first.binding.model_copy(update={"superseded_at": NOW})
+    with engine.connect() as db:
+        repository = SqlAlchemySourceControlIntegrationRepository(db)
+        current = repository.merge_request_binding_by_work_item(WORK_ITEM_ID)
+        bindings = (
+            db.execute(
+                text(
+                    "SELECT id, create_effect_id, head_sha, superseded_at "
+                    "FROM source_control.merge_request_binding "
+                    "WHERE work_item_id=:work_item_id AND kind='INTEGRATION' "
+                    "ORDER BY created_at, id"
+                ),
+                {"work_item_id": WORK_ITEM_ID},
+            )
+            .mappings()
+            .all()
+        )
+        effects = (
+            db.execute(
+                text(
+                    "SELECT id, subject_key, request_fingerprint "
+                    "FROM source_control.source_control_effect "
+                    "WHERE work_item_id=:work_item_id "
+                    "AND operation='CREATE_INTEGRATION_MR' ORDER BY created_at, id"
+                ),
+                {"work_item_id": WORK_ITEM_ID},
+            )
+            .mappings()
+            .all()
+        )
+
+    assert len(bindings) == 2
+    assert str(bindings[0]["id"]) == first.binding.id
+    assert str(bindings[0]["create_effect_id"]) == first.effect.id
+    assert bindings[0]["head_sha"] == HEAD_SHA
+    assert bindings[0]["superseded_at"] == NOW
+    assert str(bindings[1]["id"]) == second.binding.id
+    assert str(bindings[1]["create_effect_id"]) == second.effect.id
+    assert bindings[1]["head_sha"] == second_head
+    assert bindings[1]["superseded_at"] is None
+    assert str(current["id"]) == second.binding.id
+    assert [row["subject_key"] for row in effects] == [
+        f"integration-work-item:{WORK_ITEM_ID}:{HEAD_SHA}",
+        f"integration-work-item:{WORK_ITEM_ID}:{second_head}",
+    ]
+    assert [row["request_fingerprint"] for row in effects] == [
+        "sha256:delivery-request",
+        "sha256:delivery-request-second-head",
+    ]
+    assert [ready.binding_id for ready in requirement.ready] == [
+        first.binding.id,
+        second.binding.id,
+    ]
+    assert gitlab.calls.count("create_mr") == 1
+
+
+def test_same_head_proven_merged_short_circuits_before_effect_and_replays_once(
+    isolated_source_control_database: Any,
+) -> None:
+    engine = isolated_source_control_database.runtime
+    _seed_source_control(engine)
+    dependencies, requirement, gitlab = _dependencies(engine)
+    first = process_integration_mr_request(
+        message_id=MESSAGE_ID,
+        dependencies=dependencies,
+    )
+    assert first.effect is not None
+    assert first.binding is not None
+
+    second_message_id = "30000000-0000-0000-0000-000000000704"
+    with engine.begin() as db:
+        repository = SqlAlchemySourceControlIntegrationRepository(db)
+        repository.append_merge_request_observation(
+            id="91000000-0000-0000-0000-000000000704",
+            binding_id=first.binding.id,
+            head_sha=HEAD_SHA,
+            state="MERGED",
+            merge_commit_sha="c" * 40,
+            external_merge_user_id="provider-user-17",
+            merged_at=NOW,
+            observation_digest="sha256:same-head-already-merged",
+            observed_at=NOW + timedelta(minutes=1),
+        )
+        repository.accept_delivery_request(
+            message_id=second_message_id,
+            topic="requirement.integration-merge-request.requested",
+            payload_hash="sha256:same-head-second-request",
+            requirement_id=REQUIREMENT_ID,
+            requirement_revision=3,
+            work_item_id=WORK_ITEM_ID,
+            work_item_revision=5,
+            repository_id=REPOSITORY_ID,
+            actor_id="employee-1",
+            integration_merge_request_binding_id=None,
+            now=NOW,
+        )
+    gitlab.calls.clear()
+
+    blocked = process_integration_mr_request(
+        message_id=second_message_id,
+        dependencies=dependencies,
+    )
+    replay = process_integration_mr_request(
+        message_id=second_message_id,
+        dependencies=dependencies,
+    )
+
+    assert blocked.effect is None
+    assert blocked.binding is None
+    assert blocked.observation is None
+    assert blocked.blocked_reason == "NO_DELIVERY_COMMIT"
+    assert replay == blocked
+    assert requirement.blocked_attempts == 1
+    assert [item.reason_code for item in requirement.blocked] == ["NO_DELIVERY_COMMIT"]
+    assert gitlab.calls == ["profile", "source_branch"]
+    with engine.connect() as db:
+        effect_count = db.execute(
+            text(
+                "SELECT count(*) FROM source_control.source_control_effect "
+                "WHERE work_item_id=:work_item_id "
+                "AND operation='CREATE_INTEGRATION_MR'"
+            ),
+            {"work_item_id": WORK_ITEM_ID},
+        ).scalar_one()
+        binding_count = db.execute(
+            text(
+                "SELECT count(*) FROM source_control.merge_request_binding "
+                "WHERE work_item_id=:work_item_id AND kind='INTEGRATION'"
+            ),
+            {"work_item_id": WORK_ITEM_ID},
+        ).scalar_one()
+    assert effect_count == 1
+    assert binding_count == 1
+
+
+def test_public_requirement_rework_request_opens_second_source_control_integration_cycle(
+    isolated_source_control_database: Any,
+) -> None:
+    source_engine = isolated_source_control_database.runtime
+    with _temporary_requirement_role_engine(
+        isolated_source_control_database.owner
+    ) as requirement_engine:
+        requirement_database = IsolatedRequirementDatabase(
+            owner=isolated_source_control_database.owner,
+            runtime=requirement_engine,
+        )
+        approved, evidence, requirement_dependencies = _approved_requirement(requirement_database)
+        work_item_id = evidence.work_items[0].work_item_id
+        _workspace_id, repository_id, task_branch, old_binding_id = _seed_source_control_graph(
+            isolated_source_control_database,
+            requirement_database,
+            requirement_id=approved.requirement.id,
+            work_item_id=work_item_id,
+        )
+        delivery = RequirementFacadeDeliveryAdapter(
+            engine=requirement_engine,
+            dependencies=requirement_dependencies,
+        )
+        binding_requirement = RequirementFacadeBindingAdapter(
+            engine=requirement_engine,
+            dependencies=requirement_dependencies,
+            clock=FixedClock(),
+        )
+        with requirement_engine.begin() as db:
+            formal_requested = request_formal_merge_request(
+                SqlAlchemyRequirementRepository(db),
+                requirement_id=approved.requirement.id,
+                work_item_id=work_item_id,
+                expected_revision=approved.requirement.revision,
+                actor=Actor("employee-1"),
+                idempotency_key="source-control-public-rework-formal-create",
+                dependencies=requirement_dependencies,
+            )
+        routing = DeliveryGatePolicySnapshot(
+            version=4,
+            default_reviewer_id="employee-1",
+            policy_code="FORMAL_REVIEW_WORK_ITEM_OWNER",
+            snapshot_hash="sha256:" + "a" * 64,
+            resolution_snapshot={"rule": "WORK_ITEM_OWNER"},
+        )
+        with requirement_engine.begin() as db:
+            formal_ready = record_formal_mr_ready(
+                SqlAlchemyRequirementRepository(db),
+                work_item_id=work_item_id,
+                binding_id="96000000-0000-0000-0000-000000000621",
+                head_sha=evidence.work_items[0].task_commit_sha,
+                expected_revision=formal_requested.work_item.revision,
+                assignment=routing,
+                actor=Actor("SYSTEM:SOURCE_CONTROL"),
+                idempotency_key="source-control-public-rework-formal-ready",
+                correlation_id="source-control-public-rework-formal-ready",
+                dependencies=requirement_dependencies,
+            )
+        with requirement_engine.begin() as db:
+            rejected = decide_formal_review(
+                SqlAlchemyRequirementRepository(db),
+                requirement_id=approved.requirement.id,
+                gate_id=formal_ready.gate.id,
+                outcome=DecisionOutcome.CHANGES_REQUESTED,
+                reason="Return through the public re-integration path.",
+                expected_revision=formal_ready.requirement.revision,
+                actor=Actor("employee-1"),
+                idempotency_key="source-control-public-rework-formal-review",
+                dependencies=requirement_dependencies,
+            )
+        with requirement_engine.begin() as db:
+            rework_requested = request_integration_merge_request(
+                db,
+                requirement_id=approved.requirement.id,
+                work_item_id=work_item_id,
+                expected_revision=rejected.requirement.revision,
+                actor=Actor("employee-1"),
+                idempotency_key="source-control-public-rework-integration-create",
+                dependencies=requirement_dependencies,
+            )
+        envelopes = delivery.claim_requests(
+            limit=10,
+            lease_until=NOW + timedelta(minutes=1),
+        )
+        envelope = next(
+            candidate
+            for candidate in envelopes
+            if candidate.work_item_id == work_item_id
+            and candidate.requirement_revision == rework_requested.requirement.revision
+        )
+        with source_engine.begin() as db:
+            SqlAlchemySourceControlIntegrationRepository(db).accept_delivery_request(
+                message_id=envelope.message_id,
+                topic=envelope.topic,
+                payload_hash=envelope.payload_hash,
+                requirement_id=envelope.requirement_id,
+                requirement_revision=envelope.requirement_revision,
+                work_item_id=envelope.work_item_id,
+                work_item_revision=envelope.work_item_revision,
+                repository_id=envelope.repository_id,
+                actor_id=envelope.actor_id,
+                integration_merge_request_binding_id=(
+                    envelope.integration_merge_request_binding_id
+                ),
+                now=NOW,
+            )
+
+        historical = _mr_snapshot(
+            iid=42,
+            source_branch=task_branch,
+            state="merged",
+        ).model_copy(
+            update={
+                "merge_commit_sha": "c" * 40,
+                "merge_user_id": "provider-user-42",
+                "merged_at": NOW,
+            }
+        )
+        gitlab = FakeGitLabMergeRequests(source_engine)
+        gitlab.expected_work_item_id = work_item_id
+        gitlab.expected_requirement_id = approved.requirement.id
+        gitlab.expected_branch_binding_id = BRANCH_BINDING_ID
+        gitlab.expected_source_branch = task_branch
+        gitlab.expected_title = f"feat: integrate {work_item_id}"
+        gitlab.source_head = HEAD_SHA
+        gitlab.candidates = [historical]
+        gitlab.readback = historical
+        dependencies = SourceControlDependencies(
+            repository_factory=SqlAlchemySourceControlRepository,
+            engine=source_engine,
+            requirement=binding_requirement,
+            eligibility=FakeEligibility(),
+            audit=FakeAudit(),
+            clock=MutableClock(datetime(2026, 9, 1, 8, 0, tzinfo=UTC)),
+            random=FixedRandom(),
+            policy=FixedPolicy(),
+            delivery_repository_factory=SqlAlchemySourceControlIntegrationRepository,
+            requirement_delivery=delivery,
+            gitlab_merge_requests=gitlab,
+        )
+
+        same_head = process_integration_mr_request(
+            message_id=envelope.message_id,
+            dependencies=dependencies,
+        )
+        after_same_head = delivery.delivery_context(work_item_id)
+        same_head_replay = process_integration_mr_request(
+            message_id=envelope.message_id,
+            dependencies=dependencies,
+        )
+
+        with requirement_engine.begin() as db:
+            new_head_requested = request_integration_merge_request(
+                db,
+                requirement_id=approved.requirement.id,
+                work_item_id=work_item_id,
+                expected_revision=after_same_head.requirement_revision,
+                actor=Actor("employee-1"),
+                idempotency_key="source-control-public-rework-after-new-head",
+                dependencies=requirement_dependencies,
+            )
+        new_head_envelopes = delivery.claim_requests(
+            limit=10,
+            lease_until=NOW + timedelta(minutes=2),
+        )
+        new_head_envelope = next(
+            candidate
+            for candidate in new_head_envelopes
+            if candidate.work_item_id == work_item_id
+            and candidate.requirement_revision == new_head_requested.requirement.revision
+        )
+        with source_engine.begin() as db:
+            SqlAlchemySourceControlIntegrationRepository(db).accept_delivery_request(
+                message_id=new_head_envelope.message_id,
+                topic=new_head_envelope.topic,
+                payload_hash=new_head_envelope.payload_hash,
+                requirement_id=new_head_envelope.requirement_id,
+                requirement_revision=new_head_envelope.requirement_revision,
+                work_item_id=new_head_envelope.work_item_id,
+                work_item_revision=new_head_envelope.work_item_revision,
+                repository_id=new_head_envelope.repository_id,
+                actor_id=new_head_envelope.actor_id,
+                integration_merge_request_binding_id=(
+                    new_head_envelope.integration_merge_request_binding_id
+                ),
+                now=NOW,
+            )
+
+        new_head = "d" * 40
+        replacement = _mr_snapshot(
+            iid=43,
+            source_branch=task_branch,
+            head_sha=new_head,
+        )
+        gitlab.expected_effect_head = new_head
+        gitlab.expected_iid = 43
+        gitlab.source_head = new_head
+        gitlab.candidates = [historical, replacement]
+        gitlab.readback = replacement
+        result = process_integration_mr_request(
+            message_id=new_head_envelope.message_id,
+            dependencies=dependencies,
+        )
+        old_request_replay = process_integration_mr_request(
+            message_id=envelope.message_id,
+            dependencies=dependencies,
+        )
+        after = delivery.delivery_context(work_item_id)
+        with isolated_source_control_database.owner.connect() as db:
+            same_head_callback_count = db.execute(
+                text(
+                    "SELECT count(*) FROM audit.audit_event "
+                    "WHERE target_id=:work_item_id "
+                    "AND action='requirement.integration_delivery.blocked' "
+                    "AND correlation_id=:correlation_id"
+                ),
+                {
+                    "work_item_id": work_item_id,
+                    "correlation_id": f"source-control:inbox:{envelope.message_id}",
+                },
+            ).scalar_one()
+
+    assert same_head.effect is None
+    assert same_head.binding is None
+    assert same_head.blocked_reason == "NO_DELIVERY_COMMIT"
+    assert same_head_replay == same_head
+    assert old_request_replay == same_head
+    assert after_same_head.requirement_state == "IN_PROGRESS"
+    assert after_same_head.work_item_state == "IN_PROGRESS"
+    assert after_same_head.integration_delivery_state == "IMPLEMENTING"
+    assert after_same_head.integration_merge_request_binding_id is None
+    assert same_head_callback_count == 1
+    assert result.effect is not None
+    assert result.binding is not None
+    assert result.binding.id != old_binding_id
+    assert result.binding.merge_request_iid == 43
+    assert after.integration_delivery_state == "MR_OPEN"
+    assert after.integration_merge_request_binding_id == result.binding.id
+    with source_engine.connect() as db:
+        repository = SqlAlchemySourceControlIntegrationRepository(db)
+        old_binding = repository.merge_request_binding_by_id(old_binding_id)
+        current = repository.merge_request_binding_by_work_item(work_item_id)
+        integration_effects = (
+            db.execute(
+                text(
+                    "SELECT subject_key FROM source_control.source_control_effect "
+                    "WHERE work_item_id=:work_item_id "
+                    "AND operation='CREATE_INTEGRATION_MR' ORDER BY created_at, id"
+                ),
+                {"work_item_id": work_item_id},
+            )
+            .scalars()
+            .all()
+        )
+    assert old_binding["superseded_at"] is not None
+    assert str(current["id"]) == result.binding.id
+    assert integration_effects == [
+        f"integration-work-item:{work_item_id}:{HEAD_SHA}",
+        f"integration-work-item:{work_item_id}:{new_head}",
+    ]
+    assert gitlab.calls.count("create_mr") == 0
+
+
 def test_head_equal_to_base_blocks_without_creating_an_effect(
     isolated_source_control_database: Any,
 ) -> None:
@@ -971,7 +1450,7 @@ def test_head_equal_to_base_blocks_without_creating_an_effect(
     with engine.connect() as db:
         effect = SqlAlchemySourceControlIntegrationRepository(db).effect_by_operation_subject(
             EffectOperation.CREATE_INTEGRATION_MR.value,
-            f"work-item:{WORK_ITEM_ID}",
+            f"integration-work-item:{WORK_ITEM_ID}:{HEAD_SHA}",
         )
     assert effect is None
 
@@ -1323,9 +1802,11 @@ def test_terminal_success_replay_advances_real_requirement_once_without_provider
             assert completed is not None
             integration.insert_effect(
                 id=integration_effect_id,
-                effect_key=(f"source-control:create-integration-mr:{requested.work_item.id}"),
+                effect_key=(
+                    f"source-control:create-integration-mr:{requested.work_item.id}:{head_sha}"
+                ),
                 operation=EffectOperation.CREATE_INTEGRATION_MR.value,
-                subject_key=f"work-item:{requested.work_item.id}",
+                subject_key=f"integration-work-item:{requested.work_item.id}:{head_sha}",
                 payload={
                     "branchBindingId": branch_binding_id,
                     "headSha": head_sha,
@@ -2587,7 +3068,7 @@ def test_stale_worker_cannot_commit_facts_after_effect_and_inbox_leases_are_stol
             repository = SqlAlchemySourceControlIntegrationRepository(db)
             effect = repository.effect_by_operation_subject(
                 EffectOperation.CREATE_INTEGRATION_MR.value,
-                f"work-item:{WORK_ITEM_ID}",
+                f"integration-work-item:{WORK_ITEM_ID}:{HEAD_SHA}",
             )
             assert effect is not None
             stolen_effect = repository.transition_effect(
@@ -2623,7 +3104,7 @@ def test_stale_worker_cannot_commit_facts_after_effect_and_inbox_leases_are_stol
         repository = SqlAlchemySourceControlIntegrationRepository(db)
         effect = repository.effect_by_operation_subject(
             EffectOperation.CREATE_INTEGRATION_MR.value,
-            f"work-item:{WORK_ITEM_ID}",
+            f"integration-work-item:{WORK_ITEM_ID}:{HEAD_SHA}",
         )
         inbox = repository.delivery_request(MESSAGE_ID)
         binding = repository.merge_request_binding_by_work_item(WORK_ITEM_ID)

@@ -48,7 +48,7 @@ def replay_pending_integration_callbacks(
         with dependencies.engine.connect() as db:
             repository = repository_factory(db)
             if effect.operation is EffectOperation.CREATE_INTEGRATION_MR:
-                binding_row = repository.merge_request_binding_by_work_item(effect.work_item_id)
+                binding_row = repository.merge_request_binding_by_effect(effect.id)
             else:
                 payload = effect.payload
                 binding_row = (

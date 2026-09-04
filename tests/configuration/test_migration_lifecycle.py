@@ -92,22 +92,22 @@ def test_fresh_upgrade_installs_independent_heads_and_deterministic_seed(
         assert expected_heads == {
             "0003_agent_run_recovery",
             "0008_audit_requirement_grant",
-            "0010_identity_policy_reauth",
+            "0011_identity_reauth_consumption",
             "0001_organization_base",
             "0001_workspace_base",
-            "0008_auth_v05_routes",
-            "0005_req_sdd_human_gate",
+            "0009_auth_v06_routes",
+            "0009_req_formal_owner_denial",
             "0003_event_acceptance_receipt",
-            "0010_sc_agent_delivery",
+            "0011_sc_delivery_join",
         }
         assert installed_heads == {
             "0003_agent_run_recovery",
             "0008_audit_requirement_grant",
-            "0010_identity_policy_reauth",
-            "0008_auth_v05_routes",
-            "0005_req_sdd_human_gate",
+            "0011_identity_reauth_consumption",
+            "0009_auth_v06_routes",
+            "0009_req_formal_owner_denial",
             "0003_event_acceptance_receipt",
-            "0010_sc_agent_delivery",
+            "0011_sc_delivery_join",
         }
         assert counts == (7, 1, 1, 1)
     finally:

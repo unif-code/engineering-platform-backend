@@ -18,6 +18,9 @@ class RequirementState(StrEnum):
     READY = "READY"
     IN_PROGRESS = "IN_PROGRESS"
     VERIFYING = "VERIFYING"
+    AWAITING_ACCEPTANCE = "AWAITING_ACCEPTANCE"
+    AWAITING_MERGE = "AWAITING_MERGE"
+    COMPLETED = "COMPLETED"
     CANCELED = "CANCELED"
 
 
@@ -53,6 +56,8 @@ class WorkItemState(StrEnum):
     READY = "READY"
     IN_PROGRESS = "IN_PROGRESS"
     VERIFYING = "VERIFYING"
+    AWAITING_MERGE = "AWAITING_MERGE"
+    COMPLETED = "COMPLETED"
     CANCELED = "CANCELED"
 
 
@@ -70,6 +75,16 @@ class IntegrationDeliveryState(StrEnum):
 class IntegrationDeliveryRequestKind(StrEnum):
     CREATE_MR = "CREATE_MR"
     MERGE_MR = "MERGE_MR"
+
+
+class FormalDeliveryState(StrEnum):
+    NOT_STARTED = "NOT_STARTED"
+    MR_PENDING = "MR_PENDING"
+    MR_OPEN = "MR_OPEN"
+    MERGE_PENDING = "MERGE_PENDING"
+    MERGED = "MERGED"
+    BLOCKED = "BLOCKED"
+    RECONCILIATION_PENDING = "RECONCILIATION_PENDING"
 
 
 class IntegrationDeliveryBlockedReason(StrEnum):
@@ -121,6 +136,8 @@ class RequirementDto(BaseModel):
     title: str
     description: str
     acceptance_criteria: tuple[str, ...]
+    acceptance_criteria_version: int
+    acceptance_criteria_hash: str
     created_by: str
     initial_repository_id: str
     route_snapshot_version: int
@@ -132,6 +149,8 @@ class RequirementDto(BaseModel):
     required_work_item_set_version: int
     required_work_item_set_hash: str
     current_sdd_baseline_id: str | None
+    current_integration_baseline_selection_id: str | None
+    current_acceptance_gate_id: str | None
     revision: int
     created_at: datetime
     updated_at: datetime
@@ -162,6 +181,10 @@ class WorkItemDto(BaseModel):
     revision: int
     created_at: datetime
     updated_at: datetime
+    formal_delivery_state: FormalDeliveryState = FormalDeliveryState.NOT_STARTED
+    formal_merge_request_binding_id: str | None = None
+    formal_blocked_reason_code: str | None = None
+    formal_updated_at: datetime | None = None
 
 
 class WorkItemAssignmentDto(BaseModel):

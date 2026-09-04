@@ -183,7 +183,7 @@ def test_effect_operation_shapes_preserve_branch_dto_and_reject_ambiguous_fields
             "effect_key": "source-control:create-integration-mr:work-item-501",
         },
         operation=EffectOperation.CREATE_INTEGRATION_MR,
-        subject_key=f"work-item:{WORK_ITEM_ID}",
+        subject_key=f"integration-work-item:{WORK_ITEM_ID}:{HEAD_SHA}",
         payload=CreateIntegrationMergeRequestEffectPayload(
             branchBindingId=BRANCH_BINDING_ID,
             headSha=HEAD_SHA,
@@ -225,12 +225,12 @@ def test_effect_operation_shapes_preserve_branch_dto_and_reject_ambiguous_fields
     [
         (
             EffectOperation.CREATE_INTEGRATION_MR,
-            f"work-item:{WORK_ITEM_ID}",
+            f"integration-work-item:{WORK_ITEM_ID}:{HEAD_SHA}",
             {"branchBindingId": BRANCH_BINDING_ID},
         ),
         (
             EffectOperation.CREATE_INTEGRATION_MR,
-            f"work-item:{WORK_ITEM_ID}",
+            f"integration-work-item:{WORK_ITEM_ID}:{HEAD_SHA}",
             {
                 "branchBindingId": BRANCH_BINDING_ID,
                 "headSha": HEAD_SHA,
@@ -239,7 +239,7 @@ def test_effect_operation_shapes_preserve_branch_dto_and_reject_ambiguous_fields
         ),
         (
             EffectOperation.CREATE_INTEGRATION_MR,
-            f"work-item:{WORK_ITEM_ID}",
+            f"integration-work-item:{WORK_ITEM_ID}:{HEAD_SHA}",
             {
                 "branchBindingId": BRANCH_BINDING_ID,
                 "headSha": HEAD_SHA,
@@ -304,7 +304,7 @@ def test_effect_payload_cannot_be_mutated_after_validation() -> None:
         id="60000000-0000-0000-0000-000000000505",
         effect_key="source-control:immutable-payload",
         operation=EffectOperation.CREATE_INTEGRATION_MR,
-        subject_key=f"work-item:{WORK_ITEM_ID}",
+        subject_key=f"integration-work-item:{WORK_ITEM_ID}:{HEAD_SHA}",
         payload=CreateIntegrationMergeRequestEffectPayload(
             branchBindingId=BRANCH_BINDING_ID,
             headSha=HEAD_SHA,

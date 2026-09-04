@@ -129,7 +129,7 @@ def test_reconciler_claim_fences_an_older_create_saga_fact_commit(
         repository = SqlAlchemySourceControlIntegrationRepository(db)
         effect = repository.effect_by_operation_subject(
             "CREATE_INTEGRATION_MR",
-            f"work-item:{WORK_ITEM_ID}",
+            f"integration-work-item:{WORK_ITEM_ID}:{MERGE_HEAD_SHA}",
         )
         binding = repository.merge_request_binding_by_work_item(WORK_ITEM_ID)
         observations = db.exec_driver_sql(
@@ -171,6 +171,63 @@ def test_unknown_create_reconciles_unique_existing_mr_without_second_post(
     assert binding is not None
     assert binding["merge_request_iid"] == 17
     assert requirement.ready_attempts == 1
+
+
+def test_unknown_second_cycle_ignores_bound_historical_mr_and_adopts_new_candidate(
+    isolated_source_control_rw_engine: Engine,
+) -> None:
+    _seed_source_control(isolated_source_control_rw_engine)
+    dependencies, requirement, gitlab = _dependencies(isolated_source_control_rw_engine)
+    first = process_integration_mr_request(
+        message_id=MESSAGE_ID,
+        dependencies=dependencies,
+    )
+    assert first.effect is not None
+    assert first.binding is not None
+
+    second_head = "d" * 40
+    _seed_integration_effect(
+        isolated_source_control_rw_engine,
+        state=EffectState.UNKNOWN,
+        request_fingerprint="sha256:second-cycle-reconciliation",
+        head_sha=second_head,
+    )
+    with isolated_source_control_rw_engine.begin() as db:
+        db.exec_driver_sql(
+            "UPDATE source_control.source_control_effect SET next_reconcile_at=%s "
+            "WHERE operation='CREATE_INTEGRATION_MR' AND subject_key=%s",
+            (NOW, f"integration-work-item:{WORK_ITEM_ID}:{second_head}"),
+        )
+    historical = _mr_snapshot(iid=17, state="merged").model_copy(
+        update={
+            "merge_commit_sha": "c" * 40,
+            "merge_user_id": "provider-user-17",
+            "merged_at": NOW,
+        }
+    )
+    replacement = _mr_snapshot(iid=18, head_sha=second_head)
+    gitlab.source_head = second_head
+    gitlab.expected_iid = 18
+    gitlab.candidates = [historical, replacement]
+    gitlab.readback = replacement
+
+    result = reconcile_due_integration_effects(limit=10, dependencies=dependencies)
+
+    assert len(result.effects) == 1
+    assert result.effects[0].state is EffectState.SUCCEEDED
+    assert result.effects[0].subject_key == (f"integration-work-item:{WORK_ITEM_ID}:{second_head}")
+    with isolated_source_control_rw_engine.connect() as db:
+        repository = SqlAlchemySourceControlIntegrationRepository(db)
+        current = repository.merge_request_binding_by_work_item(WORK_ITEM_ID)
+        historical_row = repository.merge_request_binding_by_effect(first.effect.id)
+    assert current is not None
+    assert current["merge_request_iid"] == 18
+    assert current["head_sha"] == second_head
+    assert historical_row is not None
+    assert historical_row["merge_request_iid"] == 17
+    assert historical_row["superseded_at"] is not None
+    assert gitlab.calls.count("create_mr") == 1
+    assert requirement.ready_attempts == 2
 
 
 def test_reconciled_create_ready_replaces_acked_pending_callback(

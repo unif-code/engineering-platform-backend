@@ -68,6 +68,134 @@ class RequirementRepository(Protocol):
 
     def insert_sdd_artifact_version(self, **values: Any) -> Any: ...
 
+    def insert_delivery_snapshot(self, **values: Any) -> Any: ...
+
+    def delivery_snapshot_by_hash(
+        self,
+        requirement_id: str,
+        snapshot_hash: str,
+    ) -> Any: ...
+
+    def delivery_snapshot_by_id(self, snapshot_id: str) -> Any: ...
+
+    def latest_delivery_snapshot(self, requirement_id: str) -> Any: ...
+
+    def integration_baseline_selection_by_id(self, selection_id: str) -> Any: ...
+
+    def current_integration_baseline_selection(
+        self,
+        requirement_id: str,
+        *,
+        for_update: bool = False,
+    ) -> Any: ...
+
+    def insert_integration_baseline_selection(self, **values: Any) -> Any: ...
+
+    def apply_integration_baseline_selection(
+        self,
+        requirement_id: str,
+        *,
+        selection_id: str,
+        expected_revision: int,
+        expected_requirement_version: int,
+        now: datetime,
+    ) -> Any: ...
+
+    def insert_delivery_gate(self, **values: Any) -> Any: ...
+
+    def delivery_gate_by_id(
+        self,
+        gate_id: str,
+        *,
+        for_update: bool = False,
+    ) -> Any: ...
+
+    def insert_delivery_gate_assignment(self, **values: Any) -> Any: ...
+
+    def advance_delivery_gate_assignment(self, gate_id: str, *, expected_revision: int) -> Any: ...
+
+    def supersede_delivery_gate_assignment(self, assignment_id: str, *, now: datetime) -> bool: ...
+
+    def current_delivery_gate_assignment(
+        self,
+        gate_id: str,
+        *,
+        for_update: bool = False,
+    ) -> Any: ...
+
+    def set_current_acceptance_gate(
+        self,
+        requirement_id: str,
+        *,
+        selection_id: str,
+        gate_id: str,
+        expected_revision: int,
+        now: datetime,
+    ) -> Any: ...
+
+    def insert_delivery_decision(self, **values: Any) -> Any: ...
+
+    def delivery_decision_by_gate(self, gate_id: str) -> Any: ...
+
+    def current_formal_delivery_projections(self, requirement_id: str) -> list[Any]: ...
+
+    def list_delivery_history(
+        self,
+        requirement_id: str,
+        *,
+        before_occurred_at: datetime | None,
+        before_fact_type: str | None,
+        before_fact_id: str | None,
+        limit: int,
+    ) -> list[Any]: ...
+
+    def decide_delivery_gate(
+        self,
+        gate_id: str,
+        *,
+        expected_revision: int,
+        now: datetime,
+    ) -> Any: ...
+
+    def apply_acceptance_decision(
+        self,
+        requirement_id: str,
+        *,
+        gate_id: str,
+        expected_revision: int,
+        state: str,
+        now: datetime,
+    ) -> Any: ...
+
+    def invalidate_current_delivery_evidence(
+        self,
+        requirement_id: str,
+        *,
+        reason: str,
+        now: datetime,
+    ) -> None: ...
+
+    def formal_invalidation_block_reason(self, requirement_id: str) -> str | None: ...
+
+    def has_pending_formal_delivery(self, requirement_id: str) -> bool: ...
+
+    def advance_evidence_input(
+        self,
+        requirement_id: str,
+        *,
+        expected_revision: int,
+        state: str,
+        now: datetime,
+    ) -> Any: ...
+
+    def touch_requirement(
+        self,
+        requirement_id: str,
+        *,
+        expected_revision: int,
+        now: datetime,
+    ) -> Any: ...
+
     def sdd_artifact_version(
         self,
         requirement_id: str,
@@ -161,6 +289,48 @@ class RequirementRepository(Protocol):
         now: datetime,
     ) -> Any: ...
 
+    def update_work_item_formal_delivery(
+        self,
+        work_item_id: str,
+        *,
+        expected_revision: int,
+        state: str,
+        formal_state: str,
+        binding_id: str | None,
+        blocked_reason: str | None,
+        now: datetime,
+    ) -> Any: ...
+
+    def reopen_work_item_for_rework(
+        self,
+        work_item_id: str,
+        *,
+        expected_revision: int,
+        formal_state: str,
+        formal_binding_id: str | None,
+        now: datetime,
+    ) -> Any: ...
+
+    def reopen_integrated_work_items_for_rework(
+        self,
+        requirement_id: str,
+        *,
+        now: datetime,
+    ) -> list[Any]: ...
+
+    def reopen_formal_invalidation_blocks_for_rework(
+        self,
+        requirement_id: str,
+        *,
+        now: datetime,
+    ) -> list[Any]: ...
+
+    def formal_delivery_context(self, work_item_id: str) -> Any: ...
+
+    def delivery_gate_by_formal_binding(self, binding_id: str) -> Any: ...
+
+    def required_formal_delivery_states(self, requirement_id: str) -> tuple[str, ...]: ...
+
     def required_work_item_states(self, requirement_id: str) -> tuple[str, ...]: ...
 
     def reconcile_planned_work_item_states(
@@ -182,6 +352,22 @@ class RequirementRepository(Protocol):
     ) -> list[Any]: ...
 
     def claim_delivery_requests(
+        self,
+        *,
+        limit: int,
+        available_before: datetime,
+        lease_until: datetime,
+    ) -> list[Any]: ...
+
+    def claim_evidence_requests(
+        self,
+        *,
+        limit: int,
+        available_before: datetime,
+        lease_until: datetime,
+    ) -> list[Any]: ...
+
+    def claim_formal_delivery_requests(
         self,
         *,
         limit: int,

@@ -80,10 +80,11 @@ def validate_session(
     raw_token: str,
     dependencies: IdentityDependencies,
     touch_activity: bool = True,
+    read_only: bool = False,
 ) -> SessionPrincipal | None:
     deps = dependencies
     db = repository.db
-    row = repository.session_with_account(token_hash(raw_token), for_update=True)
+    row = repository.session_with_account(token_hash(raw_token), for_update=not read_only)
     if row is None or row["revoked_at"] is not None:
         return None
     kind = SessionKind(row["kind"])
@@ -101,6 +102,8 @@ def validate_session(
     now = deps.clock.now()
     policy = deps.policy.get_identity_policy(db)
     if now >= row["last_seen_at"] + policy.session_idle_timeout:
+        if read_only:
+            return None
         revoked = repository.revoke_session(str(row["session_id"]), now, "IDLE_TIMEOUT")
         finalize_session_revocations(
             repository,
@@ -111,7 +114,7 @@ def validate_session(
             dependencies=deps,
         )
         return None
-    if touch_activity:
+    if touch_activity and not read_only:
         repository.touch_session(
             str(row["session_id"]),
             now,
@@ -128,6 +131,8 @@ def validate_session(
             else None
         ),
         is_super_admin=row["is_super_admin"],
+        session_reference=str(row["session_id"]),
+        account_version=int(row["version"]),
     )
 
 

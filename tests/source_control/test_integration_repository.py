@@ -88,9 +88,9 @@ def _insert_create_mr_effect(
 ) -> None:
     integration.insert_effect(
         id=CREATE_MR_EFFECT_ID,
-        effect_key=f"create-integration-mr:{WORK_ITEM_ID}",
+        effect_key=f"create-integration-mr:{WORK_ITEM_ID}:{HEAD_SHA}",
         operation="CREATE_INTEGRATION_MR",
-        subject_key=f"work-item:{WORK_ITEM_ID}",
+        subject_key=f"integration-work-item:{WORK_ITEM_ID}:{HEAD_SHA}",
         payload=CreateIntegrationMergeRequestEffectPayload(
             branchBindingId=BRANCH_BINDING_ID,
             headSha=HEAD_SHA,
@@ -325,7 +325,7 @@ def test_effect_claims_and_callbacks_are_operation_scoped_and_attempt_fenced(
         branch_lookup = branch.effect_by_work_item(WORK_ITEM_ID)
         create_lookup = integration.effect_by_operation_subject(
             "CREATE_INTEGRATION_MR",
-            f"work-item:{WORK_ITEM_ID}",
+            f"integration-work-item:{WORK_ITEM_ID}:{HEAD_SHA}",
         )
         first = integration.claim_effects(
             limit=10,
@@ -390,7 +390,7 @@ def test_branch_repository_does_not_transition_integration_effect(
         )
         persisted = integration.effect_by_operation_subject(
             "CREATE_INTEGRATION_MR",
-            f"work-item:{WORK_ITEM_ID}",
+            f"integration-work-item:{WORK_ITEM_ID}:{HEAD_SHA}",
         )
 
     assert transitioned is None

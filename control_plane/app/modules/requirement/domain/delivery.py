@@ -25,6 +25,8 @@ def transition_human_work_started(
 def transition_integration_mr_ready(
     required_work_items: tuple[WorkItemState, ...],
 ) -> RequirementState:
-    if all(state is WorkItemState.VERIFYING for state in required_work_items):
+    if all(
+        state in {WorkItemState.VERIFYING, WorkItemState.COMPLETED} for state in required_work_items
+    ):
         return RequirementState.VERIFYING
     return RequirementState.IN_PROGRESS

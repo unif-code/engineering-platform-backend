@@ -12,18 +12,19 @@ from control_plane.app.modules.requirement.application.common import (
     work_item_assignment_dto,
     work_item_dto,
 )
+from control_plane.app.modules.requirement.application.delivery_set import (
+    validate_current_delivery_set,
+)
 from control_plane.app.modules.requirement.domain import (
     AssignmentState,
     InvalidRequirementCursor,
     RepositoryBindingContext,
     RequirementDeliverySnapshotDto,
-    RequirementDependencyUnavailable,
     RequirementDetailsDto,
     RequirementNotFound,
     RequirementPage,
     RequirementType,
     WorkItemNotFound,
-    required_work_item_set_hash,
 )
 from control_plane.app.modules.requirement.ports import RequirementRepository
 
@@ -95,8 +96,7 @@ def get_requirement_delivery_snapshot(
     if row is None:
         raise RequirementNotFound(requirement_id)
     work_item_ids = tuple(str(work_item_id) for work_item_id in row["work_item_ids"])
-    if required_work_item_set_hash(work_item_ids) != row["required_work_item_set_hash"]:
-        raise RequirementDependencyUnavailable("Requirement delivery snapshot is inconsistent")
+    validate_current_delivery_set(work_item_ids, row["required_work_item_set_hash"])
     return RequirementDeliverySnapshotDto(
         requirement_id=str(row["id"]),
         requirement_version=row["requirement_version"],

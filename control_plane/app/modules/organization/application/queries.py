@@ -1,3 +1,5 @@
+import hashlib
+import json
 from typing import TypeGuard
 
 from control_plane.app.modules.organization.application.dependencies import (
@@ -13,6 +15,10 @@ from control_plane.app.modules.organization.domain import (
     OrgTreeDto,
     validate_structure,
 )
+from control_plane.app.modules.organization.domain.reporting import (
+    ReportingContext,
+    ReportingParticipant,
+)
 from control_plane.app.modules.organization.ports import (
     OrganizationAccountView,
     OrganizationRepository,
@@ -27,6 +33,59 @@ def _is_effective(
     return (
         str(getattr(account, "status", None)) == "ENABLED"
         and getattr(account, "initialized", False) is True
+    )
+
+
+def reporting_context(
+    repository: OrganizationRepository,
+    *,
+    account_id: str,
+    dependencies: OrganizationDependencies,
+) -> ReportingContext:
+    rows = repository.reporting_edges(account_id)
+    edges = {str(row["account_id"]): (row["superior_id"], row["kind"]) for row in rows}
+    if len(edges) != len(rows) or account_id not in edges:
+        raise CorruptStructure("missing or ambiguous reporting path")
+    try:
+        validate_structure(edges)
+    except (InvalidStructure, ValueError) as exc:
+        raise CorruptStructure("invalid reporting path") from exc
+    superior_id, kind = edges[account_id]
+    if kind not in ("MEMBER", "LEADER"):
+        raise CorruptStructure("unsupported reviewer routing context")
+    participants = []
+    for participant_id in sorted(edges):
+        account = dependencies.identity.get(participant_id)
+        if not _is_effective(account) or account.id != participant_id:
+            raise CorruptStructure("reporting participant is not effective")
+        superior, participant_kind = edges[participant_id]
+        participants.append(
+            ReportingParticipant(
+                account_id=participant_id,
+                superior_id=superior,
+                kind=participant_kind,
+                employee_no=account.employee_no,
+                display_name=account.display_name,
+                status=account.status,
+                initialized=account.initialized,
+            )
+        )
+    reviewer_id = str(superior_id) if kind == "MEMBER" else account_id
+    facts = {
+        "account_id": account_id,
+        "kind": kind,
+        "reviewer_id": reviewer_id,
+        "participants": [item.model_dump(mode="json") for item in participants],
+    }
+    digest = hashlib.sha256(
+        json.dumps(facts, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
+    return ReportingContext(
+        account_id=account_id,
+        kind=kind,
+        reviewer_id=reviewer_id,
+        participants=tuple(participants),
+        facts_hash=f"sha256:{digest}",
     )
 
 

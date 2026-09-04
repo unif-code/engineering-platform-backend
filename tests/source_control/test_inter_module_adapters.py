@@ -9,10 +9,7 @@ from pydantic import ValidationError
 from sqlalchemy import create_engine
 
 import control_plane.app.modules.authorization as authorization_module
-import control_plane.app.modules.identity as identity_module
 import control_plane.app.modules.requirement as requirement_module
-import control_plane.app.modules.workspace as workspace_module
-from control_plane.app.modules.identity import AccountStatus
 from control_plane.app.modules.requirement import (
     AssignmentState,
     IntegrationDeliveryBlockedReason,
@@ -69,84 +66,54 @@ def _context() -> RequirementBindingContext:
     )
 
 
-def test_current_actor_eligibility_requires_enabled_formal_member_with_every_grant(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    engines = [create_engine("sqlite://") for _ in range(3)]
-    requested_capabilities: list[str] = []
-    monkeypatch.setattr(
-        identity_module,
-        "get_account",
-        lambda *_args, **_kwargs: SimpleNamespace(status=AccountStatus.ENABLED),
-    )
-    monkeypatch.setattr(
-        workspace_module,
-        "is_formal_member",
-        lambda *_args, **_kwargs: True,
-    )
+def test_current_actor_eligibility_maps_shared_qualification_without_reinterpreting_facts() -> None:
+    class Qualification:
+        def evaluate(
+            self, actor_id: str, workspace_id: str, required_capabilities: tuple[str, ...]
+        ) -> authorization_module.ActorQualificationSnapshot:
+            return authorization_module.ActorQualificationSnapshot(
+                eligible=True,
+                reason="ALLOW",
+                actor_id=actor_id,
+                workspace_id=workspace_id,
+                required_capabilities=required_capabilities,
+                account=None,
+                workspace=None,
+                principal=None,
+                grants=(),
+                checked_at=NOW,
+                snapshot_hash="sha256:" + "8" * 64,
+            )
 
-    def effective_grants(
-        *_args: object,
-        capability: str,
-        **_kwargs: object,
-    ) -> list[SimpleNamespace]:
-        requested_capabilities.append(capability)
-        return [SimpleNamespace(id=f"grant:{capability}")]
-
-    monkeypatch.setattr(authorization_module, "effective_grants", effective_grants)
-    adapter = CurrentActorEligibilityAdapter(
-        identity_engine=engines[0],
-        identity_dependencies=object(),
-        workspace_engine=engines[1],
-        workspace_dependencies=object(),
-        authorization_engine=engines[2],
-        authorization_dependencies=object(),
-    )
-
+    adapter = CurrentActorEligibilityAdapter(Qualification())
     result = adapter.evaluate(
         ActorEligibilityContext(
             actor_id="merge-operator-521",
             workspace_id=_context().workspace_id,
-            required_capabilities=("code.read", "merge_request.merge"),
+            required_capabilities=("merge_request.merge",),
         )
     )
-
-    assert result.eligible is True
-    assert requested_capabilities == ["code.read", "merge_request.merge"]
-    for engine in engines:
-        engine.dispose()
+    assert result.eligible
+    assert result.qualification_snapshot["actor_id"] == "merge-operator-521"
+    assert result.qualification_snapshot["required_capabilities"] == ["merge_request.merge"]
 
 
-def test_current_actor_eligibility_fails_closed_when_dependency_is_unavailable(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    engines = [create_engine("sqlite://") for _ in range(3)]
-    monkeypatch.setattr(
-        identity_module,
-        "get_account",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("unavailable")),
-    )
-    adapter = CurrentActorEligibilityAdapter(
-        identity_engine=engines[0],
-        identity_dependencies=object(),
-        workspace_engine=engines[1],
-        workspace_dependencies=object(),
-        authorization_engine=engines[2],
-        authorization_dependencies=object(),
-    )
+def test_current_actor_eligibility_fails_closed_when_dependency_is_unavailable() -> None:
+    class Qualification:
+        def evaluate(
+            self, actor_id: str, workspace_id: str, required_capabilities: tuple[str, ...]
+        ) -> authorization_module.ActorQualificationSnapshot:
+            raise RuntimeError("unavailable")
 
-    result = adapter.evaluate(
+    result = CurrentActorEligibilityAdapter(Qualification()).evaluate(
         ActorEligibilityContext(
             actor_id="account-521",
             workspace_id=_context().workspace_id,
             required_capabilities=_context().required_capabilities,
         )
     )
-
-    assert result.eligible is False
+    assert not result.eligible
     assert result.reason_code == "OWNER_INELIGIBLE"
-    for engine in engines:
-        engine.dispose()
 
 
 def test_requirement_adapter_maps_claimed_messages_through_package_root(

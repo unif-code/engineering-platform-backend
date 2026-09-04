@@ -25,7 +25,10 @@ from control_plane.app.modules.requirement import (
     start_requirement_preparation,
 )
 from control_plane.app.modules.requirement.adapters import SqlAlchemyRequirementRepository
-from control_plane.app.modules.requirement.domain import canonical_route_snapshot_hash
+from control_plane.app.modules.requirement.domain import (
+    canonical_acceptance_criteria_hash,
+    canonical_route_snapshot_hash,
+)
 from control_plane.app.modules.requirement.ports import AssignmentGuardPort, RouteSnapshot
 from control_plane.app.shared.idempotency import IdempotencyConflict
 from control_plane.app.shared.security import SecretMaterial
@@ -259,6 +262,8 @@ def test_start_preparation_requires_durable_binding_request(
             title="Missing request",
             description="No binding request was persisted.",
             acceptance_criteria=("blocked",),
+            acceptance_criteria_version=1,
+            acceptance_criteria_hash=canonical_acceptance_criteria_hash(("blocked",)),
             created_by="employee-1",
             initial_repository_id="repository-1",
             route_snapshot_version=1,

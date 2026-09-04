@@ -72,7 +72,7 @@ class GitLabMergeRequestSnapshot(BaseModel):
     merged_at: datetime | None
 
 
-class GitLabMergeRequestPort(Protocol):
+class GitLabMergeRequestReadPort(Protocol):
     def get_project_delivery_profile(
         self,
         repository: GitLabRepositoryProfile,
@@ -93,6 +93,15 @@ class GitLabMergeRequestPort(Protocol):
         state: Literal["all"] = "all",
     ) -> list[GitLabMergeRequestSnapshot]: ...
 
+    def get_merge_request(
+        self,
+        repository: GitLabRepositoryProfile,
+        *,
+        iid: int,
+    ) -> GitLabMergeRequestSnapshot: ...
+
+
+class GitLabMergeRequestPort(GitLabMergeRequestReadPort, Protocol):
     def create_merge_request(
         self,
         repository: GitLabRepositoryProfile,
@@ -104,14 +113,29 @@ class GitLabMergeRequestPort(Protocol):
         description: str,
     ) -> GitLabMergeRequestLocator: ...
 
-    def get_merge_request(
+    def merge_merge_request(
         self,
         repository: GitLabRepositoryProfile,
         *,
         iid: int,
+        expected_head_sha: str,
     ) -> GitLabMergeRequestSnapshot: ...
 
-    def merge_merge_request(
+
+class GitLabFormalMergeRequestPort(GitLabMergeRequestReadPort, Protocol):
+    """Provider contract for task-to-main delivery semantics."""
+
+    def create_formal_merge_request(
+        self,
+        repository: GitLabRepositoryProfile,
+        *,
+        source_branch: str,
+        expected_head_sha: str,
+        title: str,
+        description: str,
+    ) -> GitLabMergeRequestLocator: ...
+
+    def merge_formal_merge_request(
         self,
         repository: GitLabRepositoryProfile,
         *,

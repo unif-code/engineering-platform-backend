@@ -19,7 +19,7 @@ from control_plane.app.modules.source_control import (
     relay_due_source_control_requests,
 )
 
-_COMMAND_MINIMUM_LIMITS = {"relay": 2, "process": 3, "reconcile": 2}
+_COMMAND_MINIMUM_LIMITS = {"relay": 4, "process": 5, "reconcile": 3}
 
 
 @dataclass(frozen=True, slots=True)

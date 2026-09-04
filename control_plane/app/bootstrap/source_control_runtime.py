@@ -11,7 +11,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from control_plane.app.modules.audit.adapters.transactional import (
     SqlAlchemyTransactionalAuditAppender,
 )
+from control_plane.app.modules.authorization import (
+    ActorQualificationPort,
+)
 from control_plane.app.modules.identity.adapters.runtime import SystemClock, SystemRandom
+from control_plane.app.modules.requirement import RequirementPolicyRuntime
 from control_plane.app.modules.source_control import (
     SourceControlDependencies,
     SourceControlDependencyUnavailable,
@@ -20,12 +24,17 @@ from control_plane.app.modules.source_control import (
 from control_plane.app.modules.source_control.adapters import (
     CurrentActorEligibilityAdapter,
     DevSecretReferenceResolver,
+    GovernedFormalReviewRoutingAdapter,
     HttpxGitLabAdapter,
     HttpxGitLabMergeRequestAdapter,
     RequirementFacadeBindingAdapter,
     RequirementFacadeDeliveryAdapter,
+    RequirementFacadeEvidenceAdapter,
+    RequirementFacadeFormalDeliveryAdapter,
     SourceControlDevPolicy,
     SourceControlDevSettings,
+    SqlAlchemySourceControlEvidenceRepository,
+    SqlAlchemySourceControlFormalRepository,
     SqlAlchemySourceControlIntegrationRepository,
     SqlAlchemySourceControlRepository,
 )
@@ -44,12 +53,10 @@ class SourceControlRuntimeCollaborators:
     source_control_engine: Engine
     requirement_engine: Engine
     requirement_dependencies: Any
-    identity_engine: Engine
-    identity_dependencies: Any
-    workspace_engine: Engine
-    workspace_dependencies: Any
-    authorization_engine: Engine
-    authorization_dependencies: Any
+    organization_engine: Engine
+    organization_dependencies: Any
+    requirement_policy: RequirementPolicyRuntime
+    qualification: ActorQualificationPort
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,12 +94,10 @@ def default_source_control_collaborators() -> SourceControlRuntimeCollaborators:
         source_control_engine=control_plane_bootstrap.source_control_query_runtime_engine(),
         requirement_engine=control_plane_bootstrap.requirement_runtime_engine(),
         requirement_dependencies=control_plane_bootstrap.requirement_dependencies(),
-        identity_engine=control_plane_bootstrap.identity_runtime_engine(),
-        identity_dependencies=control_plane_bootstrap.identity_dependencies(),
-        workspace_engine=control_plane_bootstrap.workspace_runtime_engine(),
-        workspace_dependencies=control_plane_bootstrap.workspace_dependencies(),
-        authorization_engine=control_plane_bootstrap.authorization_runtime_engine(),
-        authorization_dependencies=control_plane_bootstrap.authorization_dependencies(),
+        organization_engine=control_plane_bootstrap.organization_runtime_engine(),
+        organization_dependencies=control_plane_bootstrap.organization_dependencies(),
+        requirement_policy=control_plane_bootstrap.requirement_policy_runtime(),
+        qualification=control_plane_bootstrap.actor_qualification_runtime(),
     )
 
 
@@ -120,6 +125,11 @@ def build_source_control_runtime(
     )
     try:
         clock = SystemClock()
+        merge_requests = HttpxGitLabMergeRequestAdapter(
+            client=client,
+            secrets=secrets,
+            connection_ref=settings.connection_id,
+        )
         dependencies = SourceControlDependencies(
             repository_factory=SqlAlchemySourceControlRepository,
             engine=collaborators.source_control_engine,
@@ -129,12 +139,7 @@ def build_source_control_runtime(
                 clock,
             ),
             eligibility=CurrentActorEligibilityAdapter(
-                identity_engine=collaborators.identity_engine,
-                identity_dependencies=collaborators.identity_dependencies,
-                workspace_engine=collaborators.workspace_engine,
-                workspace_dependencies=collaborators.workspace_dependencies,
-                authorization_engine=collaborators.authorization_engine,
-                authorization_dependencies=collaborators.authorization_dependencies,
+                qualification=collaborators.qualification,
             ),
             audit=SqlAlchemyTransactionalAuditAppender(),
             clock=clock,
@@ -151,10 +156,23 @@ def build_source_control_runtime(
                 collaborators.requirement_engine,
                 collaborators.requirement_dependencies,
             ),
-            gitlab_merge_requests=HttpxGitLabMergeRequestAdapter(
-                client=client,
-                secrets=secrets,
-                connection_ref=settings.connection_id,
+            gitlab_merge_requests=merge_requests,
+            gitlab_formal_merge_requests=merge_requests,
+            evidence_repository_factory=SqlAlchemySourceControlEvidenceRepository,
+            formal_repository_factory=SqlAlchemySourceControlFormalRepository,
+            requirement_evidence=RequirementFacadeEvidenceAdapter(
+                collaborators.requirement_engine,
+                collaborators.requirement_dependencies,
+            ),
+            requirement_formal_delivery=RequirementFacadeFormalDeliveryAdapter(
+                collaborators.requirement_engine,
+                collaborators.requirement_dependencies,
+            ),
+            formal_review_routing=GovernedFormalReviewRoutingAdapter(
+                collaborators.organization_engine,
+                collaborators.organization_dependencies,
+                collaborators.requirement_policy,
+                collaborators.qualification,
             ),
         )
     except Exception:

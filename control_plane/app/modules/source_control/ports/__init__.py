@@ -29,6 +29,22 @@ from control_plane.app.modules.source_control.ports.delivery_requirement import 
     RequirementDeliveryContext,
     RequirementDeliveryPort,
 )
+from control_plane.app.modules.source_control.ports.evidence_repository import (
+    SourceControlEvidenceRepository,
+    SourceControlEvidenceRepositoryFactory,
+)
+from control_plane.app.modules.source_control.ports.formal_repository import (
+    SourceControlFormalRepository,
+    SourceControlFormalRepositoryFactory,
+)
+from control_plane.app.modules.source_control.ports.formal_requirement import (
+    FormalDeliveryAdmission,
+    FormalDeliveryBlockedCallback,
+    FormalMergedCallback,
+    FormalMrReadyCallback,
+    FormalReviewRoutingPort,
+    RequirementFormalDeliveryPort,
+)
 from control_plane.app.modules.source_control.ports.gitlab import (
     BranchSnapshot,
     GitLabAccessDenied,
@@ -51,6 +67,7 @@ from control_plane.app.modules.source_control.ports.integration_repository impor
     SourceControlIntegrationRepositoryFactory,
 )
 from control_plane.app.modules.source_control.ports.merge_requests import (
+    GitLabFormalMergeRequestPort,
     GitLabMergeRequestBlocked,
     GitLabMergeRequestHeadChanged,
     GitLabMergeRequestLocator,
@@ -74,6 +91,10 @@ from control_plane.app.modules.source_control.ports.requirement import (
     BindingReadyResult,
     RequirementBindingContext,
     RequirementBindingPort,
+)
+from control_plane.app.modules.source_control.ports.requirement_evidence import (
+    RelayEvidenceRequestsResult,
+    RequirementEvidencePort,
 )
 from control_plane.app.modules.source_control.ports.runtime import ClockPort, RandomPort
 
@@ -99,6 +120,11 @@ __all__ = [
     "ClockPort",
     "ExternalMergeDriftResult",
     "GitLabAccessDenied",
+    "FormalDeliveryAdmission",
+    "FormalDeliveryBlockedCallback",
+    "FormalMergedCallback",
+    "FormalMrReadyCallback",
+    "FormalReviewRoutingPort",
     "GitLabBranchAlreadyExists",
     "GitLabBranchConflict",
     "GitLabBranchNotFound",
@@ -108,6 +134,7 @@ __all__ = [
     "GitLabMergeRequestHeadChanged",
     "GitLabMergeRequestLocator",
     "GitLabMergeRequestNotFound",
+    "GitLabFormalMergeRequestPort",
     "GitLabMergeRequestPort",
     "GitLabMergeRequestSnapshot",
     "GitLabPort",
@@ -129,14 +156,21 @@ __all__ = [
     "BindingReadyResult",
     "RandomPort",
     "RelayIntegrationDeliveryRequestsResult",
+    "RelayEvidenceRequestsResult",
     "RequirementBindingContext",
     "RequirementBindingPort",
     "RequirementDeliveryContext",
     "RequirementDeliveryPort",
+    "RequirementEvidencePort",
+    "RequirementFormalDeliveryPort",
     "SecretReferencePort",
     "SourceControlPolicyPort",
     "SourceControlIntegrationRepository",
     "SourceControlIntegrationRepositoryFactory",
+    "SourceControlEvidenceRepository",
+    "SourceControlEvidenceRepositoryFactory",
+    "SourceControlFormalRepository",
+    "SourceControlFormalRepositoryFactory",
     "SourceControlRepository",
     "SourceControlRepositoryFactory",
     "create_and_verify_branch",

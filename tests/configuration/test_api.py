@@ -13,7 +13,11 @@ from control_plane.app.modules.audit import AuditEnvelope
 from control_plane.app.modules.audit.adapters.transactional import (
     SqlAlchemyTransactionalAuditAppender,
 )
-from control_plane.app.modules.configuration import ConfigurationDependencies
+from control_plane.app.modules.configuration import (
+    ConfigurationDependencies,
+    IdentityPolicyRuntime,
+    PolicyRuntimeRegistry,
+)
 from control_plane.app.shared.api.problem import register_problem_handlers
 from control_plane.app.shared.api.request_id import request_id_middleware
 from control_plane.app.shared.security import SecretMaterial
@@ -139,7 +143,9 @@ def test_draft_api_enforces_etags_durable_replay_validation_and_current_request_
     actor_id = f"admin-{uuid4()}"
     guarded: list[tuple[str, str | None]] = []
     runtime = ConfigurationHttpRuntime(
-        engine=configuration_rw_engine,
+        owners=PolicyRuntimeRegistry(
+            IdentityPolicyRuntime(configuration_rw_engine, _dependencies())
+        ),
         dependencies=_dependencies(),
         secret_manager=_Secrets(),
     )
@@ -301,7 +307,9 @@ def test_create_unknown_key_replays_one_value_safe_denial_audit(
 
     actor_id = f"admin-{uuid4()}"
     runtime = ConfigurationHttpRuntime(
-        engine=configuration_rw_engine,
+        owners=PolicyRuntimeRegistry(
+            IdentityPolicyRuntime(configuration_rw_engine, _dependencies())
+        ),
         dependencies=_dependencies(),
         secret_manager=_Secrets(),
     )
@@ -384,7 +392,9 @@ def test_update_deterministic_denials_each_append_one_safe_audit(
     owner_id = f"admin-{uuid4()}"
     other_id = f"admin-{uuid4()}"
     runtime = ConfigurationHttpRuntime(
-        engine=configuration_rw_engine,
+        owners=PolicyRuntimeRegistry(
+            IdentityPolicyRuntime(configuration_rw_engine, _dependencies())
+        ),
         dependencies=_dependencies(),
         secret_manager=_Secrets(),
     )
@@ -544,7 +554,9 @@ def test_create_rolls_back_and_returns_safe_503_for_invalid_active_snapshot(
 
     actor_id = f"admin-{uuid4()}"
     runtime = ConfigurationHttpRuntime(
-        engine=configuration_rw_engine,
+        owners=PolicyRuntimeRegistry(
+            IdentityPolicyRuntime(configuration_rw_engine, _dependencies())
+        ),
         dependencies=_dependencies(),
         secret_manager=_Secrets(),
     )
@@ -611,7 +623,12 @@ def test_create_rolls_back_all_facts_when_audit_append_fails(
 
     actor_id = f"admin-{uuid4()}"
     runtime = ConfigurationHttpRuntime(
-        engine=configuration_rw_engine,
+        owners=PolicyRuntimeRegistry(
+            IdentityPolicyRuntime(
+                configuration_rw_engine,
+                ConfigurationDependencies(clock=_Clock(), random=_Random(), audit=_FailingAudit()),
+            )
+        ),
         dependencies=ConfigurationDependencies(
             clock=_Clock(),
             random=_Random(),

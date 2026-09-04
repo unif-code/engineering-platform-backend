@@ -30,8 +30,44 @@ from control_plane.app.modules.source_control.domain import EffectOperation, Eff
 from control_plane.tools import source_control_worker
 
 
+@pytest.fixture(autouse=True)
+def idle_delivery_lanes(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in (
+        "relay_requirement_evidence_requests",
+        "relay_requirement_formal_delivery_requests",
+    ):
+        monkeypatch.setattr(
+            batches, name, lambda **kw: SimpleNamespace(claimed=0, accepted=0, released=0)
+        )
+    monkeypatch.setattr(batches, "reconcile_due_formal_effects", lambda **kw: ())
+
+
+def _empty_delivery_dependencies() -> dict[str, Any]:
+    return {
+        "evidence_repository_factory": lambda db: SimpleNamespace(
+            pending_evidence_request_ids=lambda **kw: []
+        ),
+        "formal_repository_factory": lambda db: SimpleNamespace(
+            pending_formal_request_candidates=lambda **kw: []
+        ),
+        "requirement_formal_delivery": object(),
+        "gitlab_formal_merge_requests": object(),
+        "formal_review_routing": object(),
+    }
+
+
 def _dependencies() -> SourceControlDependencies:
-    return cast(SourceControlDependencies, object())
+    return cast(
+        SourceControlDependencies,
+        SimpleNamespace(
+            requirement_evidence=object(),
+            evidence_repository_factory=object(),
+            requirement_formal_delivery=object(),
+            formal_repository_factory=object(),
+            gitlab_formal_merge_requests=object(),
+            formal_review_routing=object(),
+        ),
+    )
 
 
 def test_worker_default_path_owns_the_shared_runtime_context(
@@ -65,7 +101,7 @@ def test_worker_default_path_owns_the_shared_runtime_context(
     )
 
     exit_code = source_control_worker.main(
-        ["process", "--limit", "3"],
+        ["process", "--limit", "5"],
         runtime_context_provider=runtime_context,
     )
 
@@ -73,8 +109,8 @@ def test_worker_default_path_owns_the_shared_runtime_context(
     assert lifecycle == ["entered", "closed"]
     assert json.loads(capsys.readouterr().out) == {
         "command": "process",
-        "claimed": 3,
-        "processed": 3,
+        "claimed": 5,
+        "processed": 5,
         "released": 0,
         "effect_ids": [],
         "error_codes": [],
@@ -90,7 +126,7 @@ def test_worker_incomplete_runtime_is_nonzero_and_sanitized(
         yield  # pragma: no cover
 
     exit_code = source_control_worker.main(
-        ["relay", "--limit", "2"],
+        ["relay", "--limit", "4"],
         runtime_context_provider=unavailable_runtime,
     )
 
@@ -106,9 +142,9 @@ def test_worker_incomplete_runtime_is_nonzero_and_sanitized(
 @pytest.mark.parametrize(
     ("facade", "minimum"),
     [
-        (relay_due_source_control_requests, 2),
-        (process_due_source_control_inboxes, 3),
-        (reconcile_due_source_control_effects, 2),
+        (relay_due_source_control_requests, 4),
+        (process_due_source_control_inboxes, 5),
+        (reconcile_due_source_control_effects, 3),
     ],
 )
 def test_batch_facades_reject_limits_below_their_lane_minimum(
@@ -135,7 +171,7 @@ def test_relay_batch_reserves_both_lanes_with_one_hard_budget(
     monkeypatch.setattr(batches, "relay_binding_requests", binding)
     monkeypatch.setattr(batches, "relay_integration_delivery_requests", delivery)
 
-    result = relay_due_source_control_requests(limit=5, dependencies=_dependencies())
+    result = relay_due_source_control_requests(limit=9, dependencies=_dependencies())
 
     assert calls == [("binding", 3), ("delivery", 2)]
     assert (result.claimed, result.processed, result.released) == (5, 4, 1)
@@ -168,7 +204,7 @@ def test_reconcile_batch_reserves_both_lanes_and_never_truncates_results(
     monkeypatch.setattr(batches, "reconcile_due_effects", branch)
     monkeypatch.setattr(batches, "reconcile_due_integration_effects", integration)
 
-    result = reconcile_due_source_control_effects(limit=5, dependencies=_dependencies())
+    result = reconcile_due_source_control_effects(limit=7, dependencies=_dependencies())
 
     assert calls == [("branch", 3), ("integration", 2)]
     assert result.claimed == result.processed == 5
@@ -184,7 +220,7 @@ def test_reconcile_batch_reserves_both_lanes_and_never_truncates_results(
 
 @pytest.mark.parametrize(
     ("limit", "expected"),
-    [(2, [("branch", 1), ("integration", 1)]), (50, [("branch", 25), ("integration", 25)])],
+    [(3, [("branch", 1), ("integration", 1)]), (50, [("branch", 17), ("integration", 17)])],
 )
 def test_reconcile_batch_never_starves_either_lane_at_supported_limits(
     limit: int,
@@ -286,6 +322,7 @@ def test_integration_reconciliation_callbacks_only_use_budget_left_after_claims(
             engine=SimpleNamespace(begin=_ConnectionContext),
             clock=SimpleNamespace(now=lambda: datetime(2026, 8, 26, tzinfo=UTC)),
             delivery_repository_factory=lambda db: repository,
+            **_empty_delivery_dependencies(),
         ),
     )
     monkeypatch.setattr(
@@ -352,7 +389,7 @@ def test_integration_callback_replay_overfetches_excluded_rows_and_stops_at_budg
 
     repository = SimpleNamespace(
         pending_callback_effects=pending_callback_effects,
-        merge_request_binding_by_work_item=lambda work_item_id: {"id": f"binding-{work_item_id}"},
+        merge_request_binding_by_effect=lambda effect_id: {"id": f"binding-{effect_id}"},
     )
     requirement = SimpleNamespace(
         delivery_context=lambda work_item_id: SimpleNamespace(
@@ -367,6 +404,7 @@ def test_integration_callback_replay_overfetches_excluded_rows_and_stops_at_budg
         SimpleNamespace(
             engine=SimpleNamespace(connect=_ConnectionContext),
             delivery_repository_factory=lambda db: repository,
+            **_empty_delivery_dependencies(),
             requirement_delivery=requirement,
         ),
     )
@@ -426,6 +464,7 @@ def test_reconciliation_does_not_scan_callbacks_when_effects_fill_budget(
             clock=SimpleNamespace(now=lambda: datetime(2026, 8, 26, tzinfo=UTC)),
             repository_factory=lambda db: repository,
             delivery_repository_factory=lambda db: repository,
+            **_empty_delivery_dependencies(),
         ),
     )
     if module is branch_reconciliation_module:
@@ -578,6 +617,7 @@ def test_process_batch_round_robins_three_read_only_candidate_lanes(
             clock=SimpleNamespace(now=lambda: object()),
             repository_factory=lambda db: primary_repository,
             delivery_repository_factory=lambda db: delivery_repository,
+            **_empty_delivery_dependencies(),
         ),
     )
     calls: list[tuple[str, str]] = []
@@ -612,7 +652,7 @@ def test_process_batch_round_robins_three_read_only_candidate_lanes(
     monkeypatch.setattr(batches, "process_integration_merge_candidate", merge)
     monkeypatch.setattr(batches, "process_webhook_candidate", webhook)
 
-    result = process_due_source_control_inboxes(limit=5, dependencies=dependencies)
+    result = process_due_source_control_inboxes(limit=7, dependencies=dependencies)
 
     assert calls == [
         ("branch", "branch-1"),
@@ -653,6 +693,7 @@ def test_process_batch_treats_typed_concurrent_claim_loss_as_benign_noop(
             clock=SimpleNamespace(now=lambda: object()),
             repository_factory=lambda db: primary_repository,
             delivery_repository_factory=lambda db: delivery_repository,
+            **_empty_delivery_dependencies(),
         ),
     )
 
@@ -661,7 +702,7 @@ def test_process_batch_treats_typed_concurrent_claim_loss_as_benign_noop(
 
     monkeypatch.setattr(batches, "process_integration_mr_candidate", lose_claim)
 
-    result = process_due_source_control_inboxes(limit=3, dependencies=dependencies)
+    result = process_due_source_control_inboxes(limit=5, dependencies=dependencies)
 
     assert (result.claimed, result.processed) == (0, 0)
     assert result.effect_ids == result.error_codes == ()
@@ -693,6 +734,7 @@ def test_process_batch_exact_claim_loser_is_a_side_effect_free_noop(
             clock=SimpleNamespace(now=lambda: datetime(2026, 8, 28, tzinfo=UTC)),
             repository_factory=lambda db: repository,
             delivery_repository_factory=lambda db: repository,
+            **_empty_delivery_dependencies(),
             requirement=_ForbiddenCollaborator("requirement", callback_calls),
             requirement_delivery=_ForbiddenCollaborator("requirement_delivery", callback_calls),
             eligibility=_ForbiddenCollaborator("eligibility", provider_calls),
@@ -702,7 +744,7 @@ def test_process_batch_exact_claim_loser_is_a_side_effect_free_noop(
         ),
     )
 
-    result = process_due_source_control_inboxes(limit=3, dependencies=dependencies)
+    result = process_due_source_control_inboxes(limit=5, dependencies=dependencies)
 
     assert (result.claimed, result.processed) == (0, 0)
     assert result.effect_ids == result.error_codes == ()
@@ -739,6 +781,7 @@ def test_process_batch_does_not_reassign_unused_active_lane_quota(
             clock=SimpleNamespace(now=lambda: object()),
             repository_factory=lambda db: primary_repository,
             delivery_repository_factory=lambda db: delivery_repository,
+            **_empty_delivery_dependencies(),
         ),
     )
     calls: list[str] = []
@@ -763,7 +806,7 @@ def test_process_batch_does_not_reassign_unused_active_lane_quota(
         lambda inbox_id, *, dependencies: (processed(inbox_id), 1)[1],
     )
 
-    result = process_due_source_control_inboxes(limit=6, dependencies=dependencies)
+    result = process_due_source_control_inboxes(limit=10, dependencies=dependencies)
 
     assert calls == ["branch-1", "create-1", "webhook-1", "branch-2"]
     assert result.claimed == result.processed == 4
@@ -788,6 +831,7 @@ def test_process_batch_discards_non_allowlisted_provider_reason_from_worker_repo
             clock=SimpleNamespace(now=lambda: object()),
             repository_factory=lambda db: primary_repository,
             delivery_repository_factory=lambda db: delivery_repository,
+            **_empty_delivery_dependencies(),
         ),
     )
     monkeypatch.setattr(
@@ -799,7 +843,7 @@ def test_process_batch_discards_non_allowlisted_provider_reason_from_worker_repo
         ),
     )
 
-    result = process_due_source_control_inboxes(limit=6, dependencies=dependencies)
+    result = process_due_source_control_inboxes(limit=10, dependencies=dependencies)
     monkeypatch.setattr(
         source_control_worker,
         "process_due_source_control_inboxes",
@@ -827,7 +871,7 @@ def test_process_batch_discards_non_allowlisted_provider_reason_from_worker_repo
 
 @pytest.mark.parametrize(
     ("command", "minimum"),
-    [("relay", 2), ("process", 3), ("reconcile", 2)],
+    [("relay", 4), ("process", 5), ("reconcile", 3)],
 )
 def test_worker_reports_invalid_argument_for_command_specific_minimum(
     command: str,
@@ -847,7 +891,7 @@ def test_worker_reports_invalid_argument_for_command_specific_minimum(
 
 @pytest.mark.parametrize(
     ("command", "minimum"),
-    [("relay", 2), ("process", 3), ("reconcile", 2)],
+    [("relay", 4), ("process", 5), ("reconcile", 3)],
 )
 def test_worker_rejects_invalid_limit_before_resolving_dependencies(
     command: str,

@@ -250,6 +250,10 @@ def complete_create_reconciliation(
             or locked.attempts != effect.attempts
         ):
             return CreateCompletion(locked, None, None, effect_reason(locked), False)
+        repository.supersede_current_integration_binding(
+            effect.work_item_id,
+            now=now,
+        )
         binding_row = repository.insert_merge_request_binding(
             id=str(dependencies.random.uuid4()),
             kind=MergeRequestKind.INTEGRATION.value,

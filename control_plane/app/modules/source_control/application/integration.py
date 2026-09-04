@@ -103,10 +103,12 @@ def _process_integration_mr_request(
     with dependencies.engine.connect() as db:
         local_repository = repository_factory(db)
         branch_row = local_repository.branch_binding_by_work_item(callback_subject.work_item_id)
-        existing_effect_row = local_repository.effect_by_operation_subject(
+        existing_effect_rows = local_repository.effects_by_operation_work_item_fingerprint(
             _CREATE_OPERATION.value,
-            f"work-item:{callback_subject.work_item_id}",
+            callback_subject.work_item_id,
+            inbox["payload_hash"],
         )
+        existing_effect_row = existing_effect_rows[0] if len(existing_effect_rows) == 1 else None
     try:
         existing_effect = None if existing_effect_row is None else _effect_dto(existing_effect_row)
     except (TypeError, ValueError):
@@ -119,14 +121,17 @@ def _process_integration_mr_request(
             if existing_effect is None or branch_row is None
             else _validated_effect_payload(
                 existing_effect,
-                subject_key=f"work-item:{callback_subject.work_item_id}",
+                subject_key=existing_effect.subject_key,
                 requirement_id=str(inbox["requirement_id"]),
                 repository_id=str(inbox["repository_id"]),
                 request_fingerprint=inbox["payload_hash"],
                 branch_binding_id=str(branch_row["id"]),
+                work_item_id=callback_subject.work_item_id,
             )
         )
-        local_effect_conflict = existing_effect is not None and existing_payload is None
+        local_effect_conflict = len(existing_effect_rows) > 1 or (
+            existing_effect is not None and existing_payload is None
+        )
 
     persisted_preflight_reason = stored_reason(inbox["last_error_code"])
     if persisted_preflight_reason in _PREFLIGHT_OUTCOME_REASONS:
@@ -162,6 +167,7 @@ def _process_integration_mr_request(
         if inbox["state"] == "PROCESSED" and existing_effect is not None:
             return _replay_processed_request(
                 callback_subject,
+                request_fingerprint=inbox["payload_hash"],
                 dependencies=dependencies,
             )
         raise RequirementCallbackUnavailable("Delivery request is unavailable")
@@ -177,6 +183,7 @@ def _process_integration_mr_request(
                 raise RequirementCallbackUnavailable("Integration MR inbox lease was lost")
         return _replay_processed_request(
             callback_subject,
+            request_fingerprint=inbox["payload_hash"],
             dependencies=dependencies,
         )
 
@@ -207,6 +214,29 @@ def _process_integration_mr_request(
             dependencies=dependencies,
         )
     source = provider_preflight.source
+
+    with dependencies.engine.connect() as db:
+        local_repository = repository_factory(db)
+        head_already_integrated = any(
+            observation is not None
+            and observation["state"] == "MERGED"
+            and observation["head_sha"] == source.commit_sha
+            for binding in local_repository.integration_merge_request_bindings_by_work_item(
+                context.work_item_id
+            )
+            if binding["head_sha"] == source.commit_sha
+            for observation in (
+                local_repository.latest_merge_request_observation(str(binding["id"])),
+            )
+        )
+    if head_already_integrated:
+        return _complete_preflight_block(
+            callback_subject,
+            message_id=message_id,
+            inbox_attempts=claimed["attempts"],
+            reason_code=SourceControlReason.NO_DELIVERY_COMMIT,
+            dependencies=dependencies,
+        )
 
     if (
         existing_payload is not None
@@ -248,9 +278,17 @@ def _process_integration_mr_request(
     effect = acquired.effect
 
     try:
+        with dependencies.engine.connect() as db:
+            bound_merge_requests = frozenset(
+                (row["external_project_id"], row["merge_request_iid"])
+                for row in repository_factory(db).integration_merge_request_bindings_by_work_item(
+                    context.work_item_id
+                )
+            )
         proof = _prove_created_or_adopted_merge_request(
             admission,
             acquired,
+            bound_merge_requests=bound_merge_requests,
             gitlab=gitlab,
         )
     except _ProviderUnknown:

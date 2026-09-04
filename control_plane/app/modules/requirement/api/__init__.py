@@ -14,6 +14,18 @@ from control_plane.app.modules.requirement.api.routes import (
     create_requirement_foundation_router,
     create_requirement_planning_router,
 )
+from control_plane.app.modules.requirement.api.v06_routes import (
+    FORMAL_MERGE_REQUEST_MERGE_CAPABILITY,
+    FORMAL_MERGE_REQUEST_REQUEST_CAPABILITY,
+    FORMAL_MERGE_REQUEST_REVIEW_CAPABILITY,
+    REQUIREMENT_ACCEPTANCE_DECIDE_CAPABILITY,
+    REQUIREMENT_ACCEPTANCE_SUBMIT_CAPABILITY,
+    REQUIREMENT_DELIVERY_GATE_ASSIGN_CAPABILITY,
+    REQUIREMENT_EVIDENCE_REQUEST_CAPABILITY,
+    REQUIREMENT_EVIDENCE_SELECT_CAPABILITY,
+    WORK_ITEM_VALIDATION_SUBMIT_CAPABILITY,
+    create_requirement_v06_delivery_router,
+)
 
 __all__ = [
     "REQUIREMENT_BASELINE_ASSIGN_CAPABILITY",
@@ -23,9 +35,19 @@ __all__ = [
     "REQUIREMENT_READ_CAPABILITY",
     "WORK_ITEM_CREATE_CAPABILITY",
     "WORK_ITEM_ASSIGN_CAPABILITY",
+    "WORK_ITEM_VALIDATION_SUBMIT_CAPABILITY",
+    "REQUIREMENT_EVIDENCE_REQUEST_CAPABILITY",
+    "REQUIREMENT_EVIDENCE_SELECT_CAPABILITY",
+    "REQUIREMENT_ACCEPTANCE_SUBMIT_CAPABILITY",
+    "REQUIREMENT_ACCEPTANCE_DECIDE_CAPABILITY",
+    "REQUIREMENT_DELIVERY_GATE_ASSIGN_CAPABILITY",
+    "FORMAL_MERGE_REQUEST_REQUEST_CAPABILITY",
+    "FORMAL_MERGE_REQUEST_REVIEW_CAPABILITY",
+    "FORMAL_MERGE_REQUEST_MERGE_CAPABILITY",
     "RequirementHttpRuntime",
     "create_requirement_baseline_router",
     "create_requirement_delivery_router",
     "create_requirement_foundation_router",
     "create_requirement_planning_router",
+    "create_requirement_v06_delivery_router",
 ]

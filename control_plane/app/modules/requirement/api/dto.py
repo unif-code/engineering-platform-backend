@@ -1,4 +1,5 @@
 from datetime import datetime
+from enum import StrEnum
 from uuid import UUID
 
 from pydantic import ConfigDict, Field
@@ -8,6 +9,8 @@ from control_plane.app.modules.requirement.application.delivery import (
     WorkItemDeliveryResult,
 )
 from control_plane.app.modules.requirement.domain import (
+    AcceptanceConfirmationResult,
+    AcceptanceDecisionResult,
     AddWorkItemResult,
     AssignmentState,
     AssignWorkItemResult,
@@ -17,28 +20,39 @@ from control_plane.app.modules.requirement.domain import (
     CreateSddArtifactResult,
     DecisionDto,
     DecisionOutcome,
+    DeliveryDecisionDto,
+    DeliveryGateAssignmentDto,
+    DeliveryGateDto,
+    DeliveryGateState,
+    DeliveryGateType,
     ExecutorType,
+    ExternalValidationSubmission,
+    FormalDeliveryCommandResult,
+    FormalDeliveryState,
     GateAssignmentDto,
     GateInstanceDto,
     GateReassignmentResult,
     GateState,
     GateType,
+    IntegrationBaselineSelectionDto,
     IntegrationDeliveryBlockedReason,
     IntegrationDeliveryState,
     RecordState,
     RegisterSddBaselineResult,
     RepositoryBindingBlockedReason,
     RepositoryState,
+    RequestIntegrationBaselineResult,
+    RequirementDeliverySnapshot,
     RequirementDetailsDto,
     RequirementDto,
     RequirementPage,
-    RequirementState,
     RequirementType,
     SddArtifactVersionDto,
     SddBaselineDto,
+    SelectIntegrationBaselineResult,
+    SubmitExternalValidationResult,
     WorkItemAssignmentDto,
     WorkItemDto,
-    WorkItemState,
 )
 from control_plane.app.shared.api.camel import CamelModel
 
@@ -50,6 +64,29 @@ class StrictCamelModel(CamelModel):
         validate_by_alias=True,
         validate_by_name=False,
     )
+
+
+class RequirementState(StrEnum):
+    CREATED = "CREATED"
+    PREPARING = "PREPARING"
+    AWAITING_CONFIRMATION = "AWAITING_CONFIRMATION"
+    READY = "READY"
+    IN_PROGRESS = "IN_PROGRESS"
+    VERIFYING = "VERIFYING"
+    AWAITING_ACCEPTANCE = "AWAITING_ACCEPTANCE"
+    AWAITING_MERGE = "AWAITING_MERGE"
+    COMPLETED = "COMPLETED"
+    CANCELED = "CANCELED"
+
+
+class WorkItemState(StrEnum):
+    DRAFT = "DRAFT"
+    READY = "READY"
+    IN_PROGRESS = "IN_PROGRESS"
+    VERIFYING = "VERIFYING"
+    AWAITING_MERGE = "AWAITING_MERGE"
+    COMPLETED = "COMPLETED"
+    CANCELED = "CANCELED"
 
 
 class CreateRequirementRequestDto(StrictCamelModel):
@@ -99,6 +136,43 @@ class WorkItemDeliveryCommandRequestDto(StrictCamelModel):
     pass
 
 
+class ArtifactEvidenceReferenceRequestDto(StrictCamelModel):
+    artifact_id: str = Field(min_length=1, max_length=200)
+    artifact_version: str = Field(min_length=1, max_length=200)
+    artifact_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+
+
+class SubmitExternalValidationRequestDto(StrictCamelModel):
+    target_commit_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    integration_merge_commit_sha: str = Field(pattern=r"^[0-9a-f]{40}$")
+    reference: str = Field(min_length=1, max_length=2000)
+    notes: str = Field(min_length=1, max_length=10000)
+    artifact_references: list[ArtifactEvidenceReferenceRequestDto] = Field(min_length=1)
+
+
+class RequestIntegrationBaselineRequestDto(StrictCamelModel):
+    expected_requirement_version: int = Field(strict=True, ge=1)
+
+
+class SelectIntegrationBaselineRequestDto(RequestIntegrationBaselineRequestDto):
+    delivery_snapshot_id: UUID
+    integration_baseline_id: UUID
+
+
+class AcceptanceConfirmationRequestDto(StrictCamelModel):
+    selection_id: UUID
+
+
+class DeliveryDecisionRequestDto(StrictCamelModel):
+    gate_id: UUID
+    outcome: DecisionOutcome
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+class FormalDeliveryCommandRequestDto(StrictCamelModel):
+    pass
+
+
 class RequirementResponseDto(CamelModel):
     id: UUID
     workspace_id: UUID
@@ -106,6 +180,8 @@ class RequirementResponseDto(CamelModel):
     title: str
     description: str
     acceptance_criteria: list[str]
+    acceptance_criteria_version: int
+    acceptance_criteria_hash: str
     created_by: str
     initial_repository_id: str
     route_snapshot_version: int
@@ -117,6 +193,8 @@ class RequirementResponseDto(CamelModel):
     required_work_item_set_version: int
     required_work_item_set_hash: str
     current_sdd_baseline_id: UUID | None
+    current_integration_baseline_selection_id: UUID | None
+    current_acceptance_gate_id: UUID | None
     revision: int
     created_at: datetime
     updated_at: datetime
@@ -146,6 +224,10 @@ class WorkItemResponseDto(CamelModel):
     integration_merge_request_binding_id: UUID | None
     integration_blocked_reason_code: IntegrationDeliveryBlockedReason | None
     integration_updated_at: datetime | None
+    formal_delivery_state: FormalDeliveryState
+    formal_merge_request_binding_id: UUID | None
+    formal_blocked_reason_code: str | None
+    formal_updated_at: datetime | None
     revision: int
     created_at: datetime
     updated_at: datetime
@@ -153,6 +235,261 @@ class WorkItemResponseDto(CamelModel):
     @classmethod
     def from_domain(cls, value: WorkItemDto) -> "WorkItemResponseDto":
         return cls.model_validate(value.model_dump(mode="json"))
+
+
+class ExternalValidationSubmissionResponseDto(CamelModel):
+    message_id: UUID
+    requirement_id: UUID
+    requirement_version: int
+    work_item_id: UUID
+    work_item_revision: int
+    repository_id: str
+    integration_merge_request_binding_id: UUID
+    target_commit_sha: str
+    integration_merge_commit_sha: str
+    reference: str
+    notes: str
+    artifact_references: list["ArtifactEvidenceReferenceResponseDto"]
+    submitted_by: str
+    submitted_at: datetime
+
+    @classmethod
+    def from_domain(
+        cls,
+        value: ExternalValidationSubmission,
+    ) -> "ExternalValidationSubmissionResponseDto":
+        return cls.model_validate(value.model_dump(mode="json"))
+
+
+class ArtifactEvidenceReferenceResponseDto(CamelModel):
+    artifact_id: str
+    artifact_version: str
+    artifact_hash: str
+
+
+class SubmitExternalValidationResponseDto(CamelModel):
+    requirement: RequirementResponseDto
+    submission: ExternalValidationSubmissionResponseDto
+    outbox_topic: str
+
+    @classmethod
+    def from_domain(
+        cls,
+        value: SubmitExternalValidationResult,
+    ) -> "SubmitExternalValidationResponseDto":
+        return cls(
+            requirement=RequirementResponseDto.from_domain(value.requirement),
+            submission=ExternalValidationSubmissionResponseDto.from_domain(value.submission),
+            outbox_topic=value.outbox_topic,
+        )
+
+
+class RequirementDeliverySnapshotResponseDto(CamelModel):
+    id: UUID
+    requirement_id: UUID
+    requirement_version: int
+    required_work_item_set_version: int
+    required_work_item_set_hash: str
+    work_item_ids: list[UUID]
+    snapshot_hash: str
+    created_by: str
+    created_at: datetime | None
+
+    @classmethod
+    def from_domain(
+        cls,
+        value: RequirementDeliverySnapshot,
+    ) -> "RequirementDeliverySnapshotResponseDto":
+        return cls.model_validate(value.model_dump(mode="json"))
+
+
+class RequestIntegrationBaselineResponseDto(CamelModel):
+    requirement: RequirementResponseDto
+    snapshot: RequirementDeliverySnapshotResponseDto
+    outbox_topic: str
+
+    @classmethod
+    def from_domain(
+        cls,
+        value: RequestIntegrationBaselineResult,
+    ) -> "RequestIntegrationBaselineResponseDto":
+        return cls(
+            requirement=RequirementResponseDto.from_domain(value.requirement),
+            snapshot=RequirementDeliverySnapshotResponseDto.from_domain(value.snapshot),
+            outbox_topic=value.outbox_topic,
+        )
+
+
+class IntegrationBaselineSelectionResponseDto(CamelModel):
+    id: UUID
+    requirement_id: UUID
+    delivery_snapshot_id: UUID
+    integration_baseline_id: UUID
+    integration_baseline_hash: str
+    evidence_requirement_version: int
+    evidence_required_work_item_set_version: int
+    evidence_required_work_item_set_hash: str
+    requirement_version_before: int
+    requirement_version_after: int
+    selected_by: str
+    selected_at: datetime
+    invalidated_at: datetime | None
+    invalidation_reason: str | None
+
+    @classmethod
+    def from_domain(
+        cls,
+        value: IntegrationBaselineSelectionDto,
+    ) -> "IntegrationBaselineSelectionResponseDto":
+        return cls.model_validate(value.model_dump(mode="json"))
+
+
+class DeliveryGateResponseDto(CamelModel):
+    id: UUID
+    gate_type: DeliveryGateType
+    requirement_id: UUID
+    work_item_id: UUID | None
+    selection_id: UUID
+    requirement_version: int
+    acceptance_criteria_version: int
+    acceptance_criteria_hash: str
+    integration_baseline_id: UUID
+    integration_baseline_hash: str
+    formal_merge_request_binding_id: UUID | None
+    subject_head_sha: str | None
+    policy_code: str
+    policy_version: int
+    policy_snapshot_hash: str
+    state: DeliveryGateState
+    revision: int
+    created_at: datetime
+    decided_at: datetime | None
+    invalidated_at: datetime | None
+    invalidation_reason: str | None
+
+    @classmethod
+    def from_domain(cls, value: DeliveryGateDto) -> "DeliveryGateResponseDto":
+        return cls.model_validate(value.model_dump(mode="json"))
+
+
+class DeliveryGateAssignmentResponseDto(CamelModel):
+    id: UUID
+    gate_id: UUID
+    default_reviewer_id: str
+    current_reviewer_id: str
+    resolution_snapshot: dict[str, object]
+    revision: int
+    assigned_at: datetime
+    superseded_at: datetime | None
+
+    @classmethod
+    def from_domain(
+        cls,
+        value: DeliveryGateAssignmentDto,
+    ) -> "DeliveryGateAssignmentResponseDto":
+        return cls.model_validate(value.model_dump(mode="json"))
+
+
+class DeliveryDecisionResponseDto(CamelModel):
+    id: UUID
+    gate_id: UUID
+    gate_assignment_id: UUID
+    reviewer_id: str
+    outcome: DecisionOutcome
+    reason: str
+    subject_revision: int
+    requirement_version: int
+    acceptance_criteria_version: int
+    acceptance_criteria_hash: str
+    integration_baseline_id: UUID
+    integration_baseline_hash: str
+    subject_head_sha: str | None
+    eligibility_snapshot: dict[str, object]
+    validity: str
+    decided_at: datetime
+    invalidated_at: datetime | None
+    invalidation_reason: str | None
+
+    @classmethod
+    def from_domain(
+        cls,
+        value: DeliveryDecisionDto,
+    ) -> "DeliveryDecisionResponseDto":
+        return cls.model_validate(value.model_dump(mode="json"))
+
+
+class SelectIntegrationBaselineResponseDto(CamelModel):
+    requirement: RequirementResponseDto
+    selection: IntegrationBaselineSelectionResponseDto
+    outbox_topic: str
+
+    @classmethod
+    def from_domain(
+        cls,
+        value: SelectIntegrationBaselineResult,
+    ) -> "SelectIntegrationBaselineResponseDto":
+        return cls(
+            requirement=RequirementResponseDto.from_domain(value.requirement),
+            selection=IntegrationBaselineSelectionResponseDto.from_domain(value.selection),
+            outbox_topic=value.outbox_topic,
+        )
+
+
+class AcceptanceConfirmationResponseDto(CamelModel):
+    requirement: RequirementResponseDto
+    selection: IntegrationBaselineSelectionResponseDto
+    gate: DeliveryGateResponseDto
+    assignment: DeliveryGateAssignmentResponseDto
+
+    @classmethod
+    def from_domain(
+        cls,
+        value: AcceptanceConfirmationResult,
+    ) -> "AcceptanceConfirmationResponseDto":
+        return cls(
+            requirement=RequirementResponseDto.from_domain(value.requirement),
+            selection=IntegrationBaselineSelectionResponseDto.from_domain(value.selection),
+            gate=DeliveryGateResponseDto.from_domain(value.gate),
+            assignment=DeliveryGateAssignmentResponseDto.from_domain(value.assignment),
+        )
+
+
+class AcceptanceDecisionResponseDto(CamelModel):
+    requirement: RequirementResponseDto
+    selection: IntegrationBaselineSelectionResponseDto
+    gate: DeliveryGateResponseDto
+    assignment: DeliveryGateAssignmentResponseDto
+    decision: DeliveryDecisionResponseDto
+
+    @classmethod
+    def from_domain(
+        cls,
+        value: AcceptanceDecisionResult,
+    ) -> "AcceptanceDecisionResponseDto":
+        return cls(
+            requirement=RequirementResponseDto.from_domain(value.requirement),
+            selection=IntegrationBaselineSelectionResponseDto.from_domain(value.selection),
+            gate=DeliveryGateResponseDto.from_domain(value.gate),
+            assignment=DeliveryGateAssignmentResponseDto.from_domain(value.assignment),
+            decision=DeliveryDecisionResponseDto.from_domain(value.decision),
+        )
+
+
+class FormalDeliveryCommandResponseDto(CamelModel):
+    requirement: RequirementResponseDto
+    work_item: WorkItemResponseDto
+    outbox_topic: str
+
+    @classmethod
+    def from_domain(
+        cls,
+        value: FormalDeliveryCommandResult,
+    ) -> "FormalDeliveryCommandResponseDto":
+        return cls(
+            requirement=RequirementResponseDto.from_domain(value.requirement),
+            work_item=WorkItemResponseDto.from_domain(value.work_item),
+            outbox_topic=value.outbox_topic,
+        )
 
 
 class CreateRequirementResponseDto(CamelModel):

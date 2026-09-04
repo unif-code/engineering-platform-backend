@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from sqlalchemy import Engine
 
 from control_plane.app.modules.requirement.adapters import SqlAlchemyRequirementRepository
+from control_plane.app.modules.requirement.domain import canonical_acceptance_criteria_hash
 
 NOW = datetime(2026, 8, 28, 16, 0, tzinfo=UTC)
 REQUIREMENT_ID = "10000000-0000-0000-0000-000000000401"
@@ -18,6 +19,8 @@ def _seed(repository: SqlAlchemyRequirementRepository) -> None:
         title="Plan the delivery",
         description="Persist immutable planning facts.",
         acceptance_criteria=("facts are immutable",),
+        acceptance_criteria_version=1,
+        acceptance_criteria_hash=canonical_acceptance_criteria_hash(("facts are immutable",)),
         created_by="employee-1",
         initial_repository_id="repository-1",
         route_snapshot_version=2,

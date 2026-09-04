@@ -454,6 +454,7 @@ def _update_projection(
     correlation_id: str,
     dependencies: RequirementDependencies,
     advance_requirement: bool = False,
+    audit_reason: IntegrationDeliveryBlockedReason | None = None,
 ) -> WorkItemDeliveryResult:
     current_delivery = IntegrationDeliveryState(work_item["integration_delivery_state"])
     if (
@@ -488,6 +489,7 @@ def _update_projection(
             )
             if updated_requirement is None:
                 raise StaleRequirementRevision(str(requirement["id"]))
+    reported_reason = audit_reason or blocked_reason
     audit(
         repository,
         dependencies=dependencies,
@@ -497,7 +499,7 @@ def _update_projection(
         target_id=str(work_item["id"]),
         reason=(
             f"bindingId={binding_id or 'none'}; "
-            f"reasonCode={blocked_reason.value if blocked_reason else 'none'}; "
+            f"reasonCode={reported_reason.value if reported_reason else 'none'}; "
             f"revision={updated_work_item['revision']}"
         ),
         correlation_id=correlation_id,
@@ -616,6 +618,28 @@ def _record_delivery_problem(
             or (current_binding is None and stable_binding is not None and not first_closed_binding)
         ):
             raise WorkItemDeliveryConflict("WorkItem cannot accept this delivery callback")
+        if (
+            current is IntegrationDeliveryState.MR_PENDING
+            and current_binding is None
+            and stable_binding is None
+            and delivery_state is IntegrationDeliveryState.BLOCKED
+            and reason_code is IntegrationDeliveryBlockedReason.NO_DELIVERY_COMMIT
+        ):
+            return _update_projection(
+                repository,
+                requirement=requirement,
+                work_item=work_item,
+                state=WorkItemState.IN_PROGRESS,
+                delivery_state=IntegrationDeliveryState.IMPLEMENTING,
+                binding_id=None,
+                blocked_reason=None,
+                actor=stable_actor,
+                operation=operation,
+                now=now,
+                correlation_id=stable_correlation_id,
+                dependencies=dependencies,
+                audit_reason=reason_code,
+            )
         return _update_projection(
             repository,
             requirement=requirement,

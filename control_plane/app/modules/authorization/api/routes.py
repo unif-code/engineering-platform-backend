@@ -188,8 +188,32 @@ def _execute(
     return _render(execution.response)
 
 
+def _published_navigation_meta(
+    value: Any,
+    *,
+    published_action_capabilities: frozenset[str],
+) -> dict[str, Any]:
+    meta = dict(value)
+    actions = meta.get("actionCapabilities")
+    if actions is None:
+        return meta
+    if not isinstance(actions, list):
+        meta["actionCapabilities"] = []
+        return meta
+    meta["actionCapabilities"] = [
+        dict(action)
+        for action in actions
+        if isinstance(action, dict)
+        and isinstance(action.get("capability"), str)
+        and action["capability"] in published_action_capabilities
+    ]
+    return meta
+
+
 def create_authorization_router(
     runtime_provider: Callable[[], AuthorizationHttpRuntime],
+    *,
+    published_action_capabilities: frozenset[str] = frozenset(),
 ) -> APIRouter:
     router = APIRouter(prefix="/api/v1", tags=["authorization"])
     principal_dependency = current_principal(runtime_provider)
@@ -242,7 +266,10 @@ def create_authorization_router(
             key = (str(row["capability"]), str(row["scope_type"]))
             if key not in effective_routes:
                 continue
-            meta = dict(row["meta"])
+            meta = _published_navigation_meta(
+                row["meta"],
+                published_action_capabilities=published_action_capabilities,
+            )
             result.append(
                 NavigationItemDto(
                     route_key=str(row["route_key"]),

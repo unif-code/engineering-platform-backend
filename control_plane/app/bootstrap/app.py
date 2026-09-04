@@ -28,8 +28,10 @@ from control_plane.app.modules.audit.adapters.transactional import (
 )
 from control_plane.app.modules.audit.api import AUDIT_READ_CAPABILITY, create_audit_router
 from control_plane.app.modules.authorization import (
+    ActorQualificationRuntime,
     AuthorizationDependencies,
     AuthorizationPrincipal,
+    CurrentActorFactsAdapter,
     DecisionDependencies,
     Scope,
     SecurityChangeOrchestrator,
@@ -50,7 +52,11 @@ from control_plane.app.modules.authorization.api.dependencies import (
     current_principal,
     require_capability,
 )
-from control_plane.app.modules.configuration import ConfigurationDependencies
+from control_plane.app.modules.configuration import (
+    ConfigurationDependencies,
+    IdentityPolicyRuntime,
+    PolicyRuntimeRegistry,
+)
 from control_plane.app.modules.configuration.adapters import IdentityEffectivePolicy
 from control_plane.app.modules.configuration.api import (
     ConfigurationHttpRuntime,
@@ -59,6 +65,7 @@ from control_plane.app.modules.configuration.api import (
 from control_plane.app.modules.identity import (
     IdentityDependencies,
     IdentityPolicyCommandRuntime,
+    IdentityPolicyReauthenticationRuntime,
     OwnedPolicySnapshotUnavailable,
     SessionPrincipal,
     current_identity_change_source,
@@ -88,25 +95,48 @@ from control_plane.app.modules.organization.api import (
     OrganizationHttpRuntime,
     create_organization_router,
 )
-from control_plane.app.modules.requirement import RequirementDependencies
+from control_plane.app.modules.requirement import (
+    RequirementDependencies,
+    RequirementPolicyAuthorization,
+    RequirementPolicyRuntime,
+)
 from control_plane.app.modules.requirement.adapters import (
     ComposedAutomaticAssignmentGuard,
     ComposedGateReviewerGuard,
+    DeliveryGatePolicyAdapter,
+    DeliveryReviewerGuardAdapter,
+    SourceControlFacadeEvidenceAdapter,
     SqlAlchemyRequirementRepository,
     SqlAlchemySddArtifactReader,
     V04RouteSnapshotCatalog,
     WorkspaceOwnerGatePolicy,
 )
 from control_plane.app.modules.requirement.api import (
+    FORMAL_MERGE_REQUEST_MERGE_CAPABILITY,
+    FORMAL_MERGE_REQUEST_REQUEST_CAPABILITY,
+    FORMAL_MERGE_REQUEST_REVIEW_CAPABILITY,
+    REQUIREMENT_ACCEPTANCE_DECIDE_CAPABILITY,
+    REQUIREMENT_ACCEPTANCE_SUBMIT_CAPABILITY,
+    REQUIREMENT_BASELINE_ASSIGN_CAPABILITY,
+    REQUIREMENT_BASELINE_DECIDE_CAPABILITY,
+    REQUIREMENT_BASELINE_SUBMIT_CAPABILITY,
+    REQUIREMENT_DELIVERY_GATE_ASSIGN_CAPABILITY,
+    REQUIREMENT_EVIDENCE_REQUEST_CAPABILITY,
+    REQUIREMENT_EVIDENCE_SELECT_CAPABILITY,
+    WORK_ITEM_ASSIGN_CAPABILITY,
+    WORK_ITEM_CREATE_CAPABILITY,
+    WORK_ITEM_VALIDATION_SUBMIT_CAPABILITY,
     RequirementHttpRuntime,
     create_requirement_baseline_router,
     create_requirement_delivery_router,
     create_requirement_foundation_router,
     create_requirement_planning_router,
+    create_requirement_v06_delivery_router,
 )
 from control_plane.app.modules.source_control import SourceControlDependencies
 from control_plane.app.modules.source_control.adapters import (
     SqlAlchemyAgentDeliveryRepository,
+    SqlAlchemySourceControlEvidenceRepository,
     SqlAlchemySourceControlRepository,
 )
 from control_plane.app.modules.source_control.api import (
@@ -140,6 +170,26 @@ from control_plane.app.shared.api.request_id import request_id_middleware
 from control_plane.app.shared.db.engine import ping, runtime_engine
 from control_plane.app.shared.db.settings import DbSettings, SecuritySettings
 from control_plane.app.shared.security import FileSecretManager
+
+_DEFAULT_NAVIGATION_ACTION_CAPABILITIES = frozenset(
+    {
+        WORK_ITEM_CREATE_CAPABILITY,
+        WORK_ITEM_ASSIGN_CAPABILITY,
+        REQUIREMENT_BASELINE_SUBMIT_CAPABILITY,
+        REQUIREMENT_BASELINE_ASSIGN_CAPABILITY,
+        REQUIREMENT_BASELINE_DECIDE_CAPABILITY,
+        "work_item.execute",
+        FORMAL_MERGE_REQUEST_MERGE_CAPABILITY,
+        FORMAL_MERGE_REQUEST_REQUEST_CAPABILITY,
+        FORMAL_MERGE_REQUEST_REVIEW_CAPABILITY,
+        REQUIREMENT_ACCEPTANCE_DECIDE_CAPABILITY,
+        REQUIREMENT_ACCEPTANCE_SUBMIT_CAPABILITY,
+        REQUIREMENT_DELIVERY_GATE_ASSIGN_CAPABILITY,
+        REQUIREMENT_EVIDENCE_REQUEST_CAPABILITY,
+        REQUIREMENT_EVIDENCE_SELECT_CAPABILITY,
+        WORK_ITEM_VALIDATION_SUBMIT_CAPABILITY,
+    }
+)
 
 API_DESCRIPTION = """内部研发平台 Control Plane API。
 
@@ -184,15 +234,6 @@ def workspace_runtime_engine() -> Engine:
 def authorization_runtime_engine() -> Engine:
     return create_engine(
         DbSettings().authorization_database_url,
-        pool_pre_ping=True,
-        connect_args={"connect_timeout": 2},
-    )
-
-
-@lru_cache(maxsize=1)
-def configuration_runtime_engine() -> Engine:
-    return create_engine(
-        DbSettings().configuration_database_url,
         pool_pre_ping=True,
         connect_args={"connect_timeout": 2},
     )
@@ -324,13 +365,48 @@ def configuration_dependencies() -> ConfigurationDependencies:
 
 @lru_cache(maxsize=1)
 def configuration_http_runtime() -> ConfigurationHttpRuntime:
+    dependencies = configuration_dependencies()
+    secrets = FileSecretManager(SecuritySettings())
     return ConfigurationHttpRuntime(
-        engine=configuration_runtime_engine(),
-        dependencies=configuration_dependencies(),
+        owners=PolicyRuntimeRegistry(
+            identity=IdentityPolicyRuntime(
+                identity_runtime_engine(),
+                dependencies,
+                IdentityPolicyCommandRuntime(identity_runtime_engine(), identity_dependencies()),
+            ),
+            requirement_gate=requirement_policy_runtime(),
+        ),
+        dependencies=dependencies,
+        secret_manager=secrets,
+    )
+
+
+@lru_cache(maxsize=1)
+def requirement_policy_runtime() -> RequirementPolicyRuntime:
+    auth = authorization_http_runtime()
+    return RequirementPolicyRuntime(
+        requirement_runtime_engine(),
+        configuration_dependencies(),
         secret_manager=FileSecretManager(SecuritySettings()),
-        policy_commands=IdentityPolicyCommandRuntime(
+        reauthentication=IdentityPolicyReauthenticationRuntime(
+            identity_runtime_engine(), identity_dependencies()
+        ),
+        authorization=RequirementPolicyAuthorization(
+            auth.engine, auth.dependencies, auth.decision_dependencies
+        ),
+    )
+
+
+@lru_cache(maxsize=1)
+def actor_qualification_runtime() -> ActorQualificationRuntime:
+    return ActorQualificationRuntime(
+        authorization_runtime_engine(),
+        authorization_dependencies(),
+        CurrentActorFactsAdapter(
             identity_runtime_engine(),
             identity_dependencies(),
+            workspace_runtime_engine(),
+            workspace_dependencies(),
         ),
     )
 
@@ -356,6 +432,12 @@ def requirement_dependencies() -> RequirementDependencies:
         ),
         secret_manager=FileSecretManager(SecuritySettings()),
         artifacts=SqlAlchemySddArtifactReader(requirement_runtime_engine()),
+        integration_evidence=SourceControlFacadeEvidenceAdapter(
+            source_control_query_runtime_engine(),
+            source_control_dependencies(),
+        ),
+        delivery_gate_policies=DeliveryGatePolicyAdapter(requirement_policy_runtime()),
+        delivery_reviewer_guard=DeliveryReviewerGuardAdapter(actor_qualification_runtime()),
         gate_policies=WorkspaceOwnerGatePolicy(
             workspace_engine=workspace_runtime_engine(),
             workspace_dependencies=workspace_dependencies(),
@@ -422,6 +504,7 @@ def source_control_dependencies() -> SourceControlDependencies:
         clock=SystemClock(),
         random=SystemRandom(),
         agent_delivery_repository_factory=SqlAlchemyAgentDeliveryRepository,
+        evidence_repository_factory=SqlAlchemySourceControlEvidenceRepository,
     )
 
 
@@ -563,7 +646,12 @@ def create_app(
         return {"status": "ready"}
 
     app.include_router(create_auth_router(identity_runtime_provider))
-    app.include_router(create_authorization_router(authorization_http_runtime))
+    app.include_router(
+        create_authorization_router(
+            authorization_http_runtime,
+            published_action_capabilities=_DEFAULT_NAVIGATION_ACTION_CAPABILITIES,
+        )
+    )
     protected_principal = current_principal(authorization_http_runtime)
     app.include_router(
         create_admin_account_router(
@@ -631,6 +719,13 @@ def create_app(
     app.include_router(
         create_agent_router(
             agent_runtime_provider,
+            cast(Callable[[], Any], protected_principal),
+            authorization_capability_guard,
+        )
+    )
+    app.include_router(
+        create_requirement_v06_delivery_router(
+            requirement_runtime_provider,
             cast(Callable[[], Any], protected_principal),
             authorization_capability_guard,
         )

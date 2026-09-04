@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Protocol
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from control_plane.app.modules.source_control.domain import BindingRequestEnvelope
 from control_plane.app.modules.source_control.domain.reasons import SourceControlReason
@@ -36,6 +36,7 @@ class BindingEligibility(BaseModel):
 
     eligible: bool
     reason_code: SourceControlReason | None = None
+    qualification_snapshot: dict[str, object] = Field(default_factory=dict)
 
 
 class BindingReadyResult(_CorrelatedCallbackResult):

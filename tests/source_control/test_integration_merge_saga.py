@@ -382,9 +382,9 @@ def _seed_merge_request(
         repository = SqlAlchemySourceControlIntegrationRepository(db)
         repository.insert_effect(
             id=CREATE_EFFECT_ID,
-            effect_key=f"source-control:create-integration-mr:{WORK_ITEM_ID}",
+            effect_key=f"source-control:create-integration-mr:{WORK_ITEM_ID}:{HEAD_SHA}",
             operation=EffectOperation.CREATE_INTEGRATION_MR.value,
-            subject_key=f"work-item:{WORK_ITEM_ID}",
+            subject_key=f"integration-work-item:{WORK_ITEM_ID}:{HEAD_SHA}",
             payload={"branchBindingId": BRANCH_BINDING_ID, "headSha": historical_head},
             work_item_id=WORK_ITEM_ID,
             requirement_id=REQUIREMENT_ID,
@@ -595,7 +595,7 @@ def _seed_real_requirement_merge_case(
             id=REAL_CREATE_EFFECT_ID,
             effect_key=f"source-control:create-integration-mr:{requested.work_item.id}",
             operation=EffectOperation.CREATE_INTEGRATION_MR.value,
-            subject_key=f"work-item:{requested.work_item.id}",
+            subject_key=(f"integration-work-item:{requested.work_item.id}:{HEAD_SHA}"),
             payload={"branchBindingId": REAL_BRANCH_BINDING_ID, "headSha": HEAD_SHA},
             work_item_id=requested.work_item.id,
             requirement_id=requested.requirement.id,

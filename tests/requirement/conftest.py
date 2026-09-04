@@ -90,9 +90,9 @@ def isolated_requirement_database(
         "MIGRATION_DATABASE_URL",
         target_url.render_as_string(hide_password=False),
     )
-    command.upgrade(Config("alembic.ini"), "heads")
     isolated_owner = create_engine(target_url, pool_pre_ping=True)
     try:
+        command.upgrade(Config("alembic.ini"), "heads")
         with _temporary_requirement_role_engine(isolated_owner) as engine:
             yield IsolatedRequirementDatabase(owner=isolated_owner, runtime=engine)
     finally:

@@ -24,6 +24,7 @@ class CreateReconciliationContext:
     branch_binding_id: str
     source_branch: str
     profile: GitLabRepositoryProfile
+    bound_merge_requests: frozenset[tuple[str, int]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,7 +44,14 @@ def read_create_reconciliation_context(
     if not isinstance(payload, CreateIntegrationMergeRequestEffectPayload):
         return LocalReconciliationBlocked(SourceControlReason.MR_CONFLICT)
     with dependencies.engine.connect() as db:
-        branch = repository_factory(db).branch_binding_by_work_item(effect.work_item_id)
+        repository = repository_factory(db)
+        branch = repository.branch_binding_by_work_item(effect.work_item_id)
+        bound_merge_requests = frozenset(
+            (row["external_project_id"], row["merge_request_iid"])
+            for row in repository.integration_merge_request_bindings_by_work_item(
+                effect.work_item_id
+            )
+        )
         workspace_repository = dependencies.repository_factory(db).workspace_repository(
             effect.repository_id
         )
@@ -74,6 +82,7 @@ def read_create_reconciliation_context(
         branch_binding_id=str(branch["id"]),
         source_branch=branch["branch_name"],
         profile=profile,
+        bound_merge_requests=bound_merge_requests,
     )
 
 

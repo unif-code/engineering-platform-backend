@@ -5,6 +5,7 @@ from datetime import datetime
 from sqlalchemy import Connection
 
 from control_plane.app.modules.configuration.adapters import IdentityPolicyOwner
+from control_plane.app.modules.configuration.adapters.identity import IdentityPolicyRuntime
 from control_plane.app.modules.configuration.application import (
     ConfigurationDependencies,
 )
@@ -18,6 +19,8 @@ from control_plane.app.modules.configuration.application import policy_versions 
 from control_plane.app.modules.configuration.application import preview as _preview
 from control_plane.app.modules.configuration.application import update_draft as _update_draft
 from control_plane.app.modules.configuration.application import validate_draft as _validate_draft
+from control_plane.app.modules.configuration.application.lifecycle import PolicyLifecycle
+from control_plane.app.modules.configuration.application.registry import PolicyRuntimeRegistry
 from control_plane.app.modules.configuration.domain import (
     ConfigurationError,
     Draft,
@@ -39,6 +42,7 @@ from control_plane.app.modules.configuration.domain import (
     StaleDraftRevision,
     ValidationIssue,
 )
+from control_plane.app.modules.configuration.ports.policy_owner import PolicyOwnerPort
 
 
 def catalog(db: Connection, namespace: str = "identity") -> list[PolicyKey]:
@@ -165,6 +169,10 @@ def policy_versions(
 
 
 __all__ = [
+    "PolicyLifecycle",
+    "PolicyRuntimeRegistry",
+    "IdentityPolicyRuntime",
+    "PolicyOwnerPort",
     "PolicyKey",
     "ConfigurationDependencies",
     "ConfigurationError",

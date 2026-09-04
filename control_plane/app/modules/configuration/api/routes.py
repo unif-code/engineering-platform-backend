@@ -4,7 +4,6 @@ from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
 from fastapi.responses import JSONResponse
-from sqlalchemy import Engine
 
 from control_plane.app.modules.authorization import PLATFORM_CONFIGURATION_MANAGE
 from control_plane.app.modules.configuration import (
@@ -14,23 +13,15 @@ from control_plane.app.modules.configuration import (
     DraftNotFound,
     DraftOwnerRequired,
     InvalidPolicyValue,
+    PolicyLifecycle,
+    PolicyRuntimeRegistry,
     PolicySnapshotUnavailable,
     PolicyVerificationFailed,
     PolicyVersionNotFound,
     SourceStale,
     StaleDraftBase,
     StaleDraftRevision,
-    active_snapshot,
-    catalog,
-    create_draft,
-    preview,
-    update_draft,
-    validate_draft,
 )
-from control_plane.app.modules.configuration import (
-    policy_versions as list_policy_versions,
-)
-from control_plane.app.modules.configuration.adapters import IdentityPolicyOwner
 from control_plane.app.modules.configuration.api.dto import (
     DraftResponseDto,
     DraftValidationResponseDto,
@@ -46,8 +37,8 @@ from control_plane.app.modules.configuration.api.dto import (
     ValidateDraftRequestDto,
 )
 from control_plane.app.modules.identity import (
-    IdentityPolicyCommandRuntime,
     OwnedPolicySnapshotUnavailable,
+    PolicyReauthenticationUnavailable,
 )
 from control_plane.app.shared.api.concurrency import entity_tag, require_if_match
 from control_plane.app.shared.api.idempotency import require_idempotency_key
@@ -94,10 +85,9 @@ _PUBLISH_RESPONSES = cast(
 
 @dataclass(frozen=True, slots=True)
 class ConfigurationHttpRuntime:
-    engine: Engine
+    owners: PolicyRuntimeRegistry
     dependencies: ConfigurationDependencies
     secret_manager: SecretManagerPort
-    policy_commands: IdentityPolicyCommandRuntime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,6 +219,7 @@ def _execute(
     runtime: ConfigurationHttpRuntime,
     *,
     actor_id: str,
+    namespace: str,
     operation: str,
     method: str,
     path: str,
@@ -245,14 +236,14 @@ def _execute(
         idempotency_sealing_key=material.idempotency_sealing_key,
     )
     try:
-        with runtime.engine.begin() as db:
+        with runtime.owners.resolve(namespace).transaction() as lifecycle:
             execution = execute_idempotent(
-                IdentityPolicyOwner(db),
+                lifecycle.owner,
                 actor=actor_id,
                 operation=operation,
                 key=key,
                 fingerprint=fingerprint,
-                command=lambda: command(db),
+                command=lambda: command(lifecycle),
                 now=runtime.dependencies.clock.now,
                 new_id=runtime.dependencies.random.uuid4,
                 idempotency_sealing_key=material.idempotency_sealing_key,
@@ -266,12 +257,6 @@ def _execute(
     return _render(execution.response)
 
 
-def _policy_commands(runtime: ConfigurationHttpRuntime) -> IdentityPolicyCommandRuntime:
-    if runtime.policy_commands is None:
-        raise RuntimeError("Identity policy command runtime is unavailable")
-    return runtime.policy_commands
-
-
 def _execute_policy_command(command: Callable[[], IdempotentResponse]) -> Response:
     try:
         return _render(command())
@@ -279,7 +264,11 @@ def _execute_policy_command(command: Callable[[], IdempotentResponse]) -> Respon
         return problem_response(409, "Idempotency conflict")
     except IdempotencyReplayUnavailable:
         return problem_response(409, "Idempotency replay unavailable")
-    except OwnedPolicySnapshotUnavailable:
+    except (
+        OwnedPolicySnapshotUnavailable,
+        PolicySnapshotUnavailable,
+        PolicyReauthenticationUnavailable,
+    ):
         return problem_response(503, "Effective policy unavailable")
 
 
@@ -291,6 +280,68 @@ def create_configuration_router(
     router = APIRouter(prefix="/api/v1/admin", tags=["configuration"])
 
     @router.get(
+        "/policies/{namespace}/active",
+        operation_id="policy_active",
+        response_model=PolicySnapshotDto,
+        responses=_PROBLEMS,
+    )
+    def policy_active(
+        namespace: str, principal: Annotated[Any, Depends(principal_provider)]
+    ) -> PolicySnapshotDto | Response:
+        capability_guard(principal, PLATFORM_CONFIGURATION_MANAGE, None)
+        try:
+            with runtime_provider().owners.resolve(namespace).transaction() as lifecycle:
+                return PolicySnapshotDto.from_domain(lifecycle.owner.active_snapshot(namespace))
+        except PolicySnapshotUnavailable:
+            return problem_response(503, "Effective policy unavailable")
+
+    @router.get(
+        "/policies/{namespace}/versions/{version}",
+        operation_id="policy_version",
+        response_model=PolicySnapshotDto,
+        responses=_PROBLEMS,
+    )
+    def policy_version(
+        namespace: str,
+        version: Annotated[int, Path(ge=1)],
+        principal: Annotated[Any, Depends(principal_provider)],
+    ) -> PolicySnapshotDto | Response:
+        capability_guard(principal, PLATFORM_CONFIGURATION_MANAGE, None)
+        try:
+            with runtime_provider().owners.resolve(namespace).transaction() as lifecycle:
+                snapshot = lifecycle.owner.version_snapshot(namespace, "PLATFORM", version)
+                if snapshot is None:
+                    return problem_response(404, "Policy version not found")
+                return PolicySnapshotDto.from_domain(snapshot)
+        except PolicySnapshotUnavailable:
+            return problem_response(503, "Effective policy unavailable")
+
+    @router.get(
+        "/policies/{namespace}/drafts/{draft_id}",
+        operation_id="draft_read",
+        response_model=DraftResponseDto,
+        responses=_WRITE_RESPONSES,
+    )
+    def draft_read(
+        namespace: str, draft_id: str, principal: Annotated[Any, Depends(principal_provider)]
+    ) -> Response:
+        capability_guard(principal, PLATFORM_CONFIGURATION_MANAGE, None)
+        try:
+            with runtime_provider().owners.resolve(namespace).transaction() as lifecycle:
+                lifecycle.owner.active_snapshot(namespace)
+                draft = lifecycle.owner.draft(draft_id)
+                if draft is None or draft.namespace != namespace:
+                    return problem_response(404, "Draft not found")
+                if draft.owner_id != _account_id(principal):
+                    return problem_response(403, "Draft owner required")
+                return JSONResponse(
+                    DraftResponseDto.from_domain(draft).model_dump(mode="json", by_alias=True),
+                    headers={"ETag": entity_tag(draft.revision)},
+                )
+        except PolicySnapshotUnavailable:
+            return problem_response(503, "Effective policy unavailable")
+
+    @router.get(
         "/policies",
         operation_id="policies_catalog",
         response_model=PolicyCatalogResponseDto,
@@ -298,13 +349,14 @@ def create_configuration_router(
     )
     def policies_catalog(
         principal: Annotated[Any, Depends(principal_provider)],
+        namespace: Annotated[str, Query()] = "identity",
     ) -> PolicyCatalogResponseDto | Response:
         capability_guard(principal, PLATFORM_CONFIGURATION_MANAGE, None)
         runtime = runtime_provider()
         try:
-            with runtime.engine.connect() as db:
-                keys = catalog(db, "identity")
-                snapshot = active_snapshot(db, "identity")
+            with runtime.owners.resolve(namespace).transaction() as lifecycle:
+                keys = lifecycle.owner.catalog(namespace)
+                snapshot = lifecycle.owner.active_snapshot(namespace)
         except PolicySnapshotUnavailable:
             return problem_response(503, "Effective policy unavailable")
         return PolicyCatalogResponseDto(
@@ -332,14 +384,12 @@ def create_configuration_router(
         actor_id = _account_id(principal)
         body_data = body.model_dump(mode="json", by_alias=True)
 
-        def command(db: Any) -> IdempotentResponse:
+        def command(lifecycle: PolicyLifecycle) -> IdempotentResponse:
             try:
-                draft = create_draft(
-                    db,
+                draft = lifecycle.create_draft(
                     namespace=namespace,
                     values=body.values,
                     actor_id=actor_id,
-                    dependencies=runtime.dependencies,
                 )
             except ConfigurationError as error:
                 return _problem(error)
@@ -353,6 +403,7 @@ def create_configuration_router(
         return _execute(
             runtime,
             actor_id=actor_id,
+            namespace=namespace,
             operation="draft_create",
             method="POST",
             path=request.url.path,
@@ -384,16 +435,14 @@ def create_configuration_router(
             "expectedRevision": preflight.expected_revision,
         }
 
-        def command(db: Any) -> IdempotentResponse:
+        def command(lifecycle: PolicyLifecycle) -> IdempotentResponse:
             try:
-                draft = update_draft(
-                    db,
+                draft = lifecycle.update_draft(
                     namespace=namespace,
                     draft_id=draft_id,
                     values=body.values,
                     actor_id=actor_id,
                     expected_revision=preflight.expected_revision,
-                    dependencies=runtime.dependencies,
                 )
             except ConfigurationError as error:
                 return _problem(error)
@@ -407,6 +456,7 @@ def create_configuration_router(
         return _execute(
             runtime,
             actor_id=actor_id,
+            namespace=namespace,
             operation="draft_update",
             method="PATCH",
             path=request.url.path,
@@ -438,15 +488,13 @@ def create_configuration_router(
             "expectedRevision": preflight.expected_revision,
         }
 
-        def command(db: Any) -> IdempotentResponse:
+        def command(lifecycle: PolicyLifecycle) -> IdempotentResponse:
             try:
-                result = validate_draft(
-                    db,
+                result = lifecycle.validate_draft(
                     namespace=namespace,
                     draft_id=draft_id,
                     actor_id=actor_id,
                     expected_revision=preflight.expected_revision,
-                    dependencies=runtime.dependencies,
                 )
             except ConfigurationError as error:
                 return _problem(error)
@@ -460,6 +508,7 @@ def create_configuration_router(
         return _execute(
             runtime,
             actor_id=actor_id,
+            namespace=namespace,
             operation="draft_validate",
             method="POST",
             path=request.url.path,
@@ -485,14 +534,12 @@ def create_configuration_router(
         runtime = runtime_provider()
         actor_id = _account_id(principal)
         try:
-            with runtime.engine.begin() as db:
-                result = preview(
-                    db,
+            with runtime.owners.resolve(namespace).transaction() as lifecycle:
+                result = lifecycle.preview(
                     namespace=namespace,
                     draft_id=draft_id,
                     actor_id=actor_id,
                     expected_revision=preflight.expected_revision,
-                    dependencies=runtime.dependencies,
                 )
         except ConfigurationError as error:
             return _render(_problem(error))
@@ -525,7 +572,8 @@ def create_configuration_router(
         runtime = runtime_provider()
         actor_id = _account_id(principal)
         return _execute_policy_command(
-            lambda: _policy_commands(runtime).publish(
+            lambda: runtime.owners.resolve(namespace).publish(
+                raw_session=request.cookies.get("ep_session", ""),
                 actor_id=actor_id,
                 namespace=namespace,
                 draft_id=draft_id,
@@ -555,7 +603,8 @@ def create_configuration_router(
         runtime = runtime_provider()
         actor_id = _account_id(principal)
         return _execute_policy_command(
-            lambda: _policy_commands(runtime).rollback(
+            lambda: runtime.owners.resolve(namespace).rollback(
+                raw_session=request.cookies.get("ep_session", ""),
                 actor_id=actor_id,
                 namespace=namespace,
                 scope=body.scope,
@@ -584,13 +633,15 @@ def create_configuration_router(
             return problem_response(422, "Invalid policy version cursor")
         runtime = runtime_provider()
         try:
-            with runtime.engine.connect() as db:
-                items, next_cursor = list_policy_versions(
-                    db,
+            with runtime.owners.resolve(namespace).transaction() as lifecycle:
+                items = lifecycle.owner.list_versions(
                     namespace,
+                    "PLATFORM",
                     before_version=None if cursor is None else int(cursor),
-                    limit=limit,
+                    limit=limit + 1,
                 )
+                next_cursor = items[limit - 1].version if len(items) > limit else None
+                items = items[:limit]
         except PolicySnapshotUnavailable:
             return problem_response(503, "Effective policy unavailable")
         return PolicyVersionsResponseDto(

@@ -6,6 +6,10 @@ from typing import Any
 
 from sqlalchemy import Connection
 
+from control_plane.app.modules.authorization.adapters.qualification import (
+    ActorQualificationRuntime,
+    CurrentActorFactsAdapter,
+)
 from control_plane.app.modules.authorization.application.decisions import authorize as _authorize
 from control_plane.app.modules.authorization.application.decisions import (
     principal_has_capability as _principal_has_capability,
@@ -68,6 +72,8 @@ from control_plane.app.modules.authorization.domain import (
     StaleGrantVersion,
     is_v02_super_admin_platform_capability,
 )
+from control_plane.app.modules.authorization.domain.qualification import ActorQualificationSnapshot
+from control_plane.app.modules.authorization.ports.qualification import ActorQualificationPort
 
 
 def grant(
@@ -261,6 +267,10 @@ def principal_has_capability(
 
 
 __all__ = [
+    "ActorQualificationRuntime",
+    "ActorQualificationSnapshot",
+    "ActorQualificationPort",
+    "CurrentActorFactsAdapter",
     "AuthorizationDenied",
     "AuthorizationDependencies",
     "AuthorizationDecision",

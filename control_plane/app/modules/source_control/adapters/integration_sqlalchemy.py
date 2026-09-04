@@ -419,9 +419,59 @@ class SqlAlchemySourceControlIntegrationRepository:
             self.db.execute(
                 text(
                     "SELECT * FROM source_control.merge_request_binding "
-                    "WHERE work_item_id=:work_item_id"
+                    "WHERE work_item_id=:work_item_id AND kind='INTEGRATION' "
+                    "AND superseded_at IS NULL"
                 ),
                 {"work_item_id": work_item_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def merge_request_binding_by_effect(self, effect_id: str) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "SELECT * FROM source_control.merge_request_binding "
+                    "WHERE create_effect_id=:effect_id"
+                ),
+                {"effect_id": effect_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+
+    def integration_merge_request_bindings_by_work_item(
+        self,
+        work_item_id: str,
+    ) -> list[Any]:
+        return list(
+            self.db.execute(
+                text(
+                    "SELECT * FROM source_control.merge_request_binding "
+                    "WHERE work_item_id=:work_item_id AND kind='INTEGRATION' "
+                    "ORDER BY created_at, id"
+                ),
+                {"work_item_id": work_item_id},
+            )
+            .mappings()
+            .all()
+        )
+
+    def supersede_current_integration_binding(
+        self,
+        work_item_id: str,
+        *,
+        now: datetime,
+    ) -> Any:
+        return (
+            self.db.execute(
+                text(
+                    "UPDATE source_control.merge_request_binding "
+                    "SET superseded_at=:now WHERE work_item_id=:work_item_id "
+                    "AND kind='INTEGRATION' AND superseded_at IS NULL RETURNING *"
+                ),
+                {"work_item_id": work_item_id, "now": now},
             )
             .mappings()
             .one_or_none()

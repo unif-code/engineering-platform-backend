@@ -95,18 +95,23 @@ def _prove_created_or_adopted_merge_request(
     admission: _Admission,
     acquired: _AcquiredEffect,
     *,
+    bound_merge_requests: frozenset[tuple[str, int]],
     gitlab: GitLabMergeRequestPort,
 ) -> _ProviderProof:
     profile = admission.repository_profile
     context = admission.context
     effect = acquired.effect
     try:
-        candidates = gitlab.list_merge_requests(
-            profile,
-            source_branch=admission.task_branch,
-            target_branch=_TARGET_BRANCH,
-            state="all",
-        )
+        candidates = [
+            candidate
+            for candidate in gitlab.list_merge_requests(
+                profile,
+                source_branch=admission.task_branch,
+                target_branch=_TARGET_BRANCH,
+                state="all",
+            )
+            if (candidate.project_id, candidate.iid) not in bound_merge_requests
+        ]
     except (GitLabResultUnknown, GitLabProviderUnavailable):
         raise _ProviderUnknown from None
     except (GitLabAccessDenied, GitLabProjectNotFound):

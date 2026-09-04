@@ -62,6 +62,25 @@ uv run pytest                  # 无 DB 时集成测试自动 skip（勿据此�
 
 ## 两条发布链
 
+### Source Control worker
+
+API 默认提供 V0.6 Artifact、Acceptance 与 Formal Delivery 路由。worker 与 Connector 共用生产运行时，
+配置仍从 `SourceControlDevSettings` 读取；不得在命令行或日志中打印凭据。
+
+```bash
+uv run python -m control_plane.tools.source_control_worker relay --limit 50
+uv run python -m control_plane.tools.source_control_worker process --limit 50
+uv run python -m control_plane.tools.source_control_worker reconcile --limit 50
+```
+
+每次命令的 `limit` 是所有 lane 的总预算，按 lane 均分，余数按固定 lane 顺序分配；空闲预算不挤占其他 lane。
+relay：binding/integration/evidence/formal（最小 4）；process：binding/integration/webhook/evidence/formal
+（最小 5）；reconcile：branch/integration/formal（最小 3）。失败与释放数、稳定错误码和 Effect IDs 单独报告，
+不能把命令退出 0 或空批次当成交付成功。普通 Gate 转派需显式 WORKSPACE `requirement.delivery_gate.assign` Grant，
+Assignment 与 SuperAdmin 身份都不会自动授予该能力。
+
+### 发布触发
+
 | 触发 | 产物 | 消费方 |
 | --- | --- | --- |
 | push 到 main | 容器镜像 `ghcr.io/unif-code/engineering-platform-backend:sha-<短哈希>`（digest 见 CI job summary） | gitops 仓按 **digest** 引用，部署进 k8s |

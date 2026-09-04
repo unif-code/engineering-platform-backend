@@ -9,6 +9,7 @@ from sqlalchemy import Engine, create_engine, inspect, text
 from sqlalchemy.engine import URL
 from sqlalchemy.exc import DBAPIError, IntegrityError
 
+from control_plane.app.shared.security import sanitize_external_reference
 from tests.integration_database import migration_database_url
 from tests.source_control.conftest import IsolatedSourceControlDatabase
 
@@ -20,6 +21,13 @@ EXPECTED_TABLES = {
     "agent_push_request",
     "binding_request_inbox",
     "delivery_request_inbox",
+    "evidence_request_inbox",
+    "external_validation_receipt",
+    "external_validation_reference",
+    "formal_delivery_request_inbox",
+    "formal_review_assignment",
+    "integration_baseline_evidence",
+    "integration_baseline_evidence_item",
     "merge_request_binding",
     "merge_request_observation",
     "repository_branch_binding",
@@ -27,6 +35,11 @@ EXPECTED_TABLES = {
     "webhook_inbox",
     "workspace_repository",
 }
+
+VALID_ARTIFACT_REFERENCES = (
+    '[{"artifact_id":"sdd-1","artifact_version":"version-1",'
+    '"artifact_hash":"sha256:' + "a" * 64 + '"}]'
+)
 
 
 @pytest.fixture
@@ -178,7 +191,23 @@ def test_source_control_owner_uniqueness_constraints_are_installed(
     )
 
 
-def _insert_integration_graph(db: object) -> None:
+def _insert_integration_graph(
+    db: object,
+    *,
+    head_scoped_effect: bool = True,
+) -> None:
+    work_item_id = "50000000-0000-0000-0000-000000000301"
+    head_sha = "b" * 40
+    effect_key = (
+        f"source-control:create-integration-mr:{work_item_id}:{head_sha}"
+        if head_scoped_effect
+        else "create-mr:work-item-301"
+    )
+    subject_key = (
+        f"integration-work-item:{work_item_id}:{head_sha}"
+        if head_scoped_effect
+        else f"work-item:{work_item_id}"
+    )
     _insert_effect_graph(db)
     db.execute(  # type: ignore[attr-defined]
         text(
@@ -201,16 +230,19 @@ def _insert_integration_graph(db: object) -> None:
             "(id, effect_key, operation, subject_key, payload, work_item_id, "
             "requirement_id, repository_id, request_fingerprint, attempts, state, "
             "requirement_callback_state, completed_at) VALUES "
-            "('60000000-0000-0000-0000-000000000302', 'create-mr:work-item-301', "
-            "'CREATE_INTEGRATION_MR', "
-            "'work-item:50000000-0000-0000-0000-000000000301', "
+            "('60000000-0000-0000-0000-000000000302', :effect_key, "
+            "'CREATE_INTEGRATION_MR', :subject_key, "
             '\'{"branchBindingId":"70000000-0000-0000-0000-000000000301",'
             '"headSha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}\'::jsonb, '
             "'50000000-0000-0000-0000-000000000301', "
             "'40000000-0000-0000-0000-000000000301', "
             "'10000000-0000-0000-0000-000000000301', "
             "'sha256:create-mr', 0, 'SUCCEEDED', 'PENDING', now())"
-        )
+        ),
+        {
+            "effect_key": effect_key,
+            "subject_key": subject_key,
+        },
     )
     db.execute(  # type: ignore[attr-defined]
         text(
@@ -241,6 +273,39 @@ def _insert_integration_graph(db: object) -> None:
     )
 
 
+def _insert_external_validation(
+    db: object,
+    *,
+    reference_id: str,
+    reference: str,
+    artifact_references: str,
+) -> None:
+    db.execute(  # type: ignore[attr-defined]
+        text(
+            "INSERT INTO source_control.external_validation_reference "
+            "(id, work_item_id, requirement_id, workspace_id, "
+            "integration_merge_request_binding_id, target_commit_sha, "
+            "integration_merge_commit_sha, reference, notes, artifact_references, "
+            "reference_hash, request_fingerprint, submitted_by) VALUES (:reference_id, "
+            "'50000000-0000-0000-0000-000000000301', "
+            "'40000000-0000-0000-0000-000000000301', "
+            "'20000000-0000-0000-0000-000000000301', "
+            "'71000000-0000-0000-0000-000000000301', :head_sha, :merge_sha, "
+            ":reference, 'verified', CAST(:artifact_references AS JSONB), "
+            ":reference_hash, :request_fingerprint, 'employee-1')"
+        ),
+        {
+            "reference_id": reference_id,
+            "head_sha": "b" * 40,
+            "merge_sha": "c" * 40,
+            "reference": reference,
+            "artifact_references": artifact_references,
+            "reference_hash": "sha256:" + reference_id[-1] * 64,
+            "request_fingerprint": "sha256:" + reference_id[-2] * 64,
+        },
+    )
+
+
 def test_product_migration_contains_no_runtime_login_secret() -> None:
     source = Path("migrations/source_control/0001_source_control_foundation.py").read_text(
         encoding="utf-8"
@@ -265,6 +330,13 @@ def test_source_control_rw_has_minimum_privileges(
         "agent_push_request": {"SELECT", "INSERT", "UPDATE"},
         "agent_delivery_fence": {"SELECT", "INSERT", "UPDATE"},
         "agent_delivery_fact": {"SELECT", "INSERT"},
+        "external_validation_receipt": {"SELECT", "INSERT"},
+        "external_validation_reference": {"SELECT", "INSERT"},
+        "evidence_request_inbox": {"SELECT", "INSERT"},
+        "integration_baseline_evidence": {"SELECT", "INSERT"},
+        "integration_baseline_evidence_item": {"SELECT", "INSERT"},
+        "formal_delivery_request_inbox": {"SELECT", "INSERT"},
+        "formal_review_assignment": {"SELECT", "INSERT"},
     }
     privileges = ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE")
     with isolated_source_control_database.runtime.connect() as db:
@@ -713,9 +785,12 @@ def test_different_effect_operations_can_share_one_work_item(
                 "(id, effect_key, operation, subject_key, payload, work_item_id, "
                 "requirement_id, repository_id, request_fingerprint, attempts, state, "
                 "requirement_callback_state) VALUES "
-                "('60000000-0000-0000-0000-000000000302', 'create-mr:work-item-301', "
+                "('60000000-0000-0000-0000-000000000302', "
+                "'source-control:create-integration-mr:50000000-0000-0000-0000-"
+                "000000000301:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', "
                 "'CREATE_INTEGRATION_MR', "
-                "'work-item:50000000-0000-0000-0000-000000000301', "
+                "'integration-work-item:50000000-0000-0000-0000-000000000301:"
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', "
                 '\'{"branchBindingId":"70000000-0000-0000-0000-000000000301",'
                 '"headSha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}\'::jsonb, '
                 "'50000000-0000-0000-0000-000000000301', "
@@ -1020,6 +1095,281 @@ def test_0006_downgrade_refuses_to_discard_mr_webhook_summary(
                 schema="source_control",
             )
         }
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.parametrize(
+    "raw_reference",
+    [
+        "https://ci.example.test",
+        "https://ci.example.test/",
+        "https://ci.example.test:8443",
+        "https://ci.example.test:8443/",
+    ],
+)
+def test_0007_evidence_accepts_every_host_reference_accepted_by_the_boundary(
+    fresh_source_control_migration_database_url: URL,
+    raw_reference: str,
+) -> None:
+    config = _config(fresh_source_control_migration_database_url)
+    command.upgrade(config, "source_control@0007_sc_evidence")
+    engine = create_engine(fresh_source_control_migration_database_url)
+    try:
+        stable_reference = sanitize_external_reference(raw_reference)
+        with engine.begin() as db:
+            _insert_integration_graph(db, head_scoped_effect=False)
+            _insert_external_validation(
+                db,
+                reference_id="90000000-0000-0000-0000-000000000701",
+                reference=stable_reference,
+                artifact_references=VALID_ARTIFACT_REFERENCES,
+            )
+        with engine.connect() as db:
+            stored = db.execute(
+                text(
+                    "SELECT reference FROM source_control.external_validation_reference "
+                    "WHERE id='90000000-0000-0000-0000-000000000701'"
+                )
+            ).scalar_one()
+        assert stored == stable_reference
+        assert "?" not in stored and "#" not in stored
+        with pytest.raises(IntegrityError):
+            with engine.begin() as db:
+                _insert_external_validation(
+                    db,
+                    reference_id="90000000-0000-0000-0000-000000000702",
+                    reference=f"{raw_reference}?token=must-not-persist#console",
+                    artifact_references=VALID_ARTIFACT_REFERENCES,
+                )
+    finally:
+        engine.dispose()
+
+
+def test_0007_evidence_rejects_http_userinfo_when_the_boundary_is_bypassed(
+    fresh_source_control_migration_database_url: URL,
+) -> None:
+    config = _config(fresh_source_control_migration_database_url)
+    command.upgrade(config, "source_control@0007_sc_evidence")
+    engine = create_engine(fresh_source_control_migration_database_url)
+    try:
+        with engine.begin() as db:
+            _insert_integration_graph(db, head_scoped_effect=False)
+
+        raw_references = (
+            "https://user@ci.example.test",
+            "https://user:password@ci.example.test/job/platform/42",
+        )
+        for offset, raw_reference in enumerate(raw_references, start=1):
+            with pytest.raises(ValueError):
+                sanitize_external_reference(raw_reference)
+            with pytest.raises(IntegrityError):
+                with engine.begin() as db:
+                    _insert_external_validation(
+                        db,
+                        reference_id=f"90000000-0000-0000-0000-{700 + offset:012d}",
+                        reference=raw_reference,
+                        artifact_references=VALID_ARTIFACT_REFERENCES,
+                    )
+    finally:
+        engine.dispose()
+
+
+def test_0007_evidence_rejects_empty_immutable_artifact_sets(
+    fresh_source_control_migration_database_url: URL,
+) -> None:
+    config = _config(fresh_source_control_migration_database_url)
+    command.upgrade(config, "source_control@0007_sc_evidence")
+    engine = create_engine(fresh_source_control_migration_database_url)
+    try:
+        with engine.begin() as db:
+            _insert_integration_graph(db, head_scoped_effect=False)
+
+        with pytest.raises(IntegrityError):
+            with engine.begin() as db:
+                _insert_external_validation(
+                    db,
+                    reference_id="90000000-0000-0000-0000-000000000701",
+                    reference="urn:ci:platform:701",
+                    artifact_references="[]",
+                )
+
+        with engine.begin() as db:
+            _insert_external_validation(
+                db,
+                reference_id="90000000-0000-0000-0000-000000000701",
+                reference="urn:ci:platform:701",
+                artifact_references=VALID_ARTIFACT_REFERENCES,
+            )
+            db.execute(
+                text(
+                    "INSERT INTO source_control.integration_baseline_evidence "
+                    "(id, delivery_snapshot_id, delivery_snapshot_hash, requirement_id, "
+                    "requirement_version, required_work_item_set_version, "
+                    "required_work_item_set_hash, evidence_hash, generated_by) VALUES "
+                    "('91000000-0000-0000-0000-000000000701', "
+                    "'92000000-0000-0000-0000-000000000701', :snapshot_hash, "
+                    "'40000000-0000-0000-0000-000000000301', 7, 3, :set_hash, "
+                    ":evidence_hash, 'SYSTEM')"
+                ),
+                {
+                    "snapshot_hash": "sha256:" + "d" * 64,
+                    "set_hash": "sha256:" + "e" * 64,
+                    "evidence_hash": "sha256:" + "f" * 64,
+                },
+            )
+
+        with pytest.raises(IntegrityError):
+            with engine.begin() as db:
+                db.execute(
+                    text(
+                        "INSERT INTO source_control.integration_baseline_evidence_item "
+                        "(evidence_id, requirement_id, work_item_id, repository_id, "
+                        "task_branch, task_commit_sha, integration_merge_request_binding_id, "
+                        "integration_merge_request_iid, integration_merge_commit_sha, "
+                        "executor_type, executor_id, artifact_references, "
+                        "external_validation_reference_id, item_hash) VALUES "
+                        "('91000000-0000-0000-0000-000000000701', "
+                        "'40000000-0000-0000-0000-000000000301', "
+                        "'50000000-0000-0000-0000-000000000301', "
+                        "'10000000-0000-0000-0000-000000000301', "
+                        "'feat/wi-301-source-control', :head_sha, "
+                        "'71000000-0000-0000-0000-000000000301', 42, :merge_sha, "
+                        "'HUMAN', 'employee-1', '[]'::jsonb, "
+                        "'90000000-0000-0000-0000-000000000701', :item_hash)"
+                    ),
+                    {
+                        "head_sha": "b" * 40,
+                        "merge_sha": "c" * 40,
+                        "item_hash": "sha256:" + "1" * 64,
+                    },
+                )
+    finally:
+        engine.dispose()
+
+
+def test_0007_evidence_facts_block_downgrade_and_preserve_the_fingerprint(
+    fresh_source_control_migration_database_url: URL,
+) -> None:
+    config = _config(fresh_source_control_migration_database_url)
+    command.upgrade(config, "source_control@0007_sc_evidence")
+    engine = create_engine(fresh_source_control_migration_database_url)
+    validation_id = "90000000-0000-0000-0000-000000000703"
+    try:
+        with engine.begin() as db:
+            _insert_integration_graph(db, head_scoped_effect=False)
+            _insert_external_validation(
+                db,
+                reference_id=validation_id,
+                reference="urn:ci:platform:703",
+                artifact_references=VALID_ARTIFACT_REFERENCES,
+            )
+
+        with pytest.raises(Exception, match="V0.6 Evidence facts"):
+            command.downgrade(config, "source_control@0006_sc_mr_reconcile")
+
+        columns = {
+            column["name"]
+            for column in inspect(engine).get_columns(
+                "external_validation_reference",
+                schema="source_control",
+            )
+        }
+        with engine.connect() as db:
+            preserved = db.execute(
+                text(
+                    "SELECT request_fingerprint FROM "
+                    "source_control.external_validation_reference WHERE id=:validation_id"
+                ),
+                {"validation_id": validation_id},
+            ).scalar_one()
+        assert "request_fingerprint" in columns
+        assert preserved == "sha256:" + validation_id[-2] * 64
+    finally:
+        engine.dispose()
+
+
+def test_0008_rekeys_historical_integration_effect_by_head_and_round_trips(
+    fresh_source_control_migration_database_url: URL,
+) -> None:
+    config = _config(fresh_source_control_migration_database_url)
+    command.upgrade(config, "source_control@0007_sc_evidence")
+    engine = create_engine(fresh_source_control_migration_database_url)
+    work_item_id = "50000000-0000-0000-0000-000000000301"
+    head_sha = "b" * 40
+    try:
+        with engine.begin() as db:
+            _insert_effect_graph(db)
+            db.execute(
+                text(
+                    "INSERT INTO source_control.repository_branch_binding "
+                    "(id, work_item_id, requirement_id, workspace_id, repository_id, "
+                    "work_item_number, base_commit_sha, branch_name, effect_id) VALUES "
+                    "('70000000-0000-0000-0000-000000000301', :work_item_id, "
+                    "'40000000-0000-0000-0000-000000000301', "
+                    "'20000000-0000-0000-0000-000000000301', "
+                    "'10000000-0000-0000-0000-000000000301', 301, "
+                    "'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', "
+                    "'feat/wi-301-source-control', "
+                    "'60000000-0000-0000-0000-000000000301')"
+                ),
+                {"work_item_id": work_item_id},
+            )
+            db.execute(
+                text(
+                    "INSERT INTO source_control.source_control_effect "
+                    "(id, effect_key, operation, subject_key, payload, work_item_id, "
+                    "requirement_id, repository_id, request_fingerprint, attempts, state, "
+                    "requirement_callback_state) VALUES "
+                    "('60000000-0000-0000-0000-000000000302', "
+                    "'source-control:create-integration-mr:50000000-0000-0000-0000-"
+                    "000000000301', 'CREATE_INTEGRATION_MR', :subject_key, "
+                    "CAST(:payload AS JSONB), :work_item_id, "
+                    "'40000000-0000-0000-0000-000000000301', "
+                    "'10000000-0000-0000-0000-000000000301', "
+                    "'sha256:create-mr', 1, 'IN_FLIGHT', 'PENDING')"
+                ),
+                {
+                    "subject_key": f"work-item:{work_item_id}",
+                    "payload": (
+                        '{"branchBindingId":"70000000-0000-0000-0000-000000000301",'
+                        f'"headSha":"{head_sha}"}}'
+                    ),
+                    "work_item_id": work_item_id,
+                },
+            )
+
+        command.upgrade(config, "source_control@0008_sc_formal_delivery")
+        with engine.connect() as db:
+            upgraded = db.execute(
+                text(
+                    "SELECT effect_key, subject_key, state, attempts FROM "
+                    "source_control.source_control_effect WHERE id="
+                    "'60000000-0000-0000-0000-000000000302'"
+                )
+            ).one()
+        assert upgraded == (
+            f"source-control:create-integration-mr:{work_item_id}:{head_sha}",
+            f"integration-work-item:{work_item_id}:{head_sha}",
+            "IN_FLIGHT",
+            1,
+        )
+
+        command.downgrade(config, "source_control@0007_sc_evidence")
+        with engine.connect() as db:
+            restored = db.execute(
+                text(
+                    "SELECT effect_key, subject_key, state, attempts FROM "
+                    "source_control.source_control_effect WHERE id="
+                    "'60000000-0000-0000-0000-000000000302'"
+                )
+            ).one()
+        assert restored == (
+            f"source-control:create-integration-mr:{work_item_id}",
+            f"work-item:{work_item_id}",
+            "IN_FLIGHT",
+            1,
+        )
     finally:
         engine.dispose()
 

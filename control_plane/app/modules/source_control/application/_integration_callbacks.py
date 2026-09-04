@@ -258,19 +258,25 @@ def _mark_unknown(
 def _replay_processed_request(
     context: _CallbackSubject,
     *,
+    request_fingerprint: str,
     dependencies: SourceControlDependencies,
 ) -> ProcessIntegrationRequestResult:
     repository_factory = dependencies.delivery_repository_factory
     if repository_factory is None:
         raise SourceControlDependencyUnavailable("Integration repository unavailable")
-    subject_key = f"work-item:{context.work_item_id}"
     with dependencies.engine.connect() as db:
         repository = repository_factory(db)
-        effect_row = repository.effect_by_operation_subject(
+        effect_rows = repository.effects_by_operation_work_item_fingerprint(
             _CREATE_OPERATION.value,
-            subject_key,
+            context.work_item_id,
+            request_fingerprint,
         )
-        binding_row = repository.merge_request_binding_by_work_item(context.work_item_id)
+        effect_row = effect_rows[0] if len(effect_rows) == 1 else None
+        binding_row = (
+            None
+            if effect_row is None
+            else repository.merge_request_binding_by_effect(str(effect_row["id"]))
+        )
         observation_row = (
             None
             if binding_row is None
@@ -605,7 +611,7 @@ def _resolve_atomic_fact_commit(
             _CREATE_OPERATION.value,
             effect.subject_key,
         )
-        binding_row = repository.merge_request_binding_by_work_item(context.work_item_id)
+        binding_row = repository.merge_request_binding_by_effect(effect.id)
         observation_row = (
             None
             if binding_row is None

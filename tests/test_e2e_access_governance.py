@@ -188,11 +188,6 @@ def e2e_runtime(
         )
         monkeypatch.setattr(
             bootstrap,
-            "configuration_runtime_engine",
-            lambda: engines["configuration"],
-        )
-        monkeypatch.setattr(
-            bootstrap,
             "requirement_runtime_engine",
             lambda: engines["requirement"],
         )
@@ -208,6 +203,8 @@ def e2e_runtime(
             bootstrap.authorization_dependencies,
             bootstrap.configuration_dependencies,
             bootstrap.requirement_dependencies,
+            bootstrap.requirement_policy_runtime,
+            bootstrap.actor_qualification_runtime,
             bootstrap.source_control_dependencies,
             bootstrap.identity_http_runtime,
             bootstrap.authorization_http_runtime,
@@ -222,8 +219,19 @@ def e2e_runtime(
         with owner.begin() as db:
             db.execute(
                 text(
-                    "TRUNCATE requirement.decision, requirement.gate_assignment, "
+                    "TRUNCATE requirement.delivery_decision, "
+                    "requirement.delivery_gate_assignment, requirement.delivery_gate, "
+                    "requirement.integration_baseline_selection, "
+                    "requirement.requirement_delivery_snapshot, "
+                    "requirement.decision, requirement.gate_assignment, "
                     "requirement.work_item_assignment, requirement.sdd_artifact_version, "
+                    "source_control.integration_baseline_evidence_item, "
+                    "source_control.integration_baseline_evidence, "
+                    "source_control.external_validation_receipt, "
+                    "source_control.external_validation_reference, "
+                    "source_control.evidence_request_inbox, "
+                    "source_control.formal_review_assignment, "
+                    "source_control.formal_delivery_request_inbox, "
                     "source_control.merge_request_observation, "
                     "source_control.merge_request_binding, "
                     "source_control.delivery_request_inbox, "
@@ -255,8 +263,19 @@ def e2e_runtime(
             with owner.begin() as db:
                 db.execute(
                     text(
-                        "TRUNCATE requirement.decision, requirement.gate_assignment, "
+                        "TRUNCATE requirement.delivery_decision, "
+                        "requirement.delivery_gate_assignment, requirement.delivery_gate, "
+                        "requirement.integration_baseline_selection, "
+                        "requirement.requirement_delivery_snapshot, "
+                        "requirement.decision, requirement.gate_assignment, "
                         "requirement.work_item_assignment, requirement.sdd_artifact_version, "
+                        "source_control.integration_baseline_evidence_item, "
+                        "source_control.integration_baseline_evidence, "
+                        "source_control.external_validation_receipt, "
+                        "source_control.external_validation_reference, "
+                        "source_control.evidence_request_inbox, "
+                        "source_control.formal_review_assignment, "
+                        "source_control.formal_delivery_request_inbox, "
                         "source_control.merge_request_observation, "
                         "source_control.merge_request_binding, "
                         "source_control.delivery_request_inbox, "
@@ -289,6 +308,8 @@ def e2e_runtime(
                 bootstrap.authorization_dependencies,
                 bootstrap.configuration_dependencies,
                 bootstrap.requirement_dependencies,
+                bootstrap.requirement_policy_runtime,
+                bootstrap.actor_qualification_runtime,
                 bootstrap.source_control_dependencies,
                 bootstrap.identity_http_runtime,
                 bootstrap.authorization_http_runtime,
@@ -872,12 +893,10 @@ def test_access_governance_closes_the_real_cli_http_grant_and_audit_loop(
         source_control_engine=engines["source_control"],
         requirement_engine=engines["requirement"],
         requirement_dependencies=bootstrap.requirement_dependencies(),
-        identity_engine=engines["identity"],
-        identity_dependencies=bootstrap.identity_dependencies(),
-        workspace_engine=engines["workspace"],
-        workspace_dependencies=bootstrap.workspace_dependencies(),
-        authorization_engine=engines["authorization"],
-        authorization_dependencies=bootstrap.authorization_dependencies(),
+        organization_engine=engines["organization"],
+        organization_dependencies=bootstrap.organization_dependencies(),
+        requirement_policy=bootstrap.requirement_policy_runtime(),
+        qualification=bootstrap.actor_qualification_runtime(),
     )
     source_control_runtime = build_source_control_runtime(
         source_control_settings,

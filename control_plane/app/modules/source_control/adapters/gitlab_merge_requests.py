@@ -311,6 +311,95 @@ class HttpxGitLabMergeRequestAdapter:
                 "GitLab returned an invalid merge request response"
             ) from None
 
+    def create_formal_merge_request(
+        self,
+        repository: GitLabRepositoryProfile,
+        *,
+        source_branch: str,
+        expected_head_sha: str,
+        title: str,
+        description: str,
+    ) -> GitLabMergeRequestLocator:
+        self._write_sha(expected_head_sha)
+        target_branch = repository.default_branch
+        if target_branch != "main":
+            raise GitLabProjectPolicyUnsupported(
+                "Formal merge request target must be the default main branch"
+            )
+        try:
+            response = self.client.post(
+                f"/projects/{self._project(repository)}/merge_requests",
+                params={
+                    "source_branch": source_branch,
+                    "target_branch": target_branch,
+                    "title": title,
+                    "description": description,
+                    "squash": True,
+                    "remove_source_branch": True,
+                    "allow_collaboration": False,
+                },
+                headers=self._headers(repository),
+            )
+        except httpx.HTTPError:
+            raise GitLabResultUnknown("GitLab formal MR creation result is unknown") from None
+        if response.status_code in {401, 403}:
+            raise GitLabAccessDenied("GitLab access denied")
+        if response.status_code == 404:
+            raise GitLabProjectNotFound("GitLab project was not found")
+        if response.status_code != 201:
+            raise GitLabResultUnknown("GitLab formal MR creation result is unknown")
+        try:
+            return self._decode_merge_request_locator(
+                response.json(),
+                repository=repository,
+                source_branch=source_branch,
+                target_branch=target_branch,
+            )
+        except (GitLabProviderUnavailable, ValueError):
+            raise GitLabResultUnknown("GitLab formal MR creation result is unknown") from None
+
+    def merge_formal_merge_request(
+        self,
+        repository: GitLabRepositoryProfile,
+        *,
+        iid: int,
+        expected_head_sha: str,
+    ) -> GitLabMergeRequestSnapshot:
+        self._iid(iid)
+        expected_head_sha = self._write_sha(expected_head_sha)
+        try:
+            response = self.client.put(
+                f"/projects/{self._project(repository)}/merge_requests/{iid}/merge",
+                params={
+                    "sha": expected_head_sha,
+                    "squash": True,
+                    "should_remove_source_branch": True,
+                },
+                headers=self._headers(repository),
+            )
+        except httpx.HTTPError:
+            raise GitLabResultUnknown("GitLab formal merge result is unknown") from None
+        if response.status_code in {401, 403}:
+            raise GitLabAccessDenied("GitLab access denied")
+        if response.status_code == 404:
+            raise GitLabMergeRequestNotFound("GitLab merge request was not found")
+        if response.status_code == 409:
+            raise GitLabMergeRequestHeadChanged("GitLab merge request head changed")
+        if response.status_code in {405, 422}:
+            raise GitLabMergeRequestBlocked("GitLab merge request is blocked")
+        if response.status_code != 200:
+            raise GitLabResultUnknown("GitLab formal merge result is unknown")
+        try:
+            snapshot = self._decode_merge_request(response.json(), repository=repository)
+        except (GitLabProviderUnavailable, ValueError):
+            raise GitLabResultUnknown("GitLab formal merge result is unknown") from None
+        if snapshot.head_sha != expected_head_sha:
+            raise GitLabMergeRequestHeadChanged("GitLab merge request head changed")
+        if snapshot.state != "merged":
+            self._require_mergeable(snapshot)
+            raise GitLabResultUnknown("GitLab formal merge result is unknown")
+        return snapshot
+
     def merge_merge_request(
         self,
         repository: GitLabRepositoryProfile,

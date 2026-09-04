@@ -23,12 +23,17 @@ from control_plane.app.modules.source_control import SourceControlDependencyUnav
 from control_plane.app.modules.source_control.adapters import (
     CurrentActorEligibilityAdapter,
     DevSecretReferenceResolver,
+    GovernedFormalReviewRoutingAdapter,
     HttpxGitLabAdapter,
     HttpxGitLabMergeRequestAdapter,
     RequirementFacadeBindingAdapter,
     RequirementFacadeDeliveryAdapter,
+    RequirementFacadeEvidenceAdapter,
+    RequirementFacadeFormalDeliveryAdapter,
     SourceControlDevPolicy,
     SourceControlDevSettings,
+    SqlAlchemySourceControlEvidenceRepository,
+    SqlAlchemySourceControlFormalRepository,
     SqlAlchemySourceControlIntegrationRepository,
     SqlAlchemySourceControlRepository,
 )
@@ -59,21 +64,16 @@ def _collaborators(
         for name in (
             "source_control",
             "requirement",
-            "identity",
-            "workspace",
-            "authorization",
         )
     }
     return SourceControlRuntimeCollaborators(
         source_control_engine=source_control_engine or engines["source_control"],
         requirement_engine=engines["requirement"],
         requirement_dependencies=object(),
-        identity_engine=engines["identity"],
-        identity_dependencies=object(),
-        workspace_engine=engines["workspace"],
-        workspace_dependencies=object(),
-        authorization_engine=engines["authorization"],
-        authorization_dependencies=object(),
+        organization_engine=cast(Engine, object()),
+        organization_dependencies=object(),
+        requirement_policy=cast(Any, object()),
+        qualification=cast(Any, object()),
     )
 
 
@@ -108,6 +108,16 @@ def test_complete_non_secret_settings_build_one_shared_runtime(tmp_path: Path) -
     assert isinstance(dependencies.gitlab_merge_requests, HttpxGitLabMergeRequestAdapter)
     assert isinstance(dependencies.webhook_secrets, DevSecretReferenceResolver)
     assert isinstance(dependencies.policy, SourceControlDevPolicy)
+    assert dependencies.evidence_repository_factory is SqlAlchemySourceControlEvidenceRepository
+    assert dependencies.formal_repository_factory is SqlAlchemySourceControlFormalRepository
+    assert isinstance(dependencies.requirement_evidence, RequirementFacadeEvidenceAdapter)
+    assert isinstance(
+        dependencies.requirement_formal_delivery, RequirementFacadeFormalDeliveryAdapter
+    )
+    assert isinstance(dependencies.formal_review_routing, GovernedFormalReviewRoutingAdapter)
+    assert (
+        dependencies.formal_review_routing.qualification is dependencies.eligibility.qualification
+    )
     assert dependencies.gitlab.client is runtime.client
     assert dependencies.gitlab_merge_requests.client is runtime.client
     assert dependencies.gitlab.secrets is dependencies.webhook_secrets
@@ -201,7 +211,7 @@ def test_worker_exits_nonzero_before_an_empty_batch_when_authorized_secret_is_mi
     )
 
     exit_code = worker_main(
-        ["relay", "--limit", "2"],
+        ["relay", "--limit", "4"],
         runtime_context_provider=runtime_module.source_control_runtime_context,
     )
     output = capsys.readouterr().out

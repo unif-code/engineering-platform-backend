@@ -16,7 +16,11 @@ from sqlalchemy import Engine, text
 from control_plane.app.modules.audit.adapters.transactional import (
     SqlAlchemyTransactionalAuditAppender,
 )
-from control_plane.app.modules.configuration import ConfigurationDependencies
+from control_plane.app.modules.configuration import (
+    ConfigurationDependencies,
+    IdentityPolicyRuntime,
+    PolicyRuntimeRegistry,
+)
 from control_plane.app.modules.configuration.adapters import IdentityEffectivePolicy
 from control_plane.app.modules.identity import IdentityPolicyCommandRuntime
 from control_plane.app.shared.api.problem import register_problem_handlers
@@ -576,10 +580,15 @@ def test_policy_http_lifecycle_replays_source_stale_and_uses_fresh_totp_once(
         )
 
     runtime = ConfigurationHttpRuntime(
-        engine=configuration_rw_engine,
+        owners=PolicyRuntimeRegistry(
+            IdentityPolicyRuntime(
+                identity_rw_engine,
+                dependencies,
+                IdentityPolicyCommandRuntime(identity_rw_engine, identity_deps),
+            )
+        ),
         dependencies=dependencies,
         secret_manager=identity_deps.secret_manager,
-        policy_commands=IdentityPolicyCommandRuntime(identity_rw_engine, identity_deps),
     )
     app = FastAPI()
     register_problem_handlers(app)
@@ -804,10 +813,15 @@ def test_wrong_publish_totp_replays_one_safe_denial_without_domain_facts(
     valid_code = pyotp.TOTP(secret).at(identity_deps.clock.now())
     invalid_code = valid_code[:-1] + str((int(valid_code[-1]) + 1) % 10)
     runtime = ConfigurationHttpRuntime(
-        engine=configuration_rw_engine,
+        owners=PolicyRuntimeRegistry(
+            IdentityPolicyRuntime(
+                identity_rw_engine,
+                dependencies,
+                IdentityPolicyCommandRuntime(identity_rw_engine, identity_deps),
+            )
+        ),
         dependencies=dependencies,
         secret_manager=identity_deps.secret_manager,
-        policy_commands=IdentityPolicyCommandRuntime(identity_rw_engine, identity_deps),
     )
     app = FastAPI()
     register_problem_handlers(app)
@@ -937,10 +951,15 @@ def test_current_super_admin_recheck_denial_is_durable_after_guard_race(
         )
 
     runtime = ConfigurationHttpRuntime(
-        engine=configuration_rw_engine,
+        owners=PolicyRuntimeRegistry(
+            IdentityPolicyRuntime(
+                identity_rw_engine,
+                dependencies,
+                IdentityPolicyCommandRuntime(identity_rw_engine, identity_deps),
+            )
+        ),
         dependencies=dependencies,
         secret_manager=identity_deps.secret_manager,
-        policy_commands=IdentityPolicyCommandRuntime(identity_rw_engine, identity_deps),
     )
     guard_calls = 0
     runtime_calls = 0
@@ -1119,13 +1138,15 @@ def test_unexpected_publish_failure_rolls_back_every_fact_and_idempotency_claim(
         lambda: identity_deps.clock.now().timestamp(),
     )
     runtime = ConfigurationHttpRuntime(
-        engine=configuration_rw_engine,
+        owners=PolicyRuntimeRegistry(
+            IdentityPolicyRuntime(
+                identity_rw_engine,
+                failing_dependencies,
+                IdentityPolicyCommandRuntime(identity_rw_engine, failing_identity_deps),
+            )
+        ),
         dependencies=failing_dependencies,
         secret_manager=identity_deps.secret_manager,
-        policy_commands=IdentityPolicyCommandRuntime(
-            identity_rw_engine,
-            failing_identity_deps,
-        ),
     )
     app = FastAPI()
     register_problem_handlers(app)

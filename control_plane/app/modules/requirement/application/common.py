@@ -9,6 +9,7 @@ from control_plane.app.modules.requirement.domain import (
     DecisionDto,
     DecisionOutcome,
     ExecutorType,
+    FormalDeliveryState,
     GateAssignmentDto,
     GateInstanceDto,
     GateState,
@@ -78,6 +79,8 @@ def requirement_dto(row: Any) -> RequirementDto:
         title=row["title"],
         description=row["description"],
         acceptance_criteria=tuple(row["acceptance_criteria"]),
+        acceptance_criteria_version=row["acceptance_criteria_version"],
+        acceptance_criteria_hash=row["acceptance_criteria_hash"],
         created_by=row["created_by"],
         initial_repository_id=row["initial_repository_id"],
         route_snapshot_version=row["route_snapshot_version"],
@@ -90,6 +93,16 @@ def requirement_dto(row: Any) -> RequirementDto:
         required_work_item_set_hash=row["required_work_item_set_hash"],
         current_sdd_baseline_id=(
             None if row["current_sdd_baseline_id"] is None else str(row["current_sdd_baseline_id"])
+        ),
+        current_integration_baseline_selection_id=(
+            None
+            if row["current_integration_baseline_selection_id"] is None
+            else str(row["current_integration_baseline_selection_id"])
+        ),
+        current_acceptance_gate_id=(
+            None
+            if row["current_acceptance_gate_id"] is None
+            else str(row["current_acceptance_gate_id"])
         ),
         revision=row["revision"],
         created_at=row["created_at"],
@@ -133,6 +146,14 @@ def work_item_dto(row: Any) -> WorkItemDto:
         revision=row["revision"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        formal_delivery_state=FormalDeliveryState(row["formal_delivery_state"]),
+        formal_merge_request_binding_id=(
+            None
+            if row["formal_merge_request_binding_id"] is None
+            else str(row["formal_merge_request_binding_id"])
+        ),
+        formal_blocked_reason_code=row["formal_blocked_reason_code"],
+        formal_updated_at=row["formal_updated_at"],
     )
 
 

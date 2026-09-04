@@ -25,6 +25,23 @@ from control_plane.app.modules.source_control.application.delivery_relay import 
 from control_plane.app.modules.source_control.application.dependencies import (
     SourceControlDependencies,
 )
+from control_plane.app.modules.source_control.application.evidence import (
+    accept_external_validation,
+    accept_integration_baseline_request,
+    get_integration_baseline_evidence,
+    process_integration_baseline_request,
+)
+from control_plane.app.modules.source_control.application.evidence_relay import (
+    relay_requirement_evidence_requests,
+)
+from control_plane.app.modules.source_control.application.formal import (
+    accept_formal_delivery_request,
+    process_formal_delivery_request,
+    reconcile_formal_delivery_effect,
+)
+from control_plane.app.modules.source_control.application.formal_relay import (
+    relay_requirement_formal_delivery_requests,
+)
 from control_plane.app.modules.source_control.application.integration import (
     ProcessIntegrationRequestResult,
     process_integration_merge_request,
@@ -65,6 +82,13 @@ __all__ = [
     "reconcile_agent_pushes",
     "reconcile_agent_revocations",
     "SourceControlDependencies",
+    "accept_external_validation",
+    "accept_formal_delivery_request",
+    "accept_integration_baseline_request",
+    "get_integration_baseline_evidence",
+    "process_integration_baseline_request",
+    "relay_requirement_evidence_requests",
+    "relay_requirement_formal_delivery_requests",
     "ProcessIntegrationRequestResult",
     "process_due_source_control_inboxes",
     "accept_binding_request",
@@ -74,8 +98,10 @@ __all__ = [
     "ingest_signed_gitlab_webhook",
     "process_binding_request",
     "process_integration_merge_request",
+    "process_formal_delivery_request",
     "process_integration_mr_request",
     "reconcile_due_integration_effects",
+    "reconcile_formal_delivery_effect",
     "reconcile_due_source_control_effects",
     "process_webhook_inbox",
     "reconcile_due_effects",

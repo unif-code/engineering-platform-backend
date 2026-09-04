@@ -186,6 +186,7 @@ def binding_dto(row: Any) -> MergeRequestBindingDto:
         head_sha=row["head_sha"],
         creation_origin=row["creation_origin"],
         created_at=row["created_at"],
+        superseded_at=row["superseded_at"],
     )
 
 

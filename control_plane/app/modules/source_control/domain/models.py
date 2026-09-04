@@ -28,6 +28,8 @@ class EffectOperation(StrEnum):
     CREATE_TASK_BRANCH = "CREATE_TASK_BRANCH"
     CREATE_INTEGRATION_MR = "CREATE_INTEGRATION_MR"
     MERGE_INTEGRATION_MR = "MERGE_INTEGRATION_MR"
+    CREATE_FORMAL_MR = "CREATE_FORMAL_MR"
+    MERGE_FORMAL_MR = "MERGE_FORMAL_MR"
 
 
 class InboxState(StrEnum):
@@ -77,10 +79,29 @@ class MergeIntegrationMergeRequestEffectPayload(BaseModel):
     requested_head_sha: ExactHeadSha = Field(alias="requestedHeadSha")
 
 
+class CreateFormalMergeRequestEffectPayload(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+    acceptance_decision_id: NonEmptyStr = Field(alias="acceptanceDecisionId")
+    branch_binding_id: NonEmptyStr = Field(alias="branchBindingId")
+    head_sha: ExactHeadSha = Field(alias="headSha")
+
+
+class MergeFormalMergeRequestEffectPayload(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
+
+    acceptance_decision_id: NonEmptyStr = Field(alias="acceptanceDecisionId")
+    binding_id: NonEmptyStr = Field(alias="bindingId")
+    requested_head_sha: ExactHeadSha = Field(alias="requestedHeadSha")
+    review_decision_id: NonEmptyStr = Field(alias="reviewDecisionId")
+
+
 SourceControlEffectPayload = (
     TaskBranchEffectPayload
     | CreateIntegrationMergeRequestEffectPayload
     | MergeIntegrationMergeRequestEffectPayload
+    | CreateFormalMergeRequestEffectPayload
+    | MergeFormalMergeRequestEffectPayload
 )
 
 
@@ -219,16 +240,21 @@ class SourceControlEffectDto(BaseModel):
             ):
                 raise ValueError("branch effect operation shape is invalid")
         elif self.operation is EffectOperation.CREATE_INTEGRATION_MR:
+            integration_subject = (
+                f"integration-work-item:{self.work_item_id}:{self.payload.head_sha}"
+                if isinstance(self.payload, CreateIntegrationMergeRequestEffectPayload)
+                else ""
+            )
             if (
                 any(value is not None for value in branch_values)
-                or self.subject_key != work_item_subject
+                or self.subject_key != integration_subject
                 or not isinstance(
                     self.payload,
                     CreateIntegrationMergeRequestEffectPayload,
                 )
             ):
                 raise ValueError("merge request creation effect shape is invalid")
-        else:
+        elif self.operation is EffectOperation.MERGE_INTEGRATION_MR:
             subject_parts = self.subject_key.split(":")
             if (
                 any(value is not None for value in branch_values)
@@ -245,6 +271,28 @@ class SourceControlEffectDto(BaseModel):
                 or subject_parts[2] != self.payload.requested_head_sha
             ):
                 raise ValueError("merge effect operation shape is invalid")
+        elif self.operation is EffectOperation.CREATE_FORMAL_MR:
+            if (
+                any(value is not None for value in branch_values)
+                or not isinstance(self.payload, CreateFormalMergeRequestEffectPayload)
+                or self.subject_key
+                != (
+                    f"formal-work-item:{self.work_item_id}:{self.payload.head_sha}:"
+                    f"{self.request_fingerprint}"
+                )
+            ):
+                raise ValueError("formal merge request creation effect shape is invalid")
+        elif self.operation is EffectOperation.MERGE_FORMAL_MR:
+            if (
+                any(value is not None for value in branch_values)
+                or not isinstance(self.payload, MergeFormalMergeRequestEffectPayload)
+                or self.subject_key
+                != (
+                    f"formal-mr:{self.payload.binding_id}:{self.payload.requested_head_sha}:"
+                    f"{self.request_fingerprint}"
+                )
+            ):
+                raise ValueError("formal merge effect operation shape is invalid")
         return self
 
 

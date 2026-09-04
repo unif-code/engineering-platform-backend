@@ -90,6 +90,22 @@ class SqlAlchemyOrganizationRepository:
             ).mappings()
         )
 
+    def reporting_edges(self, account_id: str) -> list[Any]:
+        return list(
+            self.db.execute(
+                text(
+                    "WITH RECURSIVE relevant AS ("
+                    "SELECT account_id, superior_id, kind, 1 AS depth FROM organization.org_edge "
+                    "WHERE account_id=:account_id UNION ALL "
+                    "SELECT edge.account_id, edge.superior_id, edge.kind, relevant.depth + 1 "
+                    "FROM organization.org_edge edge JOIN relevant "
+                    "ON edge.account_id=relevant.superior_id WHERE relevant.depth < 3) "
+                    "SELECT account_id, superior_id, kind FROM relevant ORDER BY depth"
+                ),
+                {"account_id": account_id},
+            ).mappings()
+        )
+
     def upsert_edge(
         self,
         *,

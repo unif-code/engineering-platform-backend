@@ -18,6 +18,7 @@ class DeliveryRequestKind(StrEnum):
 
 class MergeRequestKind(StrEnum):
     INTEGRATION = "INTEGRATION"
+    FORMAL = "FORMAL"
 
 
 class MergeRequestCreationOrigin(StrEnum):
@@ -81,11 +82,20 @@ class MergeRequestBindingDto(BaseModel):
     external_project_id: NonEmptyStr
     merge_request_iid: PositiveInt
     source_branch: NonEmptyStr
-    target_branch: Literal["dev"]
+    target_branch: Literal["dev", "main"]
     create_effect_id: NonEmptyStr
     head_sha: NonEmptyStr
     creation_origin: MergeRequestCreationOrigin
     created_at: AwareDatetime
+    superseded_at: AwareDatetime | None = None
+
+    @model_validator(mode="after")
+    def validate_kind_target(self) -> "MergeRequestBindingDto":
+        if (self.kind is MergeRequestKind.INTEGRATION and self.target_branch != "dev") or (
+            self.kind is MergeRequestKind.FORMAL and self.target_branch != "main"
+        ):
+            raise ValueError("merge request kind and target branch do not match")
+        return self
 
 
 class MergeRequestObservationDto(BaseModel):

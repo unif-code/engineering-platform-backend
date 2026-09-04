@@ -12,12 +12,17 @@ pytestmark = pytest.mark.integration
 
 
 EXPECTED_TABLES = {
+    "delivery_decision",
+    "delivery_gate",
+    "delivery_gate_assignment",
     "decision",
     "gate_assignment",
     "gate_instance",
     "idempotency_record",
+    "integration_baseline_selection",
     "outbox_message",
     "requirement",
+    "requirement_delivery_snapshot",
     "sdd_artifact_version",
     "sdd_baseline",
     "work_item",
@@ -30,12 +35,14 @@ def _insert_requirement_for_integrity_test(db: Connection) -> None:
         text(
             "INSERT INTO requirement.requirement "
             "(id, workspace_id, type, title, description, acceptance_criteria, "
-            "created_by, initial_repository_id, route_snapshot_version, "
+            "acceptance_criteria_version, acceptance_criteria_hash, created_by, "
+            "initial_repository_id, route_snapshot_version, "
             "route_snapshot_hash, route_snapshot, state, record_state, requirement_version, "
             "required_work_item_set_version, required_work_item_set_hash, revision) VALUES "
             "('10000000-0000-0000-0000-000000000201', "
             "'20000000-0000-0000-0000-000000000201', 'feat', 'Title', 'Description', "
-            "'[\"accepted\"]', 'employee-1', 'repository-1', 1, 'sha256:route', "
+            "'[\"accepted\"]', 1, 'sha256:" + "a" * 64 + "', "
+            "'employee-1', 'repository-1', 1, 'sha256:route', "
             '\'{"requirementType":"feat","requiredCapabilities":["code.change"],"version": 1}\', '
             "'PREPARING', 'ACTIVE', 1, 1, 'sha256:set', 1)"
         )
@@ -103,12 +110,14 @@ def test_requirement_constraints_reject_invalid_aggregate_and_work_item_facts(
                     text(
                         "INSERT INTO requirement.requirement "
                         "(id, workspace_id, type, title, description, acceptance_criteria, "
-                        "created_by, initial_repository_id, route_snapshot_version, "
+                        "acceptance_criteria_version, acceptance_criteria_hash, created_by, "
+                        "initial_repository_id, route_snapshot_version, "
                         "route_snapshot_hash, state, record_state, requirement_version, "
                         "required_work_item_set_version, required_work_item_set_hash, revision) "
                         "VALUES ('10000000-0000-0000-0000-000000000001', "
                         "'20000000-0000-0000-0000-000000000001', 'story', 'Title', "
-                        "'Description', '[\"accepted\"]', 'employee-1', 'repository-1', 1, "
+                        "'Description', '[\"accepted\"]', 1, 'sha256:" + "a" * 64 + "', "
+                        "'employee-1', 'repository-1', 1, "
                         "'sha256:route', 'CREATED', 'ACTIVE', 1, 1, 'sha256:set', 1)"
                     )
                 )
@@ -240,12 +249,13 @@ def test_integration_delivery_constraints_reject_invalid_business_facts(
                     "executor_id, required_capabilities, assignment_state, repository_state, "
                     "state, repository_id, base_commit_sha, task_branch, "
                     "integration_delivery_state, integration_merge_request_binding_id, "
-                    "integration_blocked_reason_code, revision) VALUES "
+                    "integration_blocked_reason_code, formal_delivery_state, revision) VALUES "
                     "('10000000-0000-0000-0000-000000000220', "
                     "'10000000-0000-0000-0000-000000000201', 'employee-1', 'employee-1', "
                     "'HUMAN', 'employee-1', '[\"code.change\"]', 'ASSIGNED', 'BOUND', "
                     "'DRAFT', 'repository-1', 'sha256:base', 'task-branch', "
-                    ":delivery_state, :merge_request_binding_id, :blocked_reason, 1)"
+                    ":delivery_state, :merge_request_binding_id, :blocked_reason, "
+                    "'NOT_STARTED', 1)"
                 ),
                 {
                     "delivery_state": delivery_state,
@@ -277,11 +287,12 @@ def test_source_control_blocked_reasons_are_valid_requirement_facts(
                 "(id, requirement_id, created_by, human_owner_id, executor_type, "
                 "executor_id, required_capabilities, assignment_state, repository_state, "
                 "state, repository_id, base_commit_sha, task_branch, "
-                "repository_blocked_reason_code, repository_blocked_at, revision) VALUES "
+                "repository_blocked_reason_code, repository_blocked_at, "
+                "formal_delivery_state, revision) VALUES "
                 "('10000000-0000-0000-0000-000000000211', "
                 "'10000000-0000-0000-0000-000000000201', 'employee-1', 'employee-1', "
                 "'HUMAN', 'employee-1', '[\"code.change\"]', 'ASSIGNED', 'BLOCKED', "
-                "'DRAFT', 'repository-1', NULL, NULL, :reason, now(), 1)"
+                "'DRAFT', 'repository-1', NULL, NULL, :reason, now(), 'NOT_STARTED', 1)"
             ),
             {"reason": reason_code.value},
         )
@@ -321,12 +332,14 @@ def test_current_sdd_baseline_must_belong_to_the_same_requirement(
             text(
                 "INSERT INTO requirement.requirement "
                 "(id, workspace_id, type, title, description, acceptance_criteria, "
-                "created_by, initial_repository_id, route_snapshot_version, "
+                "acceptance_criteria_version, acceptance_criteria_hash, created_by, "
+                "initial_repository_id, route_snapshot_version, "
                 "route_snapshot_hash, route_snapshot, state, record_state, requirement_version, "
                 "required_work_item_set_version, required_work_item_set_hash, revision) "
                 "VALUES ('10000000-0000-0000-0000-000000000209', "
                 "'20000000-0000-0000-0000-000000000209', 'feat', 'Other', "
-                "'Other requirement', '[\"accepted\"]', 'employee-2', 'repository-2', 1, "
+                "'Other requirement', '[\"accepted\"]', 1, 'sha256:" + "b" * 64 + "', "
+                "'employee-2', 'repository-2', 1, "
                 "'sha256:route-2', "
                 '\'{"requirementType":"feat","requiredCapabilities":'
                 '["code.change"],"version": 1}\', '
@@ -398,7 +411,7 @@ def test_requirement_rw_has_only_expected_module_and_audit_privileges(
     expected = {
         "requirement": {"SELECT", "INSERT"},
         "sdd_artifact_version": {"SELECT", "INSERT"},
-        "work_item": {"SELECT", "INSERT", "UPDATE"},
+        "work_item": {"SELECT", "INSERT"},
         "work_item_assignment": {"SELECT", "INSERT"},
         "sdd_baseline": {"SELECT", "INSERT"},
         "gate_instance": {"SELECT", "INSERT"},
@@ -406,6 +419,11 @@ def test_requirement_rw_has_only_expected_module_and_audit_privileges(
         "decision": {"SELECT", "INSERT"},
         "idempotency_record": {"SELECT", "INSERT", "UPDATE"},
         "outbox_message": {"SELECT", "INSERT", "UPDATE"},
+        "requirement_delivery_snapshot": {"SELECT", "INSERT"},
+        "integration_baseline_selection": {"SELECT", "INSERT"},
+        "delivery_gate": {"SELECT", "INSERT"},
+        "delivery_gate_assignment": {"SELECT", "INSERT"},
+        "delivery_decision": {"SELECT", "INSERT"},
     }
     privileges = ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER")
     with isolated_requirement_rw_engine.connect() as db:
@@ -454,7 +472,12 @@ def test_requirement_rw_has_only_expected_module_and_audit_privileges(
                 "requirement",
                 "gate_instance",
                 "gate_assignment",
+                "work_item",
                 "work_item_assignment",
+                "integration_baseline_selection",
+                "delivery_gate",
+                "delivery_gate_assignment",
+                "delivery_decision",
             )
         }
     with isolated_requirement_database.owner.connect() as db:
@@ -483,12 +506,45 @@ def test_requirement_rw_has_only_expected_module_and_audit_privileges(
             "required_work_item_set_version",
             "required_work_item_set_hash",
             "current_sdd_baseline_id",
+            "current_integration_baseline_selection_id",
+            "current_acceptance_gate_id",
             "revision",
             "updated_at",
         },
         "gate_instance": {"state", "revision", "decided_at"},
         "gate_assignment": {"superseded_at"},
+        "work_item": {
+            "state",
+            "human_owner_id",
+            "executor_id",
+            "assignment_state",
+            "repository_state",
+            "base_commit_sha",
+            "task_branch",
+            "repository_blocked_reason_code",
+            "repository_blocked_at",
+            "integration_delivery_state",
+            "integration_merge_request_binding_id",
+            "integration_blocked_reason_code",
+            "integration_updated_at",
+            "formal_delivery_state",
+            "formal_merge_request_binding_id",
+            "formal_blocked_reason_code",
+            "formal_updated_at",
+            "revision",
+            "updated_at",
+        },
         "work_item_assignment": {"superseded_at"},
+        "integration_baseline_selection": {"invalidated_at", "invalidation_reason"},
+        "delivery_gate": {
+            "state",
+            "revision",
+            "decided_at",
+            "invalidated_at",
+            "invalidation_reason",
+        },
+        "delivery_gate_assignment": {"superseded_at"},
+        "delivery_decision": {"validity", "invalidated_at", "invalidation_reason"},
     }
     assert cross_module == {
         "identity.account": False,

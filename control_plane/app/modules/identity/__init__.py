@@ -11,6 +11,9 @@ from control_plane.app.modules.identity.adapters.configuration_policy import (
 from control_plane.app.modules.identity.adapters.policy_commands import (
     IdentityPolicyCommandRuntime,
 )
+from control_plane.app.modules.identity.adapters.policy_reauthentication import (
+    IdentityPolicyReauthenticationRuntime,
+)
 from control_plane.app.modules.identity.application.accounts import (
     consume_temp_password as _consume_temp_password,
 )
@@ -188,6 +191,12 @@ from control_plane.app.modules.identity.domain.errors import (
 )
 from control_plane.app.modules.identity.domain.models import Principal
 from control_plane.app.modules.identity.domain.policy import EffectiveIdentityPolicy
+from control_plane.app.modules.identity.domain.policy_reauthentication import (
+    ConsumedReauthReceipt,
+    PolicyReauthBinding,
+    PolicyReauthenticationDenied,
+    PolicyReauthenticationUnavailable,
+)
 from control_plane.app.modules.identity.domain.session import (
     AuthChallengeState,
     AuthDenialCode,
@@ -908,6 +917,11 @@ def resolve_recovery_cli(
 
 
 __all__ = [
+    "IdentityPolicyReauthenticationRuntime",
+    "ConsumedReauthReceipt",
+    "PolicyReauthBinding",
+    "PolicyReauthenticationDenied",
+    "PolicyReauthenticationUnavailable",
     "AccountConflict",
     "AccountDto",
     "AccountNotFound",
