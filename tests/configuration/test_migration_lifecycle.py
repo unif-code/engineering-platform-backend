@@ -97,6 +97,7 @@ def test_fresh_upgrade_installs_independent_heads_and_deterministic_seed(
             "0008_auth_v05_routes",
             "0005_req_sdd_human_gate",
             "0006_sc_mr_reconcile",
+            "0003_event_acceptance_receipt",
         }
         assert installed_heads == {
             "0008_audit_requirement_grant",
@@ -104,6 +105,7 @@ def test_fresh_upgrade_installs_independent_heads_and_deterministic_seed(
             "0008_auth_v05_routes",
             "0005_req_sdd_human_gate",
             "0006_sc_mr_reconcile",
+            "0003_event_acceptance_receipt",
         }
         assert counts == (7, 1, 1, 1)
     finally:

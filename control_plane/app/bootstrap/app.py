@@ -4,10 +4,22 @@ from typing import Any, Literal, cast
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
-from sqlalchemy import Engine, create_engine
+from sqlalchemy import Connection, Engine, create_engine
 from sqlalchemy.exc import SQLAlchemyError
 
 from control_plane.app import __version__
+from control_plane.app.modules.agent.adapters import (
+    DevActorResolver,
+    DevDefinitionAvailabilityPolicy,
+    DevEventCursorCodec,
+    DevExecutionBindingPolicy,
+    RequirementFacadeExecutionContext,
+    SqlAlchemyAgentTransactionRunner,
+)
+from control_plane.app.modules.agent.adapters.dev_temporal import DevTemporalAdapter
+from control_plane.app.modules.agent.api import AgentHttpRuntime, create_agent_router
+from control_plane.app.modules.agent.api.runtime import UnboundRequirementExecutionContext
+from control_plane.app.modules.agent.application.dependencies import AgentDependencies
 from control_plane.app.modules.audit.adapters.sqlalchemy_repository import (
     SqlAlchemyAuditEventRepository,
 )
@@ -202,6 +214,15 @@ def source_control_query_runtime_engine() -> Engine:
     )
 
 
+@lru_cache(maxsize=1)
+def agent_runtime_engine() -> Engine:
+    return create_engine(
+        DbSettings().agent_database_url,
+        pool_pre_ping=True,
+        connect_args={"connect_timeout": 2},
+    )
+
+
 def _identity_authorization_change(account_id: str) -> object:
     source = current_identity_change_source()
     if source is None or not source.source_transaction_id:
@@ -357,6 +378,38 @@ def requirement_http_runtime() -> RequirementHttpRuntime:
 
 
 @lru_cache(maxsize=1)
+def agent_dependencies() -> AgentDependencies:
+    clock = SystemClock()
+    random = SystemRandom()
+    return AgentDependencies(
+        transaction_runner=SqlAlchemyAgentTransactionRunner(agent_runtime_engine()),
+        requirement_context=UnboundRequirementExecutionContext(),
+        binding_policy=DevExecutionBindingPolicy(),
+        definition_availability=DevDefinitionAvailabilityPolicy(),
+        actor_resolver=DevActorResolver(),
+        clock=clock.now,
+        new_id=lambda: str(random.uuid4()),
+        cursor_codec=DevEventCursorCodec(),
+        secret_manager=FileSecretManager(SecuritySettings()),
+        workflow_orchestrator=DevTemporalAdapter(),
+    )
+
+
+def _agent_requirement_context(db: Connection) -> RequirementFacadeExecutionContext:
+    return RequirementFacadeExecutionContext(db, requirement_dependencies())
+
+
+@lru_cache(maxsize=1)
+def agent_http_runtime() -> AgentHttpRuntime:
+    return AgentHttpRuntime(
+        engine=agent_runtime_engine(),
+        dependencies=agent_dependencies(),
+        requirement_engine=requirement_runtime_engine(),
+        requirement_context_factory=_agent_requirement_context,
+    )
+
+
+@lru_cache(maxsize=1)
 def source_control_dependencies() -> SourceControlDependencies:
     return SourceControlDependencies(
         repository_factory=SqlAlchemySourceControlRepository,
@@ -467,6 +520,7 @@ def create_app(
     *,
     identity_runtime_provider: Callable[[], IdentityHttpRuntime] = identity_http_runtime,
     requirement_runtime_provider: Callable[[], RequirementHttpRuntime] = requirement_http_runtime,
+    agent_runtime_provider: Callable[[], AgentHttpRuntime] = agent_http_runtime,
     source_control_query_runtime_provider: Callable[
         [], SourceControlQueryRuntime
     ] = source_control_query_runtime,
@@ -567,6 +621,13 @@ def create_app(
     app.include_router(
         create_requirement_delivery_router(
             requirement_runtime_provider,
+            cast(Callable[[], Any], protected_principal),
+            authorization_capability_guard,
+        )
+    )
+    app.include_router(
+        create_agent_router(
+            agent_runtime_provider,
             cast(Callable[[], Any], protected_principal),
             authorization_capability_guard,
         )

@@ -279,6 +279,7 @@ def test_current_alembic_heads_are_installed(identity_owner_engine: Engine) -> N
         "0010_identity_policy_reauth",
         "0008_auth_v05_routes",
         "0006_sc_mr_reconcile",
+        "0003_event_acceptance_receipt",
     }
 
 

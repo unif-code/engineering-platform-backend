@@ -26,6 +26,7 @@ class DbSettings(BaseSettings):
     source_control_database_url: str = (
         "postgresql+psycopg://source_control_rw:localdev@localhost:5432/platform"
     )
+    agent_database_url: str = "postgresql+psycopg://agent_rw:localdev@localhost:5432/platform"
     migration_database_url: str = (
         "postgresql+psycopg://platform_owner:localdev@localhost:5432/platform"
     )
