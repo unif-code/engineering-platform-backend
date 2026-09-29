@@ -639,6 +639,187 @@ def _integrate(journey: Journey, subject: Subject, *, head: str = HEAD_SHA) -> N
     _merge_integration(journey, subject)
 
 
+def test_v05_default_routes_preserve_authority_etags_and_request_identity(journey: Journey) -> None:
+    subject = _ready_subject(journey)
+    current = journey.member.get(subject.base)
+    item = current.json()["workItems"][0]
+    assert item["integrationDeliveryState"] == "IMPLEMENTING"
+    assert item["humanOwnerId"] == journey.member_id
+    assert current.headers["etag"] == f'"v{current.json()["requirement"]["revision"]}"'
+    assert item["revision"] != current.json()["requirement"]["revision"]
+    for suffix in (":start", ":request-integration-mr"):
+        _write(journey.leader, subject.work + suffix, {}, etag=current.headers["etag"], status=403)
+
+    _revoke(journey, journey.leader_id, "work_item.execute")
+    _revoke(journey, journey.leader_id, "code.change")
+    _revoke(journey, journey.member_id, "merge_request.merge")
+    me = journey.leader.get("/api/v1/me")
+    navigation = journey.leader.get("/api/v1/navigation")
+    assert me.status_code == navigation.status_code == 200
+    capabilities = {
+        entry["capability"]
+        for entry in me.json()["capabilities"]
+        if entry.get("scopeId") == journey.workspace_id
+    }
+    assert "merge_request.merge" in capabilities
+    assert not {"work_item.execute", "code.change"} & capabilities
+    route = next(entry for entry in navigation.json() if entry["routeKey"] == "requirements")
+    assert {"work_item.execute", "merge_request.merge"} <= {
+        entry["capability"] for entry in route["meta"]["actionCapabilities"]
+    }
+
+    path = f"{subject.work}:request-integration-mr"
+    _write(journey.member, path, {}, etag=f'"v{item["revision"]}"', status=409)
+    _write(journey.member, path, {"headSha": HEAD_SHA}, etag=current.headers["etag"], status=422)
+    journey.provider.branches[item["taskBranch"]] = HEAD_SHA
+    writes = list(journey.provider.writes)
+    accepted = _write(
+        journey.member, path, {}, etag=current.headers["etag"], status=202, key="v05-mr-create"
+    )
+    assert accepted.json()["workItem"]["integrationDeliveryState"] == "MR_PENDING"
+    assert accepted.headers["etag"] == f'"v{accepted.json()["requirement"]["revision"]}"'
+    replay = _write(
+        journey.member, path, {}, etag=current.headers["etag"], status=202, key="v05-mr-create"
+    )
+    assert (replay.json(), replay.headers["etag"]) == (accepted.json(), accepted.headers["etag"])
+    _write(journey.member, path, {}, etag=current.headers["etag"], status=409)
+    assert journey.provider.writes == writes
+    assert journey.worker("relay")["processed"] == 1
+    assert journey.worker("process")["processed"] == 1
+
+    opened = journey.member.get(subject.base)
+    assert opened.json()["workItems"][0]["integrationDeliveryState"] == "MR_OPEN"
+    assert opened.json()["workItems"][0]["integrationMergeRequestBindingId"] is not None
+    assert len(journey.provider.mrs) == 1
+    assert journey.provider.mrs[1]["target_branch"] == "dev"
+    merge_path = f"{subject.work}:request-integration-merge"
+    for client in (journey.member, journey.admin):
+        _write(client, merge_path, {}, etag=opened.headers["etag"], status=403)
+    merged = _write(
+        journey.leader, merge_path, {}, etag=opened.headers["etag"], status=202, key="v05-mr-merge"
+    )
+    assert merged.json()["workItem"]["integrationDeliveryState"] == "MERGE_PENDING"
+    assert journey.provider.mrs[1]["state"] == "opened"
+    assert journey.worker("relay")["processed"] == 1
+    assert journey.worker("process")["processed"] == 1
+    facts = journey.member.get(subject.base).json()
+    assert facts["workItems"][0]["integrationDeliveryState"] == "INTEGRATED"
+    assert facts["workItems"][0]["taskBranch"] in journey.provider.branches
+    assert journey.provider.branches["dev"] == INTEGRATION_SHA
+    assert journey.provider.branches["main"] == BASE_SHA
+    writes = list(journey.provider.writes)
+    replay = _write(
+        journey.leader, merge_path, {}, etag=opened.headers["etag"], status=202, key="v05-mr-merge"
+    )
+    assert (replay.json(), replay.headers["etag"]) == (merged.json(), merged.headers["etag"])
+    assert journey.worker("relay")["processed"] == journey.worker("process")["processed"] == 0
+    assert journey.provider.writes == writes
+    assert journey.member.get(subject.base).json() == facts
+
+
+@pytest.mark.parametrize("operation", ["create", "merge"])
+def test_v05_unknown_provider_result_reconciles_without_repeating_the_write(
+    journey: Journey, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    subject = _ready_subject(journey)
+    if operation == "merge":
+        _open_integration_mr(journey, subject)
+    current = journey.member.get(subject.base)
+    journey.provider.branches[current.json()["workItems"][0]["taskBranch"]] = HEAD_SHA
+    original = GitLabTransport.__call__
+    lost_response = False
+
+    def lose_response(provider: GitLabTransport, request: httpx.Request) -> httpx.Response:
+        nonlocal lost_response
+        response = original(provider, request)
+        if not lost_response and request.method == ("POST" if operation == "create" else "PUT"):
+            lost_response = True
+            raise httpx.ReadTimeout(
+                "Provider write succeeded but response was lost", request=request
+            )
+        return response
+
+    monkeypatch.setattr(GitLabTransport, "__call__", lose_response)
+    client = journey.member if operation == "create" else journey.leader
+    suffix = ":request-integration-mr" if operation == "create" else ":request-integration-merge"
+    path, key = subject.work + suffix, f"v05-unknown-{operation}"
+    accepted = _write(client, path, {}, etag=current.headers["etag"], status=202, key=key)
+    assert journey.worker("relay")["processed"] == 1
+    assert journey.worker("process", errors=("RECONCILIATION_PENDING",))["processed"] == 1
+    assert lost_response
+    assert (
+        journey.member.get(subject.base).json()["workItems"][0]["integrationDeliveryState"]
+        == "RECONCILIATION_PENDING"
+    )
+    writes = list(journey.provider.writes)
+    replay = _write(client, path, {}, etag=current.headers["etag"], status=202, key=key)
+    assert replay.json() == accepted.json()
+    future = datetime.now(UTC) + timedelta(minutes=3)
+    monkeypatch.setattr(SystemClock, "now", lambda _self: future)
+    assert journey.worker("reconcile")["processed"] == 1
+    assert journey.provider.writes == writes
+    assert len(journey.provider.mrs) == 1
+    state = journey.member.get(subject.base).json()["workItems"][0]["integrationDeliveryState"]
+    assert state == ("MR_OPEN" if operation == "create" else "INTEGRATED")
+    assert journey.worker("relay")["processed"] == journey.worker("process")["processed"] == 0
+    assert journey.worker("reconcile")["processed"] == 0
+
+
+@pytest.mark.parametrize("operation", ["create", "merge"])
+def test_v05_queued_delivery_rechecks_current_actor_qualification(
+    journey: Journey, operation: str
+) -> None:
+    subject = _ready_subject(journey)
+    if operation == "merge":
+        _open_integration_mr(journey, subject)
+    current = journey.member.get(subject.base)
+    journey.provider.branches[current.json()["workItems"][0]["taskBranch"]] = HEAD_SHA
+    client = journey.member if operation == "create" else journey.leader
+    suffix = ":request-integration-mr" if operation == "create" else ":request-integration-merge"
+    _write(client, subject.work + suffix, {}, etag=current.headers["etag"], status=202)
+    assert journey.worker("relay")["processed"] == 1
+    _revoke(
+        journey,
+        journey.member_id if operation == "create" else journey.leader_id,
+        "code.change" if operation == "create" else "merge_request.merge",
+    )
+    writes = list(journey.provider.writes)
+    reason = "OWNER_INELIGIBLE" if operation == "create" else "MERGE_ACTOR_INELIGIBLE"
+    assert journey.worker("process", errors=(reason,))["processed"] == 1
+    assert journey.provider.writes == writes
+    item = journey.member.get(subject.base).json()["workItems"][0]
+    assert item["integrationDeliveryState"] == "BLOCKED"
+    assert item["integrationBlockedReasonCode"] == reason
+
+
+def test_v05_sibling_requests_survive_aggregate_revision_changes(journey: Journey) -> None:
+    subject = _ready_subject(journey, count=2)
+    work_ids = (subject.work_item_id, *subject.peers)
+    for operation, client in (("create", journey.member), ("merge", journey.leader)):
+        suffix = (
+            ":request-integration-mr" if operation == "create" else ":request-integration-merge"
+        )
+        for work_id in work_ids:
+            current = journey.member.get(subject.base)
+            item = next(item for item in current.json()["workItems"] if item["id"] == work_id)
+            journey.provider.branches[item["taskBranch"]] = HEAD_SHA
+            _write(
+                client,
+                f"{subject.base}/work-items/{work_id}{suffix}",
+                {},
+                etag=current.headers["etag"],
+                status=202,
+            )
+        assert journey.worker("relay")["processed"] == 2
+        assert journey.worker("process")["processed"] == 2
+        assert {
+            item["integrationDeliveryState"]
+            for item in journey.member.get(subject.base).json()["workItems"]
+        } == {"MR_OPEN" if operation == "create" else "INTEGRATED"}
+    assert len(journey.provider.mrs) == 2
+    assert all(mr["state"] == "merged" for mr in journey.provider.mrs.values())
+
+
 def _submit_validation(
     journey: Journey, subject: Subject, *, head: str, merge_sha: str
 ) -> httpx.Response:

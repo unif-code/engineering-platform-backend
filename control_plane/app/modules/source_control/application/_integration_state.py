@@ -75,9 +75,10 @@ def _read_admission(
         raise SourceControlDependencyUnavailable("Integration admission unavailable")
     context = requirement_delivery.delivery_context(str(inbox["work_item_id"]))
     binding_context = requirement_binding.binding_context(str(inbox["work_item_id"]))
+    # Sibling commands advance Requirement revision; this request fences its WorkItem.
     if (
         context.requirement_id != str(inbox["requirement_id"])
-        or context.requirement_revision != inbox["requirement_revision"]
+        or context.requirement_revision < inbox["requirement_revision"]
         or context.work_item_id != str(inbox["work_item_id"])
         or context.repository_id != str(inbox["repository_id"])
         or context.work_item_revision != inbox["work_item_revision"]

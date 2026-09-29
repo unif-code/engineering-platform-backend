@@ -836,14 +836,21 @@ def test_mismatched_requirement_contexts_fail_closed_before_provider_calls(
     assert gitlab.calls == []
 
 
-def test_mismatched_originating_requirement_revision_fails_closed_before_provider_calls(
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"requirement_revision": 2},
+        {"requirement_revision": 4, "work_item_revision": 6},
+    ],
+    ids=("context-older-than-request", "same-work-item-changed"),
+)
+def test_stale_delivery_subject_fails_closed_before_provider_calls(
     isolated_source_control_database: Any,
+    changes: dict[str, int],
 ) -> None:
     engine = isolated_source_control_database.runtime
     _seed_source_control(engine)
-    requirement = FakeRequirementDelivery(
-        _delivery_context().model_copy(update={"requirement_revision": 4})
-    )
+    requirement = FakeRequirementDelivery(_delivery_context().model_copy(update=changes))
     gitlab = FakeGitLabMergeRequests(engine)
     dependencies, _requirement, _gitlab = _dependencies(
         engine,
