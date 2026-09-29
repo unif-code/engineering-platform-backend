@@ -39,6 +39,23 @@ class FailFirstAcknowledgement:
         self.delegate = delegate
         self.fail_next_ack = True
 
+    def validate_snapshot(
+        self,
+        *,
+        requirement_id: str,
+        requirement_version: int,
+        required_work_item_set_version: int,
+        required_work_item_set_hash: str,
+        work_item_ids: tuple[str, ...],
+    ) -> None:
+        self.delegate.validate_snapshot(
+            requirement_id=requirement_id,
+            requirement_version=requirement_version,
+            required_work_item_set_version=required_work_item_set_version,
+            required_work_item_set_hash=required_work_item_set_hash,
+            work_item_ids=work_item_ids,
+        )
+
     def claim_requests(
         self,
         *,

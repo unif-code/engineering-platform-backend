@@ -723,6 +723,19 @@ def _process_integration_baseline_request(
         raise
 
 
+def _validate_snapshot_request(request: Any, dependencies: SourceControlDependencies) -> None:
+    requirement = dependencies.requirement_evidence
+    if requirement is None:
+        raise EvidenceUnavailable("Requirement delivery input unavailable")
+    requirement.validate_snapshot(
+        requirement_id=str(request["requirement_id"]),
+        requirement_version=request["requirement_version"],
+        required_work_item_set_version=request["required_work_item_set_version"],
+        required_work_item_set_hash=request["required_work_item_set_hash"],
+        work_item_ids=tuple(str(item) for item in request["work_item_ids"]),
+    )
+
+
 def _generate_claimed_integration_baseline(
     repository: SourceControlEvidenceRepository,
     *,
@@ -736,10 +749,12 @@ def _generate_claimed_integration_baseline(
         work_item_ids
     ):
         raise EvidenceStale("Evidence request WorkItem set is not canonical")
+    _validate_snapshot_request(claimed, dependencies)
     items = tuple(
         _item_from_context(repository, request=claimed, work_item_id=work_item_id)
         for work_item_id in work_item_ids
     )
+    _validate_snapshot_request(claimed, dependencies)
     evidence_id = str(dependencies.random.uuid4())
     evidence_hash = canonical_integration_baseline_hash(
         integration_baseline_id=evidence_id,

@@ -9,6 +9,7 @@ from control_plane.app.modules.requirement.application.acceptance import (
     _decision_dto,
     _gate_dto,
     _selection_dto,
+    _validate_evidence_artifacts,
 )
 from control_plane.app.modules.requirement.application.common import (
     requirement_dto,
@@ -77,7 +78,50 @@ def get_delivery_snapshot_evidence(
         != tuple(str(item) for item in snapshot["work_item_ids"])
     ):
         raise EvidenceUnavailableOrStale("Evidence does not match the delivery snapshot")
-    return evidence
+    current = repository.requirement_by_id(requirement_id)
+    if current is None:
+        raise RequirementNotFound(requirement_id)
+    version_matches = current["requirement_version"] == snapshot["requirement_version"]
+    selection_id = current["current_integration_baseline_selection_id"]
+    if not version_matches and selection_id is not None:
+        selection = repository.integration_baseline_selection_by_id(str(selection_id))
+        version_matches = (
+            selection is not None
+            and selection["invalidated_at"] is None
+            and str(selection["delivery_snapshot_id"]) == snapshot_id
+            and str(selection["integration_baseline_id"]) == evidence.id
+            and selection["integration_baseline_hash"] == evidence.evidence_hash
+            and selection["requirement_version_before"] == snapshot["requirement_version"]
+            and selection["requirement_version_after"] == current["requirement_version"]
+        )
+    input_changed = (
+        not version_matches
+        or current["required_work_item_set_version"] != snapshot["required_work_item_set_version"]
+        or current["required_work_item_set_hash"] != snapshot["required_work_item_set_hash"]
+        or {str(item["id"]) for item in repository.work_items(requirement_id)}
+        != set(snapshot["work_item_ids"])
+    )
+    reasons = list(evidence.currentness_reasons)
+    if input_changed:
+        reasons.append("REQUIREMENT_INPUT_CHANGED")
+    artifacts_unavailable = False
+    try:
+        _validate_evidence_artifacts(requirement_id, evidence, dependencies)
+    except EvidenceUnavailableOrStale:
+        artifacts_unavailable = True
+        reasons.append("ARTIFACT_UNAVAILABLE_OR_STALE")
+    return evidence.model_copy(
+        update={
+            "currentness_state": (
+                "STALE"
+                if input_changed or evidence.currentness_state == "STALE"
+                else "UNAVAILABLE"
+                if artifacts_unavailable or evidence.currentness_state == "UNAVAILABLE"
+                else "CURRENT"
+            ),
+            "currentness_reasons": tuple(reasons),
+        }
+    )
 
 
 def _snapshot_dto(value: Any) -> RequirementDeliverySnapshot:

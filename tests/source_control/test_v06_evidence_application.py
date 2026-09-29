@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import text
@@ -22,6 +23,7 @@ from control_plane.app.modules.source_control.adapters import (
     SqlAlchemySourceControlEvidenceRepository,
     SqlAlchemySourceControlRepository,
 )
+from control_plane.app.modules.source_control.ports import RequirementEvidencePort
 from tests.source_control.conftest import IsolatedSourceControlDatabase
 from tests.source_control.test_commands import FixedRandom
 from tests.source_control.test_migration import _insert_integration_graph
@@ -53,6 +55,7 @@ def _dependencies(source: IsolatedSourceControlDatabase) -> SourceControlDepende
         clock=FixedClock(),
         random=FixedRandom(),
         evidence_repository_factory=SqlAlchemySourceControlEvidenceRepository,
+        requirement_evidence=Mock(spec=RequirementEvidencePort),
     )
 
 

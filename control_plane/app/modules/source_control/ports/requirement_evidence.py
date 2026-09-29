@@ -18,6 +18,16 @@ class RelayEvidenceRequestsResult(BaseModel):
 
 
 class RequirementEvidencePort(Protocol):
+    def validate_snapshot(
+        self,
+        *,
+        requirement_id: str,
+        requirement_version: int,
+        required_work_item_set_version: int,
+        required_work_item_set_hash: str,
+        work_item_ids: tuple[str, ...],
+    ) -> None: ...
+
     def claim_requests(
         self,
         *,

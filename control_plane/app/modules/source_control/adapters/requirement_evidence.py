@@ -7,6 +7,8 @@ from sqlalchemy import Engine
 import control_plane.app.modules.requirement as requirement
 from control_plane.app.modules.source_control.domain import (
     ArtifactReference,
+    EvidenceStale,
+    EvidenceUnavailable,
     ExternalValidationRequestEnvelope,
     IntegrationBaselineRequestEnvelope,
     RequirementCallbackUnavailable,
@@ -17,6 +19,31 @@ from control_plane.app.modules.source_control.domain import (
 class RequirementFacadeEvidenceAdapter:
     engine: Engine
     dependencies: Any
+
+    def validate_snapshot(
+        self,
+        *,
+        requirement_id: str,
+        requirement_version: int,
+        required_work_item_set_version: int,
+        required_work_item_set_hash: str,
+        work_item_ids: tuple[str, ...],
+    ) -> None:
+        try:
+            with self.engine.connect() as db:
+                current = requirement.get_requirement_delivery_snapshot(
+                    db, requirement_id=requirement_id, dependencies=self.dependencies
+                )
+        except Exception as error:
+            raise EvidenceUnavailable("Requirement delivery input unavailable") from error
+        if (
+            current.requirement_id != requirement_id
+            or current.requirement_version != requirement_version
+            or current.required_work_item_set_version != required_work_item_set_version
+            or current.required_work_item_set_hash != required_work_item_set_hash
+            or current.work_item_ids != work_item_ids
+        ):
+            raise EvidenceStale("Requirement delivery input changed")
 
     def claim_requests(
         self,

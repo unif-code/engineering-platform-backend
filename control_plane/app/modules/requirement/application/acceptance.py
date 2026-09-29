@@ -10,6 +10,7 @@ from control_plane.app.modules.requirement.application.common import (
 from control_plane.app.modules.requirement.application.dependencies import (
     RequirementDependencies,
 )
+from control_plane.app.modules.requirement.application.evidence import _validated_artifacts
 from control_plane.app.modules.requirement.domain import (
     AcceptanceConfirmationResult,
     AcceptanceDecisionResult,
@@ -210,6 +211,21 @@ def _require_current_selected_evidence(
     return evidence
 
 
+def _validate_evidence_artifacts(
+    requirement_id: str,
+    evidence: IntegrationBaselineEvidenceSnapshot,
+    dependencies: RequirementDependencies,
+) -> None:
+    for item in evidence.work_items:
+        if not item.artifact_references:
+            raise EvidenceUnavailableOrStale("Evidence Artifact references are unavailable")
+        _validated_artifacts(
+            requirement_id=requirement_id,
+            references=item.artifact_references,
+            dependencies=dependencies,
+        )
+
+
 def _validate_selection_subject(
     repository: RequirementRepository,
     *,
@@ -256,10 +272,11 @@ def _validate_selection_subject(
         raise SelectionStale("Evidence does not match the delivery snapshot")
     current_work_items = repository.work_items(str(requirement["id"]))
     repositories = {str(item["id"]): str(item["repository_id"]) for item in current_work_items}
-    if any(
+    if set(repositories) != set(evidence_work_items) or any(
         repositories.get(item.work_item_id) != item.repository_id for item in evidence.work_items
     ):
         raise SelectionStale("Evidence repository binding is stale")
+    _validate_evidence_artifacts(str(requirement["id"]), evidence, dependencies)
     return snapshot, evidence
 
 

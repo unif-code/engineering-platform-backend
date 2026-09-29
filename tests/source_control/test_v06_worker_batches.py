@@ -3,6 +3,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import Mock
 
 import pytest
 from sqlalchemy import text
@@ -26,6 +27,7 @@ from control_plane.app.modules.source_control.adapters import (
 )
 from control_plane.app.modules.source_control.application import batches
 from control_plane.app.modules.source_control.application._batch_claim import InboxProcessingFailed
+from control_plane.app.modules.source_control.ports import RequirementEvidencePort
 from tests.source_control.conftest import IsolatedSourceControlDatabase
 from tests.source_control.test_v06_evidence_application import (
     _request,
@@ -558,6 +560,7 @@ def test_v06_processes_real_evidence_and_formal_repository_candidates(
     gitlab = FakeFormalGitLab()
     dependencies = replace(
         _formal_dependencies(isolated_source_control_database, requirement, gitlab),
+        requirement_evidence=Mock(spec=RequirementEvidencePort),
         evidence_repository_factory=SqlAlchemySourceControlEvidenceRepository,
         delivery_repository_factory=SqlAlchemySourceControlIntegrationRepository,
     )
@@ -613,6 +616,7 @@ def test_v06_persists_failed_evidence_with_backoff_and_processes_formal(
     gitlab = FakeFormalGitLab()
     dependencies = replace(
         _formal_dependencies(isolated_source_control_database, requirement, gitlab),
+        requirement_evidence=Mock(spec=RequirementEvidencePort),
         evidence_repository_factory=SqlAlchemySourceControlEvidenceRepository,
         delivery_repository_factory=SqlAlchemySourceControlIntegrationRepository,
     )
@@ -670,6 +674,7 @@ def test_evidence_failure_keeps_row_lock_across_savepoint_rollback(
         _formal_dependencies(
             source, FakeRequirementFormalDelivery(_admission()), FakeFormalGitLab()
         ),
+        requirement_evidence=Mock(spec=RequirementEvidencePort),
         evidence_repository_factory=SqlAlchemySourceControlEvidenceRepository,
         delivery_repository_factory=SqlAlchemySourceControlIntegrationRepository,
     )
