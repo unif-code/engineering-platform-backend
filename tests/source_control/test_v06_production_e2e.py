@@ -847,7 +847,7 @@ def _submit_validation(
     return validation
 
 
-def _open_acceptance(
+def _select_baseline(
     journey: Journey, subject: Subject, *, head: str = HEAD_SHA, merge_sha: str = INTEGRATION_SHA
 ) -> httpx.Response:
     base = subject.base
@@ -906,9 +906,16 @@ def _open_acceptance(
         etag=frozen.headers["etag"],
     )
     assert selected.json()["selection"]["integrationBaselineHash"] == evidence["evidenceHash"]
+    return selected
+
+
+def _open_acceptance(
+    journey: Journey, subject: Subject, *, head: str = HEAD_SHA, merge_sha: str = INTEGRATION_SHA
+) -> httpx.Response:
+    selected = _select_baseline(journey, subject, head=head, merge_sha=merge_sha)
     return _write(
         journey.member,
-        f"{base}/acceptance-confirmations",
+        f"{subject.base}/acceptance-confirmations",
         {"selectionId": selected.json()["selection"]["id"]},
         etag=selected.headers["etag"],
     )

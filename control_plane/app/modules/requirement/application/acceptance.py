@@ -208,6 +208,7 @@ def _require_current_selected_evidence(
         or evidence.evidence_hash != selection["integration_baseline_hash"]
     ):
         raise AcceptanceStale("Selected Evidence identity is stale")
+    _validate_evidence_artifacts(str(selection["requirement_id"]), evidence, dependencies)
     return evidence
 
 

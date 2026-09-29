@@ -4,10 +4,14 @@ from typing import Any
 
 import pytest
 
-from control_plane.app.modules.requirement.application.acceptance import _validate_selection_subject
+from control_plane.app.modules.requirement.application.acceptance import (
+    _require_current_selected_evidence,
+    _validate_selection_subject,
+)
 from control_plane.app.modules.requirement.application.delivery_queries import (
     get_delivery_snapshot_evidence,
 )
+from control_plane.app.modules.requirement.application.formal import _current_evidence_item
 from control_plane.app.modules.requirement.domain import (
     ArtifactEvidenceReference,
     EvidenceUnavailableOrStale,
@@ -165,3 +169,28 @@ def test_read_exposes_unavailable_artifact_proof(context: Any) -> None:
     )
     assert result.currentness_state == "UNAVAILABLE"
     assert result.currentness_reasons == ("ARTIFACT_UNAVAILABLE_OR_STALE",)
+
+
+@pytest.mark.parametrize("consumer", ["acceptance", "formal"])
+@pytest.mark.parametrize(
+    "change", [{"state": ArtifactState.UNAVAILABLE}, {"sha256": "sha256:" + "e" * 64}]
+)
+def test_acceptance_and_formal_consumers_recheck_the_selected_artifact(
+    context: Any, consumer: str, change: Any
+) -> None:
+    context.artifact = context.artifact.model_copy(update=change)
+    subject = {
+        "requirement_id": "requirement-1",
+        "requirement_state": "AWAITING_MERGE",
+        "acceptance_decision_id": "decision-1",
+        "acceptance_outcome": "APPROVED",
+        "acceptance_validity": "CURRENT",
+        "integration_baseline_id": context.evidence.id,
+        "integration_baseline_hash": context.evidence.evidence_hash,
+        "work_item_id": "work-1",
+    }
+    with pytest.raises(EvidenceUnavailableOrStale):
+        if consumer == "acceptance":
+            _require_current_selected_evidence(subject, dependencies=context.dependencies)
+        else:
+            _current_evidence_item(subject, context.dependencies)

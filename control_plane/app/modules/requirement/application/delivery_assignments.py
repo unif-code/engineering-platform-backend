@@ -176,6 +176,13 @@ def reassign_delivery_gate(
                 revision=assignment["revision"] + 1,
                 now=now,
             )
+            if (
+                repository.touch_requirement(
+                    requirement_id, expected_revision=requirement["revision"], now=now
+                )
+                is None
+            ):
+                raise AcceptanceStale("Requirement changed while reassigning Delivery Gate")
             audit(
                 repository,
                 dependencies=dependencies,

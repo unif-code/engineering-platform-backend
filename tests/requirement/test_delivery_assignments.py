@@ -99,6 +99,11 @@ def test_default_reassigns_with_frozen_capabilities_and_old_assignee_cannot_deci
     assert result.gate.revision == confirmation.gate.revision + 1
     assert ("employee-1", ("requirement.delivery_gate.assign",)) in seen
     assert ("candidate", ("requirement.acceptance.decide", "code.change")) in seen
+    with database.runtime.connect() as db:
+        current = requirement.get_requirement(
+            db, requirement_id=selected.requirement.id, dependencies=dependencies
+        ).requirement
+    assert current.revision == confirmation.requirement.revision + 1
     with pytest.raises(requirement.GateReviewerMismatch):
         with database.runtime.begin() as db:
             command(
@@ -118,7 +123,7 @@ def test_default_reassigns_with_frozen_capabilities_and_old_assignee_cannot_deci
                 gate_id=confirmation.gate.id,
                 outcome=requirement.DecisionOutcome.APPROVED,
                 reason="Stale assignment",
-                expected_revision=confirmation.requirement.revision,
+                expected_revision=current.revision,
                 actor=Actor("employee-1"),
                 idempotency_key="old-decide",
                 dependencies=dependencies,
@@ -128,7 +133,7 @@ def test_default_reassigns_with_frozen_capabilities_and_old_assignee_cannot_deci
         gate_id=confirmation.gate.id,
         outcome=requirement.DecisionOutcome.APPROVED,
         reason="Qualified frozen decision",
-        expected_revision=confirmation.requirement.revision,
+        expected_revision=current.revision,
         actor=Actor("candidate"),
         idempotency_key="candidate-decide",
         dependencies=dependencies,
@@ -224,6 +229,10 @@ def test_formal_reassignment_keeps_exact_head_and_frozen_review_capabilities(
         )
 
     dependencies = replace(dependencies, delivery_reviewer_guard=SimpleNamespace(evaluate=evaluate))
+    with database.runtime.connect() as db:
+        current = requirement.get_requirement(
+            db, requirement_id=approved.requirement.id, dependencies=dependencies
+        ).requirement
     with pytest.raises(requirement.GateReviewerIneligible):
         with database.runtime.begin() as db:
             requirement.decide_formal_review(
@@ -231,7 +240,7 @@ def test_formal_reassignment_keeps_exact_head_and_frozen_review_capabilities(
                 requirement_id=approved.requirement.id,
                 gate_id=ready.gate.id,
                 outcome=requirement.DecisionOutcome.APPROVED,
-                expected_revision=ready.requirement.revision,
+                expected_revision=current.revision,
                 reason="Review exact head",
                 actor=Actor("reviewer"),
                 idempotency_key="formal-delegate-decide",

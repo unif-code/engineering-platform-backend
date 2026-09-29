@@ -9,6 +9,7 @@ from control_plane.app.modules.requirement.application.acceptance import (
     _decision_dto,
     _gate_dto,
     _selection_dto,
+    _validate_evidence_artifacts,
 )
 from control_plane.app.modules.requirement.application.common import (
     actor_id,
@@ -169,6 +170,7 @@ def _current_evidence_item(
         or evidence.evidence_hash != context["integration_baseline_hash"]
     ):
         raise AcceptanceStale("Accepted Evidence hash is stale")
+    _validate_evidence_artifacts(str(context["requirement_id"]), evidence, dependencies)
     matches = tuple(
         item for item in evidence.work_items if item.work_item_id == str(context["work_item_id"])
     )
