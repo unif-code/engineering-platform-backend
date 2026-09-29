@@ -1430,12 +1430,11 @@ def _provider_merge(
     if denied is not None:
         raise _FormalPreflightBlocked(denied)
     try:
-        gitlab.merge_formal_merge_request(
+        snapshot = gitlab.merge_formal_merge_request(
             profile,
             iid=binding["merge_request_iid"],
             expected_head_sha=admission.requested_head_sha,
         )
-        snapshot = gitlab.get_merge_request(profile, iid=binding["merge_request_iid"])
     except (GitLabProviderUnavailable, GitLabResultUnknown) as error:
         raise GitLabResultUnknown("Formal merge result is unknown") from error
     except _DETERMINISTIC_PROVIDER_ERRORS as error:

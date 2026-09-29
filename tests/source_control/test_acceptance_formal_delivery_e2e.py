@@ -446,6 +446,38 @@ def test_unknown_formal_merge_adopts_proven_result_after_source_deletion_and_rev
     assert journey.member.get(subject.base).json() == final
 
 
+def test_confirmed_merge_survives_later_provider_read_denial(
+    journey: Journey, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    subject = _integrated(journey)
+    _accept(journey, subject, _open_acceptance(journey, subject))
+    review = _formal_review(journey, subject)
+    original = GitLabTransport.__call__
+
+    def provider_with_later_read_denial(
+        provider: GitLabTransport, request: httpx.Request
+    ) -> httpx.Response:
+        if request.method == "GET" and "/merge_requests/" in request.url.path:
+            iid = int(request.url.path.rsplit("/", 1)[1])
+            mr = provider.mrs[iid]
+            if mr["target_branch"] == "main" and mr["state"] == "merged":
+                return httpx.Response(403)
+        response = original(provider, request)
+        if request.method == "PUT" and request.url.path.endswith("/merge"):
+            mr = next(item for item in provider.mrs.values() if item["target_branch"] == "main")
+            del provider.branches[mr["source_branch"]]
+        return response
+
+    monkeypatch.setattr(GitLabTransport, "__call__", provider_with_later_read_denial)
+    _finish(journey, subject, review)
+    before = journey.member.get(subject.base).json()
+    writes = list(journey.provider.writes)
+    assert before["workItems"][0]["taskBranch"] not in journey.provider.branches
+    assert journey.worker("process")["processed"] == journey.worker("reconcile")["processed"] == 0
+    assert journey.provider.writes == writes
+    assert journey.member.get(subject.base).json() == before
+
+
 def test_sibling_head_failure_keeps_the_already_merged_work_item(journey: Journey) -> None:
     subject = _integrated(journey, count=2)
     peer_id = subject.peers[0]
