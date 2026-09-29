@@ -483,7 +483,8 @@ class SqlAlchemySourceControlFormalRepository:
                     "WHERE operation IN ('CREATE_FORMAL_MR', 'MERGE_FORMAL_MR') "
                     "AND state IN ('SUCCEEDED', 'BLOCKED', 'UNKNOWN') "
                     "AND requirement_callback_state <> 'ACKED' "
-                    "ORDER BY updated_at, id LIMIT :limit"
+                    "ORDER BY CASE WHEN state='UNKNOWN' THEN 1 ELSE 0 END, "
+                    "updated_at, id LIMIT :limit"
                 ),
                 {"limit": limit},
             ).mappings()

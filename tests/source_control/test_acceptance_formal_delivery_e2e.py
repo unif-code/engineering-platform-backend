@@ -548,8 +548,23 @@ def test_sibling_head_failure_keeps_the_already_merged_work_item(journey: Journe
     review = next(item for item in delivery["workItems"] if item["workItem"]["id"] == peer_id)[
         "currentFormalReview"
     ]
-    assert review["gate"]["state"] == "INVALIDATED"
-    assert review["gate"]["invalidationReason"] == "FORMAL_DELIVERY_HEAD_SHA_CHANGED"
-    assert review["decision"]["validity"] == "INVALIDATED"
+    assert review is None
+    history = journey.member.get(f"{subject.base}/delivery/history", params={"limit": 100})
+    assert history.status_code == 200
+    assert history.json()["nextCursor"] is None
+    gate = next(
+        item["fact"]
+        for item in history.json()["items"]
+        if item["factType"] == "DELIVERY_GATE" and item["fact"]["id"] == second_review["gate"]["id"]
+    )
+    decision = next(
+        item["fact"]
+        for item in history.json()["items"]
+        if item["factType"] == "DELIVERY_DECISION"
+        and item["fact"]["gateId"] == second_review["gate"]["id"]
+    )
+    assert gate["state"] == "INVALIDATED"
+    assert gate["invalidationReason"] == "FORMAL_DELIVERY_HEAD_SHA_CHANGED"
+    assert decision["validity"] == "INVALIDATED"
     assert journey.worker("process")["processed"] == journey.worker("reconcile")["processed"] == 0
     assert journey.provider.writes == writes
