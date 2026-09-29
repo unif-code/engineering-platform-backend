@@ -1301,13 +1301,16 @@ def test_public_requirement_rework_request_opens_second_source_control_integrati
         gitlab.source_head = HEAD_SHA
         gitlab.candidates = [historical]
         gitlab.readback = historical
+        with source_engine.connect() as db:
+            # Seed bindings use the database clock; supersession cannot predate them.
+            after_seed = db.execute(text("SELECT now()")).scalar_one()
         dependencies = SourceControlDependencies(
             repository_factory=SqlAlchemySourceControlRepository,
             engine=source_engine,
             requirement=binding_requirement,
             eligibility=FakeEligibility(),
             audit=FakeAudit(),
-            clock=MutableClock(datetime(2026, 9, 1, 8, 0, tzinfo=UTC)),
+            clock=MutableClock(after_seed),
             random=FixedRandom(),
             policy=FixedPolicy(),
             delivery_repository_factory=SqlAlchemySourceControlIntegrationRepository,
