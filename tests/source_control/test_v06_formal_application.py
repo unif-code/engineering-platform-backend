@@ -35,6 +35,7 @@ from control_plane.app.modules.source_control.ports import (
     FormalDeliveryBlockedCallback,
     FormalMergedCallback,
     FormalMrReadyCallback,
+    FormalReconciliationPendingCallback,
     GitLabMergeRequestLocator,
     GitLabMergeRequestSnapshot,
     GitLabProjectDeliveryProfile,
@@ -74,6 +75,7 @@ class FakeRequirementFormalDelivery:
         self.blocked: list[FormalDeliveryBlockedCallback] = []
         self.ready: list[FormalMrReadyCallback] = []
         self.merged: list[FormalMergedCallback] = []
+        self.pending: list[FormalReconciliationPendingCallback] = []
 
     def claim_requests(
         self,
@@ -109,6 +111,9 @@ class FakeRequirementFormalDelivery:
 
     def record_merged(self, callback: FormalMergedCallback) -> None:
         self.merged.append(callback)
+
+    def record_reconciliation_pending(self, callback: FormalReconciliationPendingCallback) -> None:
+        self.pending.append(callback)
 
 
 class StaticRouting:

@@ -481,7 +481,7 @@ class SqlAlchemySourceControlFormalRepository:
                 text(
                     "SELECT * FROM source_control.source_control_effect "
                     "WHERE operation IN ('CREATE_FORMAL_MR', 'MERGE_FORMAL_MR') "
-                    "AND state IN ('SUCCEEDED', 'BLOCKED') "
+                    "AND state IN ('SUCCEEDED', 'BLOCKED', 'UNKNOWN') "
                     "AND requirement_callback_state <> 'ACKED' "
                     "ORDER BY updated_at, id LIMIT :limit"
                 ),

@@ -16,6 +16,7 @@ from control_plane.app.modules.source_control.ports import (
     FormalDeliveryBlockedCallback,
     FormalMergedCallback,
     FormalMrReadyCallback,
+    FormalReconciliationPendingCallback,
 )
 
 _SYSTEM_ACTOR = SimpleNamespace(account_id="SYSTEM:SOURCE_CONTROL")
@@ -117,6 +118,24 @@ class RequirementFacadeFormalDeliveryAdapter:
                 "Requirement Formal Delivery admission unavailable"
             ) from None
         return FormalDeliveryAdmission.model_validate(admission.model_dump(mode="json"))
+
+    def record_reconciliation_pending(self, callback: FormalReconciliationPendingCallback) -> None:
+        try:
+            with self.engine.begin() as db:
+                requirement.record_formal_reconciliation_pending(
+                    db,
+                    work_item_id=callback.work_item_id,
+                    binding_id=callback.binding_id,
+                    expected_revision=callback.expected_revision,
+                    actor=_SYSTEM_ACTOR,
+                    idempotency_key=callback.idempotency_key,
+                    correlation_id=callback.correlation_id,
+                    dependencies=self.dependencies,
+                )
+        except Exception:
+            raise RequirementCallbackUnavailable(
+                "Requirement Formal pending callback unavailable"
+            ) from None
 
     def record_mr_ready(self, callback: FormalMrReadyCallback) -> None:
         try:

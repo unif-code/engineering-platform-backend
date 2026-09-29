@@ -42,6 +42,7 @@ from control_plane.app.modules.source_control.ports.formal_requirement import (
     FormalDeliveryBlockedCallback,
     FormalMergedCallback,
     FormalMrReadyCallback,
+    FormalReconciliationPendingCallback,
     FormalReviewRoutingPort,
     RequirementFormalDeliveryPort,
 )
@@ -124,6 +125,7 @@ __all__ = [
     "FormalDeliveryBlockedCallback",
     "FormalMergedCallback",
     "FormalMrReadyCallback",
+    "FormalReconciliationPendingCallback",
     "FormalReviewRoutingPort",
     "GitLabBranchAlreadyExists",
     "GitLabBranchConflict",

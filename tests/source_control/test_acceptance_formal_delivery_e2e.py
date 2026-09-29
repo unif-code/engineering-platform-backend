@@ -8,6 +8,7 @@ import pytest
 from control_plane.app.modules.identity.adapters.runtime import SystemClock
 from control_plane.app.modules.requirement.adapters import SqlAlchemySddArtifactReader
 from control_plane.app.modules.requirement.ports import ArtifactState
+from control_plane.app.modules.source_control.adapters import RequirementFacadeFormalDeliveryAdapter
 from tests.source_control.test_external_validation_baseline_e2e import _integrated
 from tests.source_control.test_v06_production_e2e import (
     FORMAL_SHA,
@@ -407,6 +408,29 @@ def test_unknown_formal_merge_adopts_proven_result_after_source_deletion_and_rev
         return response
 
     monkeypatch.setattr(GitLabTransport, "__call__", lose_ack)
+    pending_callback = RequirementFacadeFormalDeliveryAdapter.record_reconciliation_pending
+    merged_callback = RequirementFacadeFormalDeliveryAdapter.record_merged
+    lost_pending_ack = False
+    lost_merged_ack = False
+
+    def lose_pending_ack(adapter: Any, callback: Any) -> None:
+        nonlocal lost_pending_ack
+        pending_callback(adapter, callback)
+        if not lost_pending_ack:
+            lost_pending_ack = True
+            raise RuntimeError("Pending projection committed but acknowledgement was lost")
+
+    def lose_merged_ack(adapter: Any, callback: Any) -> None:
+        nonlocal lost_merged_ack
+        merged_callback(adapter, callback)
+        if not lost_merged_ack:
+            lost_merged_ack = True
+            raise RuntimeError("Merge projection committed but acknowledgement was lost")
+
+    monkeypatch.setattr(
+        RequirementFacadeFormalDeliveryAdapter, "record_reconciliation_pending", lose_pending_ack
+    )
+    monkeypatch.setattr(RequirementFacadeFormalDeliveryAdapter, "record_merged", lose_merged_ack)
     path = f"{subject.work}:request-formal-merge"
     accepted = _write(
         journey.leader,
@@ -419,10 +443,11 @@ def test_unknown_formal_merge_adopts_proven_result_after_source_deletion_and_rev
     assert journey.worker("relay")["processed"] == 1
     assert journey.worker("process", errors=("EXTERNAL_RESULT_UNKNOWN",))["processed"] == 1
     assert lost
-    assert (
-        journey.member.get(subject.base).json()["workItems"][0]["formalDeliveryState"]
-        == "RECONCILIATION_PENDING"
-    )
+    pending = journey.member.get(subject.base).json()
+    assert pending["workItems"][0]["formalDeliveryState"] == "RECONCILIATION_PENDING"
+    assert lost_pending_ack
+    assert journey.worker("reconcile", errors=("EXTERNAL_RESULT_UNKNOWN",))["processed"] == 1
+    assert journey.member.get(subject.base).json() == pending
     replay = _write(
         journey.leader,
         path,
@@ -438,10 +463,12 @@ def test_unknown_formal_merge_adopts_proven_result_after_source_deletion_and_rev
     monkeypatch.setattr(SystemClock, "now", lambda _: future)
     assert journey.worker("reconcile")["processed"] == 1
     final = journey.member.get(subject.base).json()
+    assert lost_merged_ack
     assert final["requirement"]["state"] == "COMPLETED"
     assert final["workItems"][0]["formalDeliveryState"] == "MERGED"
     assert final["workItems"][0]["taskBranch"] not in journey.provider.branches
     assert journey.provider.writes == writes
+    assert journey.worker("reconcile")["processed"] == 1
     assert journey.worker("process")["processed"] == journey.worker("reconcile")["processed"] == 0
     assert journey.member.get(subject.base).json() == final
 
@@ -515,7 +542,14 @@ def test_sibling_head_failure_keeps_the_already_merged_work_item(journey: Journe
     first = next(item for item in final["workItems"] if item["id"] == subject.work_item_id)
     second = next(item for item in final["workItems"] if item["id"] == peer_id)
     assert (first["state"], first["formalDeliveryState"]) == ("COMPLETED", "MERGED")
-    assert second["formalBlockedReasonCode"] == "HEAD_SHA_CHANGED"
-    assert final["requirement"]["state"] != "COMPLETED"
+    assert (second["state"], second["integrationDeliveryState"]) == ("IN_PROGRESS", "IMPLEMENTING")
+    assert final["requirement"]["state"] == "IN_PROGRESS"
+    delivery = journey.member.get(f"{subject.base}/delivery").json()
+    review = next(item for item in delivery["workItems"] if item["workItem"]["id"] == peer_id)[
+        "currentFormalReview"
+    ]
+    assert review["gate"]["state"] == "INVALIDATED"
+    assert review["gate"]["invalidationReason"] == "FORMAL_DELIVERY_HEAD_SHA_CHANGED"
+    assert review["decision"]["validity"] == "INVALIDATED"
     assert journey.worker("process")["processed"] == journey.worker("reconcile")["processed"] == 0
     assert journey.provider.writes == writes

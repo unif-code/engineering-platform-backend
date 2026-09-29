@@ -104,6 +104,9 @@ from control_plane.app.modules.requirement.application import (
     record_formal_mr_ready as _record_formal_mr_ready,
 )
 from control_plane.app.modules.requirement.application import (
+    record_formal_reconciliation_pending as _record_formal_reconciliation_pending,
+)
+from control_plane.app.modules.requirement.application import (
     record_integration_delivery_blocked as _record_integration_delivery_blocked,
 )
 from control_plane.app.modules.requirement.application import (
@@ -1414,6 +1417,7 @@ __all__ = [
     "record_formal_merged",
     "record_formal_delivery_blocked",
     "record_formal_mr_ready",
+    "record_formal_reconciliation_pending",
     "record_integration_delivery_blocked",
     "record_integration_merged",
     "record_integration_mr_ready",
@@ -1435,6 +1439,29 @@ __all__ = [
     "submit_external_validation",
     "transition_requirement",
 ]
+
+
+def record_formal_reconciliation_pending(
+    db: Connection,
+    *,
+    work_item_id: str,
+    binding_id: str | None,
+    expected_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    correlation_id: str,
+    dependencies: RequirementDependencies,
+) -> None:
+    _record_formal_reconciliation_pending(
+        dependencies.repository_factory(db),
+        work_item_id=work_item_id,
+        binding_id=binding_id,
+        expected_revision=expected_revision,
+        actor=actor,
+        idempotency_key=idempotency_key,
+        correlation_id=correlation_id,
+        dependencies=dependencies,
+    )
 
 
 def reassign_delivery_gate(

@@ -11,7 +11,10 @@ from control_plane.app.modules.requirement.application.acceptance import (
 from control_plane.app.modules.requirement.application.delivery_queries import (
     get_delivery_snapshot_evidence,
 )
-from control_plane.app.modules.requirement.application.formal import _current_evidence_item
+from control_plane.app.modules.requirement.application.formal import (
+    _current_evidence_item,
+    _matches_formal_callback_revision,
+)
 from control_plane.app.modules.requirement.domain import (
     ArtifactEvidenceReference,
     EvidenceUnavailableOrStale,
@@ -194,3 +197,26 @@ def test_acceptance_and_formal_consumers_recheck_the_selected_artifact(
             _require_current_selected_evidence(subject, dependencies=context.dependencies)
         else:
             _current_evidence_item(subject, context.dependencies)
+
+
+@pytest.mark.parametrize(
+    "state,current,expected,valid",
+    [
+        ("MR_PENDING", 5, 5, True),
+        ("MERGE_PENDING", 5, 5, True),
+        ("RECONCILIATION_PENDING", 6, 5, True),
+        ("RECONCILIATION_PENDING", 5, 5, False),
+        ("RECONCILIATION_PENDING", 7, 5, False),
+        ("MR_PENDING", 6, 5, False),
+        ("MERGE_PENDING", 6, 5, False),
+    ],
+)
+def test_final_callback_keeps_the_accepted_revision_across_one_pending_notification(
+    state: str, current: int, expected: int, valid: bool
+) -> None:
+    assert (
+        _matches_formal_callback_revision(
+            {"formal_delivery_state": state, "revision": current}, expected
+        )
+        is valid
+    )

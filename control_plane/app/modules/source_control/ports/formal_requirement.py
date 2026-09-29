@@ -63,6 +63,16 @@ class FormalDeliveryBlockedCallback(BaseModel):
     idempotency_key: str
 
 
+class FormalReconciliationPendingCallback(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    work_item_id: str
+    binding_id: str | None
+    expected_revision: int = Field(ge=1)
+    correlation_id: str
+    idempotency_key: str
+
+
 class RequirementFormalDeliveryPort(Protocol):
     def claim_requests(
         self,
@@ -88,6 +98,10 @@ class RequirementFormalDeliveryPort(Protocol):
     def record_blocked(self, callback: FormalDeliveryBlockedCallback) -> None: ...
 
     def record_merged(self, callback: FormalMergedCallback) -> None: ...
+
+    def record_reconciliation_pending(
+        self, callback: FormalReconciliationPendingCallback
+    ) -> None: ...
 
 
 class FormalReviewRoutingPort(Protocol):

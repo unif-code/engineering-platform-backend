@@ -77,6 +77,7 @@ _MERGE_OPERATION = "requirement_request_formal_merge"
 _READY_OPERATION = "requirement_record_formal_mr_ready"
 _MERGED_OPERATION = "requirement_record_formal_merged"
 _BLOCKED_OPERATION = "requirement_record_formal_delivery_blocked"
+_PENDING_OPERATION = "requirement_record_formal_reconciliation_pending"
 _REVIEW_OPERATION = "requirement_decide_formal_review"
 
 
@@ -464,6 +465,110 @@ def request_formal_merge(
     )
 
 
+def _matches_formal_callback_revision(work_item: Any, expected_revision: int) -> bool:
+    # Pending notification advances only the projection; final callbacks keep the
+    # accepted command revision so retries have one immutable idempotency identity.
+    pending = work_item["formal_delivery_state"] == FormalDeliveryState.RECONCILIATION_PENDING.value
+    return bool(work_item["revision"] == expected_revision + int(pending))
+
+
+def record_formal_reconciliation_pending(
+    repository: RequirementRepository,
+    *,
+    work_item_id: str,
+    binding_id: str | None,
+    expected_revision: int,
+    actor: Any,
+    idempotency_key: str,
+    correlation_id: str,
+    dependencies: RequirementDependencies,
+) -> None:
+    stable_actor = actor_id(actor)
+    stable_correlation = validated_correlation_id(correlation_id)
+    material = dependencies.secret_manager.load()
+    fingerprint = canonical_request_fingerprint(
+        operation=_PENDING_OPERATION,
+        method="COMMAND",
+        path="requirement.record-formal-reconciliation-pending",
+        body={
+            "workItemId": work_item_id,
+            "bindingId": binding_id,
+            "expectedRevision": expected_revision,
+        },
+        idempotency_sealing_key=material.idempotency_sealing_key,
+    )
+
+    def command() -> IdempotentResponse:
+        work_item = repository.work_item_by_id(work_item_id, for_update=True)
+        if work_item is None:
+            raise WorkItemNotFound(work_item_id)
+        requirement_id = str(work_item["requirement_id"])
+        requirement = repository.requirement_by_id(requirement_id, for_update=True)
+        if requirement is None:
+            raise RequirementNotFound(requirement_id)
+        if work_item["revision"] != expected_revision:
+            raise StaleWorkItemRevision(work_item_id)
+        current_binding = work_item["formal_merge_request_binding_id"]
+        if (
+            work_item["formal_delivery_state"] not in {"MR_PENDING", "MERGE_PENDING"}
+            or (None if current_binding is None else str(current_binding)) != binding_id
+        ):
+            raise FormalDeliveryConflict("Formal pending callback is stale")
+        now = dependencies.clock.now()
+        updated = repository.update_work_item_formal_delivery(
+            work_item_id,
+            expected_revision=expected_revision,
+            state=WorkItemState.AWAITING_MERGE.value,
+            formal_state=FormalDeliveryState.RECONCILIATION_PENDING.value,
+            binding_id=binding_id,
+            blocked_reason=None,
+            now=now,
+        )
+        if updated is None:
+            raise StaleWorkItemRevision(work_item_id)
+        if (
+            repository.touch_requirement(
+                requirement_id, expected_revision=requirement["revision"], now=now
+            )
+            is None
+        ):
+            raise StaleRequirementRevision(requirement_id)
+        audit(
+            repository,
+            dependencies=dependencies,
+            actor=stable_actor,
+            action="requirement.formal_delivery.reconciliation_pending",
+            target_type="WORK_ITEM",
+            target_id=work_item_id,
+            reason=f"bindingId={binding_id}",
+            correlation_id=stable_correlation,
+        )
+        return IdempotentResponse(status_code=200, body={})
+
+    try:
+        execute_idempotent(
+            repository,
+            actor=stable_actor,
+            operation=_PENDING_OPERATION,
+            key=idempotency_key,
+            fingerprint=fingerprint,
+            command=command,
+            now=dependencies.clock.now,
+            new_id=dependencies.random.uuid4,
+            idempotency_sealing_key=material.idempotency_sealing_key,
+        )
+    except (RequirementError, IdempotencyConflict) as error:
+        _audit_denial(
+            dependencies=dependencies,
+            actor=stable_actor,
+            action="requirement.formal_delivery.reconciliation_pending",
+            target_type="WORK_ITEM",
+            target_id=work_item_id,
+            error=error,
+        )
+        raise
+
+
 def record_formal_delivery_blocked(
     repository: RequirementRepository,
     *,
@@ -498,7 +603,7 @@ def record_formal_delivery_blocked(
         work_item = repository.work_item_by_id(work_item_id, for_update=True)
         if work_item is None:
             raise WorkItemNotFound(work_item_id)
-        if work_item["revision"] != expected_revision:
+        if not _matches_formal_callback_revision(work_item, expected_revision):
             raise StaleWorkItemRevision(work_item_id)
         requirement_id = str(work_item["requirement_id"])
         requirement = repository.requirement_by_id(requirement_id, for_update=True)
@@ -511,7 +616,12 @@ def record_formal_delivery_blocked(
             else str(work_item["formal_merge_request_binding_id"])
         )
         if (
-            formal_state not in {FormalDeliveryState.MR_PENDING, FormalDeliveryState.MERGE_PENDING}
+            formal_state
+            not in {
+                FormalDeliveryState.MR_PENDING,
+                FormalDeliveryState.MERGE_PENDING,
+                FormalDeliveryState.RECONCILIATION_PENDING,
+            }
             or (current_binding is not None and binding_id != current_binding)
             or (
                 formal_state is FormalDeliveryState.MERGE_PENDING
@@ -523,7 +633,7 @@ def record_formal_delivery_blocked(
         now = dependencies.clock.now()
         updated_work_item = repository.update_work_item_formal_delivery(
             work_item_id,
-            expected_revision=expected_revision,
+            expected_revision=work_item["revision"],
             state=WorkItemState.AWAITING_MERGE.value,
             formal_state=FormalDeliveryState.BLOCKED.value,
             binding_id=stable_binding,
@@ -652,7 +762,7 @@ def record_formal_mr_ready(
         work_item = repository.work_item_by_id(work_item_id, for_update=True)
         if work_item is None:
             raise WorkItemNotFound(work_item_id)
-        if work_item["revision"] != expected_revision:
+        if not _matches_formal_callback_revision(work_item, expected_revision):
             raise StaleWorkItemRevision(work_item_id)
         requirement_id = str(work_item["requirement_id"])
         requirement = repository.requirement_by_id(requirement_id, for_update=True)
@@ -664,7 +774,7 @@ def record_formal_mr_ready(
         evidence_item = _current_evidence_item(context, dependencies)
         if (
             FormalDeliveryState(work_item["formal_delivery_state"])
-            is not FormalDeliveryState.MR_PENDING
+            not in {FormalDeliveryState.MR_PENDING, FormalDeliveryState.RECONCILIATION_PENDING}
             or (
                 work_item["formal_merge_request_binding_id"] is not None
                 and str(work_item["formal_merge_request_binding_id"]) != binding_id
@@ -707,7 +817,7 @@ def record_formal_mr_ready(
         )
         updated_work_item = repository.update_work_item_formal_delivery(
             work_item_id,
-            expected_revision=expected_revision,
+            expected_revision=work_item["revision"],
             state=WorkItemState.AWAITING_MERGE.value,
             formal_state=FormalDeliveryState.MR_OPEN.value,
             binding_id=binding_id,
@@ -1064,7 +1174,7 @@ def record_formal_merged(
         work_item = repository.work_item_by_id(work_item_id, for_update=True)
         if work_item is None:
             raise WorkItemNotFound(work_item_id)
-        if work_item["revision"] != expected_revision:
+        if not _matches_formal_callback_revision(work_item, expected_revision):
             raise StaleWorkItemRevision(work_item_id)
         requirement_id = str(work_item["requirement_id"])
         requirement = repository.requirement_by_id(requirement_id, for_update=True)
@@ -1076,7 +1186,7 @@ def record_formal_merged(
         evidence_item = _current_evidence_item(context, dependencies)
         if (
             FormalDeliveryState(work_item["formal_delivery_state"])
-            is not FormalDeliveryState.MERGE_PENDING
+            not in {FormalDeliveryState.MERGE_PENDING, FormalDeliveryState.RECONCILIATION_PENDING}
             or str(work_item["formal_merge_request_binding_id"]) != binding_id
             or evidence_item.task_commit_sha != head_sha
             or context["formal_review_outcome"] != DecisionOutcome.APPROVED.value
@@ -1087,7 +1197,7 @@ def record_formal_merged(
         now = dependencies.clock.now()
         updated_work_item = repository.update_work_item_formal_delivery(
             work_item_id,
-            expected_revision=expected_revision,
+            expected_revision=work_item["revision"],
             state=WorkItemState.COMPLETED.value,
             formal_state=FormalDeliveryState.MERGED.value,
             binding_id=binding_id,

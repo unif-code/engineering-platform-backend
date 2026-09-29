@@ -47,6 +47,7 @@ from control_plane.app.modules.source_control.ports import (
     FormalDeliveryBlockedCallback,
     FormalMergedCallback,
     FormalMrReadyCallback,
+    FormalReconciliationPendingCallback,
     GitLabAccessDenied,
     GitLabBranchNotFound,
     GitLabFormalMergeRequestPort,
@@ -722,6 +723,48 @@ def _record_effect_callback(
     return effect_dto(row)
 
 
+def _accepted_callback_revision(
+    effect: SourceControlEffectDto, dependencies: SourceControlDependencies
+) -> int:
+    with dependencies.engine.connect() as db:
+        request = _formal_repository(dependencies)(db).formal_request_for_effect(
+            operation=effect.operation.value,
+            work_item_id=effect.work_item_id,
+            requirement_id=effect.requirement_id,
+            repository_id=effect.repository_id,
+            request_fingerprint=effect.request_fingerprint,
+        )
+    if request is None:
+        raise SourceControlDependencyUnavailable("Formal callback request is unavailable")
+    return int(request["work_item_revision"])
+
+
+def _callback_pending(
+    effect: SourceControlEffectDto,
+    request: Any,
+    *,
+    dependencies: SourceControlDependencies,
+) -> SourceControlEffectDto:
+    def deliver() -> None:
+        requirement = dependencies.requirement_formal_delivery
+        if requirement is None:
+            raise SourceControlDependencyUnavailable(
+                "Requirement Formal pending callback unavailable"
+            )
+        binding = request["formal_merge_request_binding_id"]
+        requirement.record_reconciliation_pending(
+            FormalReconciliationPendingCallback(
+                work_item_id=effect.work_item_id,
+                binding_id=None if binding is None else str(binding),
+                expected_revision=request["work_item_revision"],
+                correlation_id=f"source-control:effect:{effect.id}",
+                idempotency_key=f"source-control:formal-pending:{effect.id}",
+            )
+        )
+
+    return _record_effect_callback(effect, deliver=deliver, dependencies=dependencies)
+
+
 def _callback_ready(
     effect: SourceControlEffectDto,
     binding: Any,
@@ -894,7 +937,9 @@ def replay_pending_formal_callbacks(
                 if binding is None
                 else repository.latest_merge_request_observation(str(binding["id"]))
             )
-        if request is not None and effect.state is EffectState.BLOCKED:
+        if request is not None and effect.state is EffectState.UNKNOWN:
+            replayed.append(_callback_pending(effect, request, dependencies=dependencies))
+        elif request is not None and effect.state is EffectState.BLOCKED:
             replayed.append(
                 _callback_blocked(
                     effect,
@@ -997,6 +1042,7 @@ def _complete_effect_block(
             expected_attempts=effect.attempts,
             values={
                 "state": EffectState.BLOCKED.value,
+                "requirement_callback_state": RequirementCallbackState.PENDING.value,
                 "last_error_code": reason_code.value,
                 "next_reconcile_at": None,
                 "completed_at": now,
@@ -1173,6 +1219,7 @@ def _commit_create(
             expected_attempts=effect.attempts,
             values={
                 "state": EffectState.SUCCEEDED.value,
+                "requirement_callback_state": RequirementCallbackState.PENDING.value,
                 "last_error_code": None,
                 "next_reconcile_at": None,
                 "completed_at": now,
@@ -1199,7 +1246,7 @@ def _commit_create(
         effect_dto(final),
         binding,
         assignment,
-        expected_revision=admission.work_item_revision,
+        expected_revision=_accepted_callback_revision(effect, dependencies),
         dependencies=dependencies,
     )
     return ProcessFormalDeliveryResult(
@@ -1244,6 +1291,7 @@ def _commit_merge(
             expected_attempts=effect.attempts,
             values={
                 "state": EffectState.SUCCEEDED.value,
+                "requirement_callback_state": RequirementCallbackState.PENDING.value,
                 "last_error_code": None,
                 "next_reconcile_at": None,
                 "completed_at": now,
@@ -1270,7 +1318,7 @@ def _commit_merge(
         effect_dto(final),
         binding,
         observation,
-        expected_revision=admission.work_item_revision,
+        expected_revision=_accepted_callback_revision(effect, dependencies),
         dependencies=dependencies,
     )
     return ProcessFormalDeliveryResult(
@@ -1324,8 +1372,9 @@ def _mark_unknown(
             if binding is None
             else repository.latest_merge_request_observation(str(binding["id"]))
         )
+    pending = _callback_pending(effect_dto(row), request, dependencies=dependencies)
     return ProcessFormalDeliveryResult(
-        effect=effect_dto(row),
+        effect=pending,
         binding=None if binding is None else binding_dto(binding),
         observation=None if observation is None else observation_dto(observation),
     )
@@ -1505,6 +1554,8 @@ def _replay(
                 blocked_reason=blocked_reason.value,
             )
         effect = effect_dto(row)
+        if effect.state is EffectState.UNKNOWN:
+            effect = _callback_pending(effect, request, dependencies=dependencies)
         binding = (
             repository.formal_binding_by_work_item(str(request["work_item_id"]))
             if operation is _CREATE
