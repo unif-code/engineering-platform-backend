@@ -54,6 +54,8 @@ def _clear_runtime_caches() -> None:
         "authorization_dependencies",
         "configuration_dependencies",
         "requirement_dependencies",
+        "requirement_policy_runtime",
+        "actor_qualification_runtime",
         "source_control_dependencies",
         "agent_dependencies",
         "identity_http_runtime",
@@ -226,7 +228,6 @@ def e2e(
                 "organization",
                 "workspace",
                 "authorization",
-                "configuration",
                 "requirement",
                 "source_control",
             )

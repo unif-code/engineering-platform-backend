@@ -50,6 +50,18 @@ def test_render_contains_the_typed_requirement_contract() -> None:
         "/api/v1/requirements/{requirementId}/work-items/{workItemId}:start",
         "/api/v1/requirements/{requirementId}/work-items/{workItemId}:request-integration-mr",
         "/api/v1/requirements/{requirementId}/work-items/{workItemId}:request-integration-merge",
+        "/api/v1/requirements/{requirementId}/work-items/{workItemId}/external-validations",
+        "/api/v1/requirements/{requirementId}:request-integration-baseline",
+        "/api/v1/requirements/{requirementId}/integration-baseline-selections",
+        "/api/v1/requirements/{requirementId}/acceptance-confirmations",
+        "/api/v1/requirements/{requirementId}/acceptance-decisions",
+        "/api/v1/requirements/{requirementId}/work-items/{workItemId}:request-formal-mr",
+        "/api/v1/requirements/{requirementId}/formal-review-decisions",
+        "/api/v1/requirements/{requirementId}/work-items/{workItemId}:request-formal-merge",
+        "/api/v1/requirements/{requirementId}/delivery-gates/{gateId}:reassign",
+        "/api/v1/requirements/{requirementId}/delivery",
+        "/api/v1/requirements/{requirementId}/delivery/history",
+        "/api/v1/requirements/{requirementId}/delivery-snapshots/{snapshotId}/integration-baseline",
     }
     repository_path = schema["paths"]["/api/v1/workspaces/{workspaceId}/repositories"]["get"]
     assert repository_path["operationId"] == "source_control_authorized_repositories_list"

@@ -23,6 +23,7 @@ from control_plane.app.modules.requirement.api import (
     create_requirement_v06_delivery_router,
 )
 from tests.requirement.conftest import IsolatedRequirementDatabase
+from tests.requirement.delivery_policy_helpers import frozen_policy, resolved_policy
 from tests.requirement.test_commands import NOW, WORKSPACE_ID, Actor
 from tests.requirement.test_v06_acceptance_commands import _selection_fixture
 from tests.requirement.test_v06_formal_delivery_commands import _approved_requirement
@@ -105,8 +106,8 @@ def test_current_delivery_projection_recovers_acceptance_and_formal_review(
                 version=4,
                 default_reviewer_id="employee-1",
                 policy_code="FORMAL_REVIEW_WORK_ITEM_OWNER",
-                snapshot_hash="sha256:" + "a" * 64,
-                resolution_snapshot={"rule": "WORK_ITEM_OWNER"},
+                snapshot_hash="sha256:" + resolved_policy(4).snapshot_hash,
+                resolution_snapshot=frozen_policy(),
             ),
             actor=Actor("SYSTEM:SOURCE_CONTROL"),
             idempotency_key="v06-read-formal-ready",
@@ -280,7 +281,7 @@ def test_delivery_history_pages_every_invalidated_and_superseded_fact(
     assert malformed.json()["title"] == "Invalid Requirement cursor"
 
 
-def test_delivery_read_endpoints_are_explicit_v06_routes_only() -> None:
+def test_delivery_read_endpoints_are_registered_in_the_default_app() -> None:
     explicit = FastAPI()
     explicit.include_router(
         create_requirement_v06_delivery_router(
@@ -304,5 +305,11 @@ def test_delivery_read_endpoints_are_explicit_v06_routes_only() -> None:
     from control_plane.app.bootstrap.app import create_app
 
     default_paths = create_app().openapi()["paths"]
-    assert "/api/v1/requirements/{requirementId}/delivery" not in default_paths
-    assert "/api/v1/requirements/{requirementId}/delivery/history" not in default_paths
+    for path in (
+        "/api/v1/requirements/{requirementId}/delivery",
+        "/api/v1/requirements/{requirementId}/delivery/history",
+    ):
+        operation = default_paths[path]["get"]
+        assert operation["operationId"] == paths[path]["get"]["operationId"]
+        assert operation["security"] == [{"EpSessionCookie": []}]
+        assert operation["responses"] == paths[path]["get"]["responses"]

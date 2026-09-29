@@ -377,6 +377,12 @@ def test_create_and_merge_formal_mr_use_exact_head_effects_and_callbacks(
     assert created.assignment is not None
     assert requirement.ready[0].binding_id == created.binding.id
     assert requirement.ready[0].head_sha == HEAD_SHA
+    eligibility = cast(FakeEligibility, dependencies.eligibility)
+    assert [(context.actor_id, context.required_capabilities) for context in eligibility.seen] == [
+        ("employee-1", ("code.change",)),
+        ("employee-1", ("formal_merge_request.request",)),
+    ] * 2
+    eligibility.seen.clear()
 
     requirement.admission = _admission(
         requirement_revision=14,
@@ -411,10 +417,10 @@ def test_create_and_merge_formal_mr_use_exact_head_effects_and_callbacks(
     assert requirement.merged[0].binding_id == created.binding.id
     assert gitlab.created == 1
     assert gitlab.merged == 1
-    merge_contexts = cast(FakeEligibility, dependencies.eligibility).seen
-    assert len(merge_contexts) == 1
-    assert merge_contexts[0].required_capabilities == ("merge_request.merge",)
-    assert merge_contexts[0].actor_id == "employee-1"
+    assert [(context.actor_id, context.required_capabilities) for context in eligibility.seen] == [
+        ("employee-1", ("code.change",)),
+        ("employee-1", ("merge_request.merge",)),
+    ] * 2
 
 
 def test_formal_merge_rechecks_actor_eligibility_before_provider_write(

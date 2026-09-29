@@ -14,6 +14,7 @@ from control_plane.app.modules.requirement.domain.formal import (
     FormalDeliveryBlockedReason,
 )
 from tests.integration_database import migration_database_url
+from tests.requirement.test_migration import EXPECTED_TABLES
 
 pytestmark = pytest.mark.integration
 
@@ -141,29 +142,7 @@ def test_fresh_upgrade_installs_requirement_and_all_visible_heads(
             "0003_event_acceptance_receipt",
             "0011_sc_delivery_join",
         }
-        assert set(inspect(engine).get_table_names(schema="requirement")) == {
-            "gate_policy_draft",
-            "gate_policy_version",
-            "gate_policy_active_pointer",
-            "gate_policy_receipt",
-            "gate_policy_idempotency",
-            "gate_policy_outbox",
-            "decision",
-            "delivery_decision",
-            "delivery_gate",
-            "delivery_gate_assignment",
-            "gate_assignment",
-            "gate_instance",
-            "idempotency_record",
-            "integration_baseline_selection",
-            "outbox_message",
-            "requirement",
-            "requirement_delivery_snapshot",
-            "sdd_artifact_version",
-            "sdd_baseline",
-            "work_item",
-            "work_item_assignment",
-        }
+        assert set(inspect(engine).get_table_names(schema="requirement")) == EXPECTED_TABLES
     finally:
         engine.dispose()
 
@@ -407,23 +386,7 @@ def test_all_migrations_round_trip_with_requirement_schema(
     try:
         assert "requirement" not in inspect(engine).get_schema_names()
         command.upgrade(config, "heads")
-        assert set(inspect(engine).get_table_names(schema="requirement")) == {
-            "decision",
-            "delivery_decision",
-            "delivery_gate",
-            "delivery_gate_assignment",
-            "gate_assignment",
-            "gate_instance",
-            "idempotency_record",
-            "integration_baseline_selection",
-            "outbox_message",
-            "requirement",
-            "requirement_delivery_snapshot",
-            "sdd_artifact_version",
-            "sdd_baseline",
-            "work_item",
-            "work_item_assignment",
-        }
+        assert set(inspect(engine).get_table_names(schema="requirement")) == EXPECTED_TABLES
     finally:
         engine.dispose()
 
@@ -491,11 +454,11 @@ def test_requirement_0007_downgrade_preserves_not_started_formal_facts(
         engine.dispose()
 
 
-def test_requirement_0007_formal_blocked_reason_is_a_closed_public_enum(
+def test_requirement_formal_blocked_reason_is_a_closed_public_enum(
     fresh_requirement_database_url: URL,
 ) -> None:
     config = _config(fresh_requirement_database_url)
-    command.upgrade(config, "requirement@0007_req_formal_delivery")
+    command.upgrade(config, "requirement@head")
     engine = create_engine(fresh_requirement_database_url)
     try:
         with pytest.raises(IntegrityError):

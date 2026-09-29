@@ -261,7 +261,7 @@ def test_external_validation_receipt_blocks_0007_downgrade_before_ddl(
         )
 
     with pytest.raises(Exception, match="V0.6 Evidence facts"):
-        command.downgrade(config, "source_control@0006_sc_mr_reconcile")
+        command.downgrade(config, "0006_sc_mr_reconcile")
 
     assert inspect(isolated_source_control_database.owner).has_table(
         "external_validation_receipt",
@@ -284,7 +284,7 @@ def test_clean_0007_downgrade_removes_external_validation_receipts(
 ) -> None:
     command.downgrade(
         _config(isolated_source_control_database),
-        "source_control@0006_sc_mr_reconcile",
+        "0006_sc_mr_reconcile",
     )
 
     inspector = inspect(isolated_source_control_database.owner)

@@ -29,6 +29,10 @@ from control_plane.app.modules.source_control import (
 from control_plane.app.modules.source_control.adapters import (
     RequirementFacadeBindingAdapter,
     RequirementFacadeDeliveryAdapter,
+    RequirementFacadeEvidenceAdapter,
+    RequirementFacadeFormalDeliveryAdapter,
+    SqlAlchemySourceControlEvidenceRepository,
+    SqlAlchemySourceControlFormalRepository,
     SqlAlchemySourceControlIntegrationRepository,
     SqlAlchemySourceControlRepository,
 )
@@ -60,6 +64,8 @@ from tests.source_control.test_commands import (
     FixedPolicy,
     FixedRandom,
 )
+from tests.source_control.test_integration_mr_saga import FakeGitLabMergeRequests
+from tests.source_control.test_v06_formal_application import FakeFormalGitLab, StaticRouting
 
 REPOSITORY_ID = "repository-source-control-1"
 SIGNING_KEY = b"test-only-e2e-signing-key-32-byte"
@@ -110,6 +116,17 @@ def _dependencies(
             requirement.runtime,
             requirement_dependencies(),
         ),
+        gitlab_merge_requests=FakeGitLabMergeRequests(source.runtime),
+        evidence_repository_factory=SqlAlchemySourceControlEvidenceRepository,
+        formal_repository_factory=SqlAlchemySourceControlFormalRepository,
+        requirement_evidence=RequirementFacadeEvidenceAdapter(
+            requirement.runtime, requirement_dependencies()
+        ),
+        requirement_formal_delivery=RequirementFacadeFormalDeliveryAdapter(
+            requirement.runtime, requirement_dependencies()
+        ),
+        gitlab_formal_merge_requests=FakeFormalGitLab(),
+        formal_review_routing=StaticRouting(),
     )
 
 
@@ -287,8 +304,9 @@ def test_worker_recovers_crashed_in_flight_effect_and_completes_inbox_handoff(
     run_worker_once("relay", limit=10, dependencies=dependencies)
     gitlab.create_error = RuntimeError("simulated worker crash")
 
-    with pytest.raises(RuntimeError, match="simulated worker crash"):
-        run_worker_once("process", limit=10, dependencies=dependencies)
+    crashed = run_worker_once("process", limit=10, dependencies=dependencies)
+    assert (crashed.claimed, crashed.processed, crashed.released) == (0, 0, 0)
+    assert crashed.error_codes == ("CONNECTOR_UNAVAILABLE",)
     with isolated_source_control_database.owner.begin() as db:
         db.execute(
             text("UPDATE source_control.binding_request_inbox SET available_at=:now"),
@@ -468,7 +486,7 @@ def test_unassembled_connector_and_worker_fail_closed_without_leaking_details(
     assert "secret-body" not in response.text
 
     exit_code = worker_main(
-        ["relay", "--limit", "2"],
+        ["relay", "--limit", "4"],
         dependencies_provider=_unavailable_dependencies,
     )
     output = capsys.readouterr().out

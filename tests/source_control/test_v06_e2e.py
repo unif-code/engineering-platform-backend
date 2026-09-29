@@ -239,7 +239,11 @@ class OwnerFormalReviewRouting:
 class EligibleCurrentOwner:
     def evaluate(self, context: ActorEligibilityContext) -> BindingEligibility:
         assert context.actor_id == "employee-1"
-        assert context.required_capabilities in (("code.change",), ("merge_request.merge",))
+        assert context.required_capabilities in (
+            ("code.change",),
+            ("formal_merge_request.request",),
+            ("merge_request.merge",),
+        )
         return BindingEligibility(eligible=True)
 
 

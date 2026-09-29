@@ -34,6 +34,8 @@ from control_plane.app.modules.source_control import (
 from control_plane.app.modules.source_control.adapters import (
     RequirementFacadeBindingAdapter,
     RequirementFacadeDeliveryAdapter,
+    SqlAlchemySourceControlEvidenceRepository,
+    SqlAlchemySourceControlFormalRepository,
     SqlAlchemySourceControlIntegrationRepository,
     SqlAlchemySourceControlRepository,
 )
@@ -70,6 +72,7 @@ from tests.requirement.conftest import (
     IsolatedRequirementDatabase,
     _temporary_requirement_role_engine,
 )
+from tests.requirement.delivery_policy_helpers import frozen_policy, resolved_policy
 from tests.requirement.test_baseline_gate import _gate_dependencies
 from tests.requirement.test_commands import Actor
 from tests.requirement.test_integration_delivery_relay import _requested_mr
@@ -1206,8 +1209,8 @@ def test_public_requirement_rework_request_opens_second_source_control_integrati
             version=4,
             default_reviewer_id="employee-1",
             policy_code="FORMAL_REVIEW_WORK_ITEM_OWNER",
-            snapshot_hash="sha256:" + "a" * 64,
-            resolution_snapshot={"rule": "WORK_ITEM_OWNER"},
+            snapshot_hash="sha256:" + resolved_policy(4).snapshot_hash,
+            resolution_snapshot=frozen_policy(),
         )
         with requirement_engine.begin() as db:
             formal_ready = record_formal_mr_ready(
@@ -2297,9 +2300,24 @@ def test_two_batches_that_read_same_delivery_candidate_have_one_exact_winner(
     isolated_source_control_database: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from tests.source_control.test_v06_formal_application import (
+        FakeFormalGitLab,
+        FakeRequirementFormalDelivery,
+        StaticRouting,
+        _admission,
+    )
+
     engine = isolated_source_control_database.runtime
     _seed_source_control(engine)
     dependencies, requirement, gitlab = _dependencies(engine)
+    dependencies = replace(
+        dependencies,
+        evidence_repository_factory=SqlAlchemySourceControlEvidenceRepository,
+        formal_repository_factory=SqlAlchemySourceControlFormalRepository,
+        requirement_formal_delivery=FakeRequirementFormalDelivery(_admission()),
+        gitlab_formal_merge_requests=FakeFormalGitLab(),
+        formal_review_routing=StaticRouting(),
+    )
     both_scanned = Barrier(2)
     original = batches._pending_process_candidates
 
@@ -2317,7 +2335,7 @@ def test_two_batches_that_read_same_delivery_candidate_have_one_exact_winner(
         results = tuple(
             pool.map(
                 lambda _index: process_due_source_control_inboxes(
-                    limit=3,
+                    limit=5,
                     dependencies=dependencies,
                 ),
                 range(2),

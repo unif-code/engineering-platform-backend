@@ -1266,7 +1266,7 @@ def test_0007_evidence_facts_block_downgrade_and_preserve_the_fingerprint(
             )
 
         with pytest.raises(Exception, match="V0.6 Evidence facts"):
-            command.downgrade(config, "source_control@0006_sc_mr_reconcile")
+            command.downgrade(config, "0006_sc_mr_reconcile")
 
         columns = {
             column["name"]
@@ -1456,7 +1456,7 @@ def test_0010_downgrade_refuses_to_discard_agent_delivery_facts(
             )
 
         with pytest.raises(Exception, match="agent delivery facts"):
-            command.downgrade(config, "source_control@0006_sc_mr_reconcile")
+            command.downgrade(config, "0006_sc_mr_reconcile")
 
         assert inspect(engine).has_table("agent_push_request", schema="source_control")
     finally:

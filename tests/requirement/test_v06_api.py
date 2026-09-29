@@ -228,6 +228,7 @@ def test_default_app_publishes_v06_delivery_and_gate_reassignment() -> None:
     expected = write_paths | {
         "/api/v1/requirements/{requirementId}/delivery",
         "/api/v1/requirements/{requirementId}/delivery/history",
+        "/api/v1/requirements/{requirementId}/delivery-snapshots/{snapshotId}/integration-baseline",
     }
     assert expected == set(paths)
     for path in write_paths:

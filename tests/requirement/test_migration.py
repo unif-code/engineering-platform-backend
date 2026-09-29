@@ -12,6 +12,12 @@ pytestmark = pytest.mark.integration
 
 
 EXPECTED_TABLES = {
+    "gate_policy_draft",
+    "gate_policy_version",
+    "gate_policy_active_pointer",
+    "gate_policy_receipt",
+    "gate_policy_idempotency",
+    "gate_policy_outbox",
     "delivery_decision",
     "delivery_gate",
     "delivery_gate_assignment",

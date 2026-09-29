@@ -14,12 +14,12 @@ from control_plane.app.modules.source_control.ports import (
 from tests.source_control.test_v06_formal_application import _admission
 
 
+@pytest.mark.parametrize("actor_id", ["employee-1", "merger-2"])
 @pytest.mark.parametrize(
-    "actor_id,allowed",
-    [("employee-1", True), ("merger-2", True), ("employee-1", False), ("merger-2", False)],
+    "owner_allowed,merge_allowed", [(True, True), (False, True), (True, False)]
 )
 def test_formal_merge_checks_actual_actor_independently_of_owner(
-    actor_id: str, allowed: bool
+    actor_id: str, owner_allowed: bool, merge_allowed: bool
 ) -> None:
     admission = _admission()
     binding = RequirementBindingContext(
@@ -38,7 +38,11 @@ def test_formal_merge_checks_actual_actor_independently_of_owner(
 
     def evaluate(context: ActorEligibilityContext) -> BindingEligibility:
         seen.append(context)
-        return BindingEligibility(eligible=allowed)
+        return BindingEligibility(
+            eligible=owner_allowed
+            if context.required_capabilities == binding.required_capabilities
+            else merge_allowed
+        )
 
     dependencies: Any = SimpleNamespace(
         requirement=SimpleNamespace(binding_context=lambda _: binding),
@@ -47,8 +51,16 @@ def test_formal_merge_checks_actual_actor_independently_of_owner(
     result = _formal_merge_actor_block_reason(
         admission, actor_id=actor_id, dependencies=dependencies
     )
-    assert result == (None if allowed else "MERGE_ACTOR_INELIGIBLE")
-    assert len(seen) == 1
-    assert isinstance(seen[0], ActorEligibilityContext)
-    assert seen[0].actor_id == actor_id
-    assert seen[0].required_capabilities == ("merge_request.merge",)
+    assert result == (None if owner_allowed and merge_allowed else "MERGE_ACTOR_INELIGIBLE")
+    assert seen == [
+        ActorEligibilityContext(
+            actor_id=admission.human_owner_id,
+            workspace_id=admission.workspace_id,
+            required_capabilities=binding.required_capabilities,
+        ),
+        ActorEligibilityContext(
+            actor_id=actor_id,
+            workspace_id=admission.workspace_id,
+            required_capabilities=("merge_request.merge",),
+        ),
+    ]

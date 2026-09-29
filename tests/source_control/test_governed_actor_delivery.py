@@ -83,7 +83,10 @@ def test_independent_merger_keeps_own_capability_and_live_owner_requirement(
     database = isolated_source_control_database
     _seed(database)
     owner = FakeRequirementFormalDelivery(_admission())
-    grants = {"employee-1": {"code.change"}, "independent-merger": {"merge_request.merge"}}
+    grants = {
+        "employee-1": {"code.change", "formal_merge_request.request"},
+        "independent-merger": {"merge_request.merge"},
+    }
 
     class Eligibility(FakeEligibility):
         def evaluate(self, context: ActorEligibilityContext) -> BindingEligibility:
