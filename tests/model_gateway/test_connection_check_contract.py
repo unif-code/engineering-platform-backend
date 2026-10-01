@@ -55,3 +55,31 @@ def test_default_openapi_separates_candidate_write_version_and_check_identity() 
     fields = schema["components"]["schemas"]["ConnectionCheckDto"]["properties"]
     assert {"revision", "input", "currentness", "currentnessReasons", "usage"} <= fields.keys()
     assert not {"executionToken", "secretRef", "value", "prompt", "responseBody"} & fields.keys()
+
+
+@pytest.mark.parametrize("bad_id", [1, True, [], {}, None])
+def test_history_cursor_rejects_non_string_uuid_before_repository_query(bad_id: object) -> None:
+    import base64
+    import json
+    from typing import cast
+    from unittest.mock import Mock
+
+    from control_plane.app.modules.model_gateway import CatalogDependencies, CatalogError
+    from control_plane.app.modules.model_gateway.application.checks import ModelConnectionChecks
+    from control_plane.app.modules.model_gateway.ports.checks import ConnectionDirectoryPort
+
+    deployment_id = "20000000-0000-4000-8000-000000000001"
+    repository = Mock(spec=["get", "list_checks"])
+    repository.get.return_value = object()
+    checks = ModelConnectionChecks(
+        repository,
+        cast(CatalogDependencies, None),
+        cast(ConnectionDirectoryPort, None),
+    )
+    cursor = base64.urlsafe_b64encode(
+        json.dumps([deployment_id, "2026-10-01T00:00:00+00:00", bad_id]).encode()
+    ).decode()
+    with pytest.raises(CatalogError) as error:
+        checks.list(deployment_id, cursor=cursor, page_size=20)
+    assert error.value.code == "INVALID_MODEL_CONNECTION_CHECK_CURSOR"
+    repository.list_checks.assert_not_called()

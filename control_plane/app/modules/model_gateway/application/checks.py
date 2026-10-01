@@ -177,7 +177,12 @@ class ModelConnectionChecks:
         if cursor is not None:
             try:
                 values = json.loads(base64.b64decode(cursor, altchars=b"-_", validate=True))
-                if not isinstance(values, list) or len(values) != 3 or values[0] != deployment_id:
+                if (
+                    not isinstance(values, list)
+                    or len(values) != 3
+                    or not all(isinstance(value, str) for value in values)
+                    or values[0] != deployment_id
+                ):
                     raise ValueError
                 before_at = datetime.fromisoformat(values[1])
                 if before_at.tzinfo is None:
