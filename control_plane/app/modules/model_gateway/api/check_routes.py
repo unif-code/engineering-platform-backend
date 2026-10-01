@@ -125,6 +125,7 @@ def create_model_check_router(
                             str(deployment_id),
                             expected_revision=expected_revision,
                             actor=principal.account_id,
+                            check_kind=body.check_kind,
                         )
                         return IdempotentResponse(
                             status_code=202,

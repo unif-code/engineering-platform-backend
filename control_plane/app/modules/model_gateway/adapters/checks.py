@@ -25,10 +25,10 @@ class SqlAlchemyCheckRepository(SqlAlchemyDeploymentRepository):
             self.db.execute(
                 text("""
             INSERT INTO model_gateway.connection_check
-                (id,deployment_id,revision,requested_by,requested_at,input,connection_ref,
+                (id,deployment_id,revision,requested_by,requested_at,input,connection_ref,check_kind,
                  state,reason,attempt,material_currentness,finished_at)
             VALUES (:id,:deployment_id,:revision,:requested_by,:requested_at,CAST(:input AS JSONB),
-                    :connection_ref,:state,:reason,:attempt,:material_currentness,:finished_at)
+                    :connection_ref,:check_kind,:state,:reason,:attempt,:material_currentness,:finished_at)
             ON CONFLICT DO NOTHING RETURNING id
         """),
                 _parameters(value),
@@ -111,7 +111,12 @@ class SqlAlchemyCheckRepository(SqlAlchemyDeploymentRepository):
                 execution_token=:execution_token,started_at=:started_at,deadline_at=:deadline_at,
                 finished_at=:finished_at,elapsed_ms=:elapsed_ms,provider_request_id=:provider_request_id,
                 reported_model_id=:reported_model_id,usage=CAST(:usage AS JSONB),
-                material_currentness=:material_currentness
+                material_currentness=:material_currentness,
+                observed_bytes=:observed_bytes,observed_text=:observed_text,
+                observed_normal_completion=:observed_normal_completion,observed_data_events=:observed_data_events,
+                observed_text_deltas=:observed_text_deltas,observed_text_bytes=:observed_text_bytes,
+                observed_completion_marker=:observed_completion_marker,observed_local_closed=:observed_local_closed,
+                provider_cancellation=:provider_cancellation
             WHERE id=:id AND revision=:expected_revision AND state IN ('QUEUED','RUNNING')
                 AND (:state <> 'RUNNING' OR EXISTS (
                     SELECT 1 FROM model_gateway.deployment d
@@ -123,17 +128,41 @@ class SqlAlchemyCheckRepository(SqlAlchemyDeploymentRepository):
         return result.rowcount == 1
 
 
+_OBSERVATION_FIELDS = {
+    "observed_bytes": "consumed_bytes",
+    "observed_text": "text_observed",
+    "observed_normal_completion": "normal_completion_observed",
+    "observed_data_events": "data_event_count",
+    "observed_text_deltas": "text_delta_count",
+    "observed_text_bytes": "text_bytes",
+    "observed_completion_marker": "completion_marker_observed",
+    "observed_local_closed": "local_stream_closed",
+    "provider_cancellation": "provider_cancellation",
+}
+
+
 def _parameters(value: ConnectionCheck) -> dict[str, Any]:
-    return value.model_dump() | {
+    observation = {} if value.observation is None else value.observation.model_dump()
+    return value.model_dump(exclude={"observation"}) | {
         "input": value.input.model_dump_json(),
         "connection_ref": value.input.connection_ref,
         "usage": value.usage.model_dump_json() if value.usage else None,
+        **{column: observation.get(field) for column, field in _OBSERVATION_FIELDS.items()},
     }
 
 
 def _check(row: Any) -> ConnectionCheck:
     values = dict(row)
     values.pop("connection_ref")
+    observation = {field: values.pop(column) for column, field in _OBSERVATION_FIELDS.items()}
+    values["observation"] = (
+        {
+            "kind": values["check_kind"],
+            **{key: value for key, value in observation.items() if value is not None},
+        }
+        if observation["consumed_bytes"] is not None
+        else None
+    )
     return ConnectionCheck.model_validate(
         values
         | {

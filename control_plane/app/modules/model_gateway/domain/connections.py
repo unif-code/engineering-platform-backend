@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from enum import StrEnum
 from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
@@ -22,7 +23,21 @@ EnvironmentName = Annotated[
 Region = Literal[
     "cn-beijing", "ap-southeast-1", "us-east-1", "cn-hongkong", "eu-central-1", "ap-northeast-1"
 ]
-PROBE_VERSION = "basic-text-v1"
+
+
+class CheckKind(StrEnum):
+    BASIC_TEXT = "BASIC_TEXT"
+    STREAM_TEXT = "STREAM_TEXT"
+    STREAM_STOP = "STREAM_STOP"
+
+
+PROBE_VERSIONS = {
+    CheckKind.BASIC_TEXT: "basic-text-v1",
+    CheckKind.STREAM_TEXT: "stream-text-v1",
+    CheckKind.STREAM_STOP: "stream-stop-v1",
+}
+MAX_STREAM_EVENT_BYTES = 16384
+MAX_STREAM_EVENTS = 256
 ADAPTER_VERSION = "bailian-compatible-v1"
 PROBE_TEXT = "Reply with OK."
 MAX_COMPLETION_TOKENS = 64
@@ -75,11 +90,15 @@ def digest(value: object) -> str:
     ).hexdigest()
 
 
-def probe_body(model_id: str) -> dict[str, object]:
-    return {
+def probe_body(model_id: str, check_kind: CheckKind) -> dict[str, object]:
+    body: dict[str, object] = {
         "model": model_id,
         "messages": [{"role": "user", "content": PROBE_TEXT}],
-        "stream": False,
+        "stream": check_kind is not CheckKind.BASIC_TEXT,
         "enable_thinking": False,
         "max_completion_tokens": MAX_COMPLETION_TOKENS,
     }
+
+    if check_kind is not CheckKind.BASIC_TEXT:
+        body["stream_options"] = {"include_usage": True}
+    return body

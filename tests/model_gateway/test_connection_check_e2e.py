@@ -26,6 +26,7 @@ from control_plane.app.modules.model_gateway import (
     recover_expired_checks,
 )
 from control_plane.app.modules.model_gateway.adapters.probe import HttpxModelProbe
+from control_plane.app.modules.model_gateway.domain.connections import CheckKind
 from control_plane.tools import model_gateway_worker
 from tests.model_gateway.test_catalog_contract import PAYLOAD
 from tests.model_gateway.test_probe import CONNECTION, RESPONSE, material, public_dns, response
@@ -79,11 +80,20 @@ def worker(handler: Callable[[httpx.Request], httpx.Response]) -> ModelCheckWork
 
 
 def accept(
-    journey: Journey, deployment: dict[str, Any], *, key: str | None = None
+    journey: Journey,
+    deployment: dict[str, Any],
+    *,
+    key: str | None = None,
+    kind: CheckKind = CheckKind.BASIC_TEXT,
 ) -> tuple[str, dict[str, Any]]:
     path = f"{BASE}/{deployment['id']}/connection-checks"
     receipt = _write(
-        journey.admin, path, {}, etag=f'"v{deployment["revision"]}"', status=202, key=key
+        journey.admin,
+        path,
+        {"checkKind": kind},
+        etag=f'"v{deployment["revision"]}"',
+        status=202,
+        key=key,
     )
     return path, receipt.json()
 
@@ -97,12 +107,19 @@ def test_default_check_journey_replay_history_currentness_and_restricted_roles(
     assert receipt["state"] == "QUEUED" and receipt["candidateRevision"] == receipt["revision"] == 1
     assert (
         _write(
-            journey.admin, path, {}, etag='"v1"', status=202, key="check-original-request"
+            journey.admin,
+            path,
+            {"checkKind": "BASIC_TEXT"},
+            etag='"v1"',
+            status=202,
+            key="check-original-request",
         ).json()
         == receipt
     )
     assert (
-        _write(journey.admin, path, {}, etag='"v1"', status=409).json()["code"]
+        _write(journey.admin, path, {"checkKind": "BASIC_TEXT"}, etag='"v1"', status=409).json()[
+            "code"
+        ]
         == "MODEL_CONNECTION_CHECK_ACTIVE"
     )
     assert journey.admin.get(f"{BASE}/{deployment['id']}").headers["etag"] == '"v1"'
@@ -153,12 +170,24 @@ def test_default_check_journey_replay_history_currentness_and_restricted_roles(
     assert stale.headers["etag"] != detail.headers["etag"]
     assert (
         _write(
-            journey.admin, path, {}, etag='"v1"', status=202, key="check-original-request"
+            journey.admin,
+            path,
+            {"checkKind": "BASIC_TEXT"},
+            etag='"v1"',
+            status=202,
+            key="check-original-request",
         ).json()["id"]
         == receipt["id"]
     )
-    _write(journey.admin, path, {}, etag='"v2"', status=409, key="check-original-request")
-    _write(journey.admin, path, {}, etag='"v1"', status=409)
+    _write(
+        journey.admin,
+        path,
+        {"checkKind": "BASIC_TEXT"},
+        etag='"v2"',
+        status=409,
+        key="check-original-request",
+    )
+    _write(journey.admin, path, {"checkKind": "BASIC_TEXT"}, etag='"v1"', status=409)
     _, next_receipt = accept(journey, edited)
     assert next_receipt["id"] != receipt["id"]
     # Material rotation preserves the historical success and changes currentness.
@@ -229,7 +258,7 @@ def test_rejections_and_preflight_blocks_make_no_provider_call(
     deployment = candidate(journey)
     path = f"{BASE}/{deployment['id']}/connection-checks"
     _grant(journey.admin, journey.member_id, "platform.model.manage")
-    _write(journey.member, path, {}, status=403, etag='"v1"')
+    _write(journey.member, path, {"checkKind": "BASIC_TEXT"}, status=403, etag='"v1"')
     assert journey.member.get(path).status_code == 403
     _grant(journey.admin, journey.member_id, "platform.model.read", journey.workspace_id)
     assert journey.member.get(path).status_code == 403
@@ -240,12 +269,14 @@ def test_rejections_and_preflight_blocks_make_no_provider_call(
         {"apiKey": "sk-synthetic"},
         {"endpoint": "http://127.0.0.1"},
     ):
-        rejected = _write(journey.admin, path, body, status=422, etag='"v1"')
+        rejected = _write(
+            journey.admin, path, {"checkKind": "BASIC_TEXT"} | body, status=422, etag='"v1"'
+        )
         assert "sk-synthetic" not in rejected.text
     assert (
         journey.admin.post(
             path,
-            json={},
+            json={"checkKind": "BASIC_TEXT"},
             headers={
                 "Idempotency-Key": "origin-rejected",
                 "If-Match": '"v1"',
@@ -254,7 +285,7 @@ def test_rejections_and_preflight_blocks_make_no_provider_call(
         ).status_code
         == 403
     )
-    _write(journey.admin, path, {}, status=409, etag='"v2"')
+    _write(journey.admin, path, {"checkKind": "BASIC_TEXT"}, status=409, etag='"v2"')
     calls = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -279,7 +310,7 @@ def test_rejections_and_preflight_blocks_make_no_provider_call(
     _write(journey.admin, f"{BASE}/{deployment['id']}:archive", {"reason": "Retired"}, etag='"v1"')
     assert not process_connection_check(queued["id"], dependencies=dependencies)
     assert journey.admin.get(f"{path}/{queued['id']}").json()["reason"] == "CANDIDATE_ARCHIVED"
-    _write(journey.admin, path, {}, status=409, etag='"v2"')
+    _write(journey.admin, path, {"checkKind": "BASIC_TEXT"}, status=409, etag='"v2"')
     assert not calls
     assert (
         journey.admin.get(f"{missing_path}/{missing_receipt['id']}").json()["currentness"]
@@ -299,7 +330,7 @@ def test_concurrent_admission_single_send_recovery_and_late_fence(
             client.cookies.update(journey.admin.cookies)
             result = client.post(
                 path,
-                json={},
+                json={"checkKind": "BASIC_TEXT"},
                 headers={**SAME_ORIGIN, "If-Match": '"v1"', "Idempotency-Key": str(uuid4())},
             )
             return int(result.status_code), result.json()
@@ -452,7 +483,7 @@ def test_request_and_terminal_audit_failures_are_atomic_without_resending(
             client.cookies.update(journey.admin.cookies)
             failure = client.post(
                 path,
-                json={},
+                json={"checkKind": "BASIC_TEXT"},
                 headers={
                     **SAME_ORIGIN,
                     "If-Match": '"v1"',

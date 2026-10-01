@@ -14,17 +14,24 @@ from threading import Thread
 import httpx
 from pydantic import TypeAdapter, ValidationError
 
+from control_plane.app.modules.model_gateway.adapters.stream import (
+    StreamProbe,
+    StreamProtocolError,
+)
 from control_plane.app.modules.model_gateway.domain import ProviderModelId
 from control_plane.app.modules.model_gateway.domain.checks import (
+    BasicTextObservation,
     CheckBlocked,
     CheckReason,
     CheckState,
     ProbeOutcome,
     ProbeUsage,
+    provider_request_id,
 )
 from control_plane.app.modules.model_gateway.domain.connections import (
     MAX_RESPONSE_BYTES,
     PROBE_TIMEOUT_SECONDS,
+    CheckKind,
     ConnectionDefinition,
     probe_body,
 )
@@ -72,23 +79,13 @@ async def public_addresses(hostname: str) -> tuple[str, ...]:
     return await future
 
 
-def _safe_identifier(value: object) -> str:
-    if (
-        not isinstance(value, str)
-        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", value) is None
-        or value.lower().startswith("sk-")
-    ):
-        raise ValueError("invalid provider identifier")
-    return value
-
-
 def parse_response(raw: bytes, requested_model: str) -> ProbeOutcome:
     try:
         value = json.loads(raw)
         if not isinstance(value, dict) or value.get("object") != "chat.completion":
             raise ValueError
         reported = TypeAdapter(ProviderModelId).validate_python(value.get("model"))
-        request_id = _safe_identifier(value.get("id"))
+        request_id = provider_request_id(value.get("id"))
         usage = None if value.get("usage") is None else ProbeUsage.model_validate(value["usage"])
         if reported != requested_model:
             return ProbeOutcome(
@@ -186,19 +183,92 @@ class HttpxModelProbe:
             raise CheckBlocked(CheckReason.TARGET_NOT_ALLOWED) from None
         return PreparedProbe(connection.hostname, addresses[0], material)
 
-    def send(self, prepared: PreparedProbe, model_id: str) -> ProbeOutcome:
+    def send(self, prepared: PreparedProbe, model_id: str, check_kind: CheckKind) -> ProbeOutcome:
         start = time.monotonic()
+        stream = None if check_kind is CheckKind.BASIC_TEXT else StreamProbe(check_kind, model_id)
         try:
-            outcome = asyncio.run(self._send(prepared, model_id))
-        except (TimeoutError, httpx.HTTPError, OSError):
-            outcome = ProbeOutcome(
-                state=CheckState.UNKNOWN, reason=CheckReason.REQUEST_OUTCOME_UNKNOWN
-            )
+            outcome = asyncio.run(self._send(prepared, model_id, check_kind, stream))
+        except Exception:
+            if stream is not None:
+                outcome = stream.outcome(
+                    CheckState.UNKNOWN,
+                    CheckReason.STREAM_CLOSE_FAILED
+                    if stream.close_failed or stream.receiving_complete
+                    else CheckReason.STREAM_INTERRUPTED,
+                )
+            else:
+                outcome = ProbeOutcome(
+                    state=CheckState.UNKNOWN, reason=CheckReason.REQUEST_OUTCOME_UNKNOWN
+                )
         if prepared.material.value.get_secret_value() in outcome.model_dump_json():
             outcome = ProbeOutcome(state=CheckState.FAILED, reason=CheckReason.INVALID_RESPONSE)
         return outcome.model_copy(update={"elapsed_ms": int((time.monotonic() - start) * 1000)})
 
-    async def _send(self, prepared: PreparedProbe, model_id: str) -> ProbeOutcome:
+    async def _body(
+        self, response: httpx.Response, model_id: str, stream: StreamProbe | None
+    ) -> ProbeOutcome:
+        if 300 <= response.status_code < 400:
+            return ProbeOutcome(state=CheckState.FAILED, reason=CheckReason.REDIRECT_REJECTED)
+        if response.status_code != 200:
+            reason = (
+                CheckReason.PROVIDER_RATE_LIMITED
+                if response.status_code == 429
+                else CheckReason.PROVIDER_REJECTED
+                if 400 <= response.status_code < 500
+                else CheckReason.PROVIDER_ERROR
+            )
+            return ProbeOutcome(state=CheckState.FAILED, reason=reason)
+        if response.headers.get("content-encoding", "identity").lower() != "identity":
+            return ProbeOutcome(state=CheckState.FAILED, reason=CheckReason.INVALID_RESPONSE)
+        if stream is not None:
+            if (
+                response.headers.get("content-type", "").split(";")[0].strip().lower()
+                != "text/event-stream"
+            ):
+                return stream.outcome(CheckState.FAILED, CheckReason.INVALID_STREAM_RESPONSE)
+            try:
+                # No chunk_size buffering: stop as soon as the first complete text event arrives.
+                async for chunk in response.aiter_raw():
+                    for event in stream.frames.feed(chunk):
+                        if stream.event(event):
+                            return stream.outcome(CheckState.SUCCEEDED)
+                return stream.outcome(CheckState.UNKNOWN, CheckReason.STREAM_INTERRUPTED)
+            except StreamProtocolError as error:
+                return stream.outcome(CheckState.FAILED, error.reason)
+        chunks = bytearray()
+        async for chunk in response.aiter_raw(chunk_size=4096):
+            chunks.extend(chunk[: MAX_RESPONSE_BYTES + 1 - len(chunks)])
+            if len(chunks) > MAX_RESPONSE_BYTES:
+                return ProbeOutcome(
+                    state=CheckState.FAILED,
+                    reason=CheckReason.RESPONSE_TOO_LARGE,
+                    observation=BasicTextObservation(
+                        kind=CheckKind.BASIC_TEXT,
+                        consumed_bytes=len(chunks),
+                        text_observed=False,
+                        normal_completion_observed=False,
+                    ),
+                )
+        result = parse_response(bytes(chunks), model_id)
+        success = result.state is CheckState.SUCCEEDED
+        return result.model_copy(
+            update={
+                "observation": BasicTextObservation(
+                    kind=CheckKind.BASIC_TEXT,
+                    consumed_bytes=len(chunks),
+                    text_observed=success,
+                    normal_completion_observed=success,
+                )
+            }
+        )
+
+    async def _send(
+        self,
+        prepared: PreparedProbe,
+        model_id: str,
+        check_kind: CheckKind,
+        stream: StreamProbe | None,
+    ) -> ProbeOutcome:
         # Pin the validated public IP; retain the approved hostname for Host and TLS verification.
         target = httpx.URL(
             f"https://{prepared.hostname}/compatible-mode/v1/chat/completions"
@@ -209,47 +279,48 @@ class HttpxModelProbe:
             trust_env=False,
             limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
         )
-        async with asyncio.timeout(PROBE_TIMEOUT_SECONDS):
-            async with httpx.AsyncClient(
-                transport=transport,
-                trust_env=False,
-                follow_redirects=False,
-                timeout=httpx.Timeout(PROBE_TIMEOUT_SECONDS, connect=5),
-            ) as client:
-                async with client.stream(
+        deadline = asyncio.get_running_loop().time() + PROBE_TIMEOUT_SECONDS
+        client = httpx.AsyncClient(
+            transport=transport,
+            trust_env=False,
+            follow_redirects=False,
+            timeout=httpx.Timeout(PROBE_TIMEOUT_SECONDS, connect=5),
+        )
+        response: httpx.Response | None = None
+        close_failed = False
+        try:
+            async with asyncio.timeout_at(deadline):
+                request = client.build_request(
                     "POST",
                     target,
-                    json=probe_body(model_id),
+                    json=probe_body(model_id, check_kind),
                     headers={
                         "Host": prepared.hostname,
                         "Authorization": f"Bearer {prepared.material.value.get_secret_value()}",
-                        "Accept": "application/json",
+                        "Accept": "application/json" if stream is None else "text/event-stream",
                         "Accept-Encoding": "identity",
                     },
                     extensions={"sni_hostname": prepared.hostname},
-                ) as response:
-                    if 300 <= response.status_code < 400:
-                        return ProbeOutcome(
-                            state=CheckState.FAILED, reason=CheckReason.REDIRECT_REJECTED
-                        )
-                    if response.status_code != 200:
-                        reason = (
-                            CheckReason.PROVIDER_RATE_LIMITED
-                            if response.status_code == 429
-                            else CheckReason.PROVIDER_REJECTED
-                            if 400 <= response.status_code < 500
-                            else CheckReason.PROVIDER_ERROR
-                        )
-                        return ProbeOutcome(state=CheckState.FAILED, reason=reason)
-                    if response.headers.get("content-encoding", "identity").lower() != "identity":
-                        return ProbeOutcome(
-                            state=CheckState.FAILED, reason=CheckReason.INVALID_RESPONSE
-                        )
-                    chunks = bytearray()
-                    async for chunk in response.aiter_raw(chunk_size=4096):
-                        if len(chunks) + len(chunk) > MAX_RESPONSE_BYTES:
-                            return ProbeOutcome(
-                                state=CheckState.FAILED, reason=CheckReason.RESPONSE_TOO_LARGE
-                            )
-                        chunks.extend(chunk)
-                    return parse_response(bytes(chunks), model_id)
+                )
+                response = await client.send(request, stream=True)
+                outcome = await self._body(response, model_id, stream)
+                if stream is not None:
+                    stream.receiving_complete = True
+        finally:
+            # Cleanup shares the original deadline, including after a body timeout.
+            for resource in (response, client):
+                if resource is None:
+                    continue
+                try:
+                    async with asyncio.timeout_at(deadline):
+                        await resource.aclose()
+                except Exception:
+                    close_failed = True
+            if stream is not None:
+                stream.local_closed = response is not None and not close_failed
+                stream.close_failed = close_failed
+            if close_failed:
+                raise OSError("local response cleanup unconfirmed") from None
+        if stream is not None:
+            outcome = outcome.model_copy(update={"observation": stream.observation()})
+        return outcome

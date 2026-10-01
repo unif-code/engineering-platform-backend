@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, SecretStr
 from control_plane.app.modules.model_gateway.domain import Deployment
 from control_plane.app.modules.model_gateway.domain.checks import ConnectionCheck, ProbeOutcome
 from control_plane.app.modules.model_gateway.domain.connections import (
+    CheckKind,
     ConnectionDefinition,
     VersionLabel,
 )
@@ -38,7 +39,7 @@ class CheckActorPort(Protocol):
 
 class ProbePort(Protocol):
     def prepare(self, connection: ConnectionDefinition) -> Any: ...
-    def send(self, prepared: Any, model_id: str) -> ProbeOutcome: ...
+    def send(self, prepared: Any, model_id: str, check_kind: CheckKind) -> ProbeOutcome: ...
     def material_version(self, connection: ConnectionDefinition) -> str: ...
 
 

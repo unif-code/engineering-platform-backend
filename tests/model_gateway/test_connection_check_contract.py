@@ -6,8 +6,17 @@ from control_plane.app.modules.model_gateway.domain.connections import Connectio
 
 
 def test_connection_check_has_no_browser_controlled_probe_or_target() -> None:
-    assert CreateConnectionCheckRequestDto.model_validate({}).model_dump() == {}
-    for body in ({"prompt": "custom"}, {"endpoint": "https://example.invalid"}, {"revision": 1}):
+    assert (
+        CreateConnectionCheckRequestDto.model_validate({"checkKind": "BASIC_TEXT"}).check_kind
+        == "BASIC_TEXT"
+    )
+    for body in (
+        {},
+        {"checkKind": "OTHER"},
+        {"prompt": "custom"},
+        {"endpoint": "https://example.invalid"},
+        {"revision": 1},
+    ):
         with pytest.raises(ValidationError):
             CreateConnectionCheckRequestDto.model_validate(body)
 
@@ -51,7 +60,9 @@ def test_default_openapi_separates_candidate_write_version_and_check_identity() 
         value["name"] for value in operations["post"]["parameters"] if value["in"] == "header"
     } == {"If-Match", "Idempotency-Key"}
     body = schema["components"]["schemas"]["CreateConnectionCheckRequestDto"]
-    assert body["additionalProperties"] is False and body["properties"] == {}
+    assert body["additionalProperties"] is False
+    assert body["required"] == ["checkKind"]
+    assert set(body["properties"]) == {"checkKind"}
     fields = schema["components"]["schemas"]["ConnectionCheckDto"]["properties"]
     assert {"revision", "input", "currentness", "currentnessReasons", "usage"} <= fields.keys()
     assert not {"executionToken", "secretRef", "value", "prompt", "responseBody"} & fields.keys()

@@ -63,7 +63,7 @@ def test_fresh_upgrade_heads_installs_workspace_and_independent_graph(
                 db.execute(text("SELECT version_num FROM alembic_version")).scalars()
             )
         assert expected_heads == {
-            "0002_model_connection_checks",
+            "0003_model_stream_checks",
             "0003_agent_run_recovery",
             "0010_audit_model_worker_grant",
             "0011_identity_reauth_consumption",
@@ -75,6 +75,7 @@ def test_fresh_upgrade_heads_installs_workspace_and_independent_graph(
             "0011_sc_delivery_join",
         }
         assert installed_heads == {
+            "0003_model_stream_checks",
             "0003_agent_run_recovery",
             "0010_audit_model_worker_grant",
             "0011_identity_reauth_consumption",

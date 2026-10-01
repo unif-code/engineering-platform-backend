@@ -1,6 +1,7 @@
+import re
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -11,7 +12,8 @@ from control_plane.app.modules.model_gateway.domain import (
 )
 from control_plane.app.modules.model_gateway.domain.connections import (
     ADAPTER_VERSION,
-    PROBE_VERSION,
+    PROBE_VERSIONS,
+    CheckKind,
     ConnectionDefinition,
     VersionLabel,
     digest,
@@ -52,6 +54,12 @@ class CheckReason(StrEnum):
     RESPONSE_REFUSED = "RESPONSE_REFUSED"
     REQUEST_OUTCOME_UNKNOWN = "REQUEST_OUTCOME_UNKNOWN"
     EXECUTION_EXPIRED = "EXECUTION_EXPIRED"
+    INVALID_STREAM_RESPONSE = "INVALID_STREAM_RESPONSE"
+    STREAM_IDENTITY_CHANGED = "STREAM_IDENTITY_CHANGED"
+    STREAM_EVENT_TOO_LARGE = "STREAM_EVENT_TOO_LARGE"
+    STREAM_EVENT_LIMIT = "STREAM_EVENT_LIMIT"
+    STREAM_INTERRUPTED = "STREAM_INTERRUPTED"
+    STREAM_CLOSE_FAILED = "STREAM_CLOSE_FAILED"
 
 
 class InputCurrentness(StrEnum):
@@ -88,7 +96,11 @@ class CheckInputSnapshot(BaseModel):
 
     @classmethod
     def capture(
-        cls, deployment: object, connection: ConnectionDefinition | None, environment: str | None
+        cls,
+        deployment: object,
+        connection: ConnectionDefinition | None,
+        environment: str | None,
+        check_kind: CheckKind,
     ) -> "CheckInputSnapshot":
         from control_plane.app.modules.model_gateway.domain import Deployment
 
@@ -105,13 +117,16 @@ class CheckInputSnapshot(BaseModel):
             "material_version": connection.material_version if connection else None,
             "connection_fingerprint": connection.fingerprint if connection else None,
             "adapter_version": ADAPTER_VERSION,
-            "probe_version": PROBE_VERSION,
+            "probe_version": PROBE_VERSIONS[check_kind],
         }
         return cls.model_validate(
             values
             | {
                 "input_digest": digest(
-                    {"input": values, "probe": probe_body(deployment.provider_model_id)}
+                    {
+                        "input": values,
+                        "probe": probe_body(deployment.provider_model_id, check_kind),
+                    }
                 )
             }
         )
@@ -127,8 +142,34 @@ class ProbeUsage(BaseModel):
     total_tokens: UsageCount | None = None
 
 
+class BasicTextObservation(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    kind: Literal[CheckKind.BASIC_TEXT]
+    consumed_bytes: int = Field(ge=0, le=65537)
+    text_observed: bool
+    normal_completion_observed: bool
+
+
+class StreamObservation(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    kind: Literal[CheckKind.STREAM_TEXT, CheckKind.STREAM_STOP]
+    consumed_bytes: int = Field(ge=0, le=65537)
+    data_event_count: int = Field(ge=0, le=257)
+    text_delta_count: int = Field(ge=0, le=256)
+    text_bytes: int = Field(ge=0, le=65536)
+    text_observed: bool
+    normal_completion_observed: bool
+    completion_marker_observed: bool
+    local_stream_closed: bool
+    provider_cancellation: Literal["UNCONFIRMED"] = "UNCONFIRMED"
+
+
+ProbeObservation = Annotated[BasicTextObservation | StreamObservation, Field(discriminator="kind")]
+
+
 class ProbeOutcome(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+    observation: ProbeObservation | None = None
     state: CheckState
     reason: CheckReason | None = None
     elapsed_ms: int | None = Field(default=None, ge=0)
@@ -139,6 +180,8 @@ class ProbeOutcome(BaseModel):
 
 class ConnectionCheck(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+    check_kind: CheckKind
+    observation: ProbeObservation | None = None
     id: str
     deployment_id: str
     revision: int = Field(ge=1)
@@ -163,3 +206,13 @@ class CheckBlocked(Exception):
     def __init__(self, reason: CheckReason) -> None:
         self.reason = reason
         super().__init__(reason.value)
+
+
+def provider_request_id(value: object) -> str:
+    if (
+        not isinstance(value, str)
+        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", value) is None
+        or value.lower().startswith("sk-")
+    ):
+        raise ValueError("invalid provider identifier")
+    return value

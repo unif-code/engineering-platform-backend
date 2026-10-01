@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field
 
 from control_plane.app.modules.model_gateway.domain import (
     ArchiveReason,
@@ -9,6 +10,7 @@ from control_plane.app.modules.model_gateway.domain import (
     PatchDeployment,
 )
 from control_plane.app.modules.model_gateway.domain.checks import (
+    BasicTextObservation,
     CheckInputSnapshot,
     CheckReason,
     CheckState,
@@ -16,7 +18,9 @@ from control_plane.app.modules.model_gateway.domain.checks import (
     CurrentnessReason,
     InputCurrentness,
     ProbeUsage,
+    StreamObservation,
 )
+from control_plane.app.modules.model_gateway.domain.connections import CheckKind
 from control_plane.app.shared.api.camel import CamelModel
 
 
@@ -56,9 +60,10 @@ class ModelDeploymentsResponseDto(CamelModel):
 
 
 class CreateConnectionCheckRequestDto(CamelModel):
+    check_kind: CheckKind
     """Fixed server probe. No target, prompt, credentials or model parameters are writable."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=False)
 
 
 class ConnectionCheckInputDto(CheckInputSnapshot, CamelModel):
@@ -78,6 +83,7 @@ class ConnectionCheckReceiptDto(CamelModel):
     id: str
     deployment_id: str
     candidate_revision: int
+    check_kind: CheckKind
     revision: int
     state: CheckState
     reason: CheckReason | None
@@ -89,11 +95,28 @@ class ConnectionCheckReceiptDto(CamelModel):
             id=check.id,
             deployment_id=check.deployment_id,
             candidate_revision=check.input.deployment_revision,
+            check_kind=check.check_kind,
             revision=check.revision,
             state=check.state,
             reason=check.reason,
             requested_at=check.requested_at,
         )
+
+
+class BasicTextObservationDto(BasicTextObservation, CamelModel):
+    """Bounded basic-text observations; no response text is stored."""
+
+
+class StreamObservationDto(StreamObservation, CamelModel):
+    """Only local reception/closure facts.
+
+    Provider cancellation and stopped billing are unconfirmed.
+    """
+
+
+CheckObservationDto = Annotated[
+    BasicTextObservationDto | StreamObservationDto, Field(discriminator="kind")
+]
 
 
 class ConnectionCheckDto(CamelModel):
@@ -109,6 +132,8 @@ class ConnectionCheckDto(CamelModel):
     deployment_id: str
     revision: int
     requested_by: str
+    check_kind: CheckKind
+    observation: CheckObservationDto | None
     requested_at: datetime
     input: ConnectionCheckInputDto
     state: CheckState

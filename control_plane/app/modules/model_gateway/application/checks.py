@@ -19,7 +19,8 @@ from control_plane.app.modules.model_gateway.domain.checks import (
 )
 from control_plane.app.modules.model_gateway.domain.connections import (
     ADAPTER_VERSION,
-    PROBE_VERSION,
+    PROBE_VERSIONS,
+    CheckKind,
 )
 from control_plane.app.modules.model_gateway.ports.checks import (
     CheckRepository,
@@ -54,6 +55,7 @@ def check_audit(
                     "deploymentId": check.deployment_id,
                     "candidateRevision": check.input.deployment_revision,
                     "checkRevision": check.revision,
+                    "checkKind": check.check_kind,
                     "reason": check.reason,
                     "inputCurrentness": input_currentness,
                 }
@@ -72,7 +74,10 @@ def currentness(
         reasons.append(CurrentnessReason.CANDIDATE_CHANGED)
     if deployment.state is DeploymentState.ARCHIVED:
         reasons.append(CurrentnessReason.CANDIDATE_ARCHIVED)
-    if check.input.adapter_version != ADAPTER_VERSION or check.input.probe_version != PROBE_VERSION:
+    if (
+        check.input.adapter_version != ADAPTER_VERSION
+        or check.input.probe_version != PROBE_VERSIONS[check.check_kind]
+    ):
         reasons.append(CurrentnessReason.PROBE_CHANGED)
     try:
         environment, connection = directory.resolve(deployment.connection_ref)
@@ -120,7 +125,9 @@ class ModelConnectionChecks:
             raise CatalogError("MODEL_CONNECTION_CHECK_NOT_FOUND")
         return value
 
-    def accept(self, deployment_id: str, *, expected_revision: int, actor: str) -> ConnectionCheck:
+    def accept(
+        self, deployment_id: str, *, expected_revision: int, actor: str, check_kind: CheckKind
+    ) -> ConnectionCheck:
         deployment = self.deployment(deployment_id, for_update=True)
         if deployment.revision != expected_revision:
             raise CatalogError("MODEL_DEPLOYMENT_REVISION_CONFLICT")
@@ -147,7 +154,8 @@ class ModelConnectionChecks:
             revision=1,
             requested_by=actor,
             requested_at=now,
-            input=CheckInputSnapshot.capture(deployment, connection, environment),
+            check_kind=check_kind,
+            input=CheckInputSnapshot.capture(deployment, connection, environment, check_kind),
             state=CheckState.BLOCKED if reason else CheckState.QUEUED,
             reason=reason,
             attempt=0,

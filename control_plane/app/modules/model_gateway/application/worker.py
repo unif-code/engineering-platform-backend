@@ -113,7 +113,12 @@ def _validate_input(
         or deployment.provider_kind != connection.provider_kind
     ):
         raise CheckBlocked(CheckReason.MODEL_NOT_ALLOWED)
-    if CheckInputSnapshot.capture(deployment, connection, environment) != check.input:
+    current_input = CheckInputSnapshot.capture(
+        deployment, connection, environment, check.check_kind
+    )
+    # The kind-specific probe version binds kind into the digest while unchanged BASIC_TEXT
+    # retains its original canonical input and immutable history.
+    if current_input != check.input:
         raise CheckBlocked(CheckReason.INPUT_CHANGED)
     return connection
 
@@ -193,7 +198,7 @@ def process_connection_check(check_id: str, *, dependencies: ModelCheckWorkerDep
     assert prepared is not None and connection is not None
     # No transaction or row lock spans this boundary. RUNNING is never sent again.
     try:
-        outcome = deps.probe.send(prepared, running.input.provider_model_id)
+        outcome = deps.probe.send(prepared, running.input.provider_model_id, running.check_kind)
     except Exception:
         outcome = ProbeOutcome(state=CheckState.UNKNOWN, reason=CheckReason.REQUEST_OUTCOME_UNKNOWN)
     try:
