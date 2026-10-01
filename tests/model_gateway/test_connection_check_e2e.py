@@ -343,3 +343,160 @@ def test_concurrent_admission_single_send_recovery_and_late_fence(
     _, fresh = accept(journey, deployment)
     assert fresh["id"] != check_id
     assert process_connection_check(fresh["id"], dependencies=dependencies) and len(calls) == 2
+
+
+def test_connection_slot_and_input_change_during_http_keep_evidence_without_new_send(
+    journey: Journey,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configured(tmp_path, monkeypatch)
+    first_candidate = candidate(journey, "slot-first")
+    second_candidate = candidate(journey, "slot-second")
+    first_path, first_receipt = accept(journey, first_candidate)
+    second_path, second_receipt = accept(journey, second_candidate)
+    started, release = Event(), Event()
+    calls: list[httpx.Request] = []
+
+    def delayed(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        started.set()
+        assert release.wait(10)
+        return response()
+
+    dependencies = worker(delayed)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        executing = pool.submit(
+            process_connection_check, first_receipt["id"], dependencies=dependencies
+        )
+        assert started.wait(10)
+        assert not process_connection_check(second_receipt["id"], dependencies=dependencies)
+        blocked = journey.admin.get(f"{second_path}/{second_receipt['id']}").json()
+        assert blocked["state"] == "BLOCKED" and blocked["reason"] == "CONNECTION_BUSY"
+        _write(
+            journey.admin,
+            f"{BASE}/{first_candidate['id']}",
+            {"displayName": "Edited during probe"},
+            method="PATCH",
+            etag='"v1"',
+        )
+        release.set()
+        assert executing.result(timeout=10)
+    evidence = journey.admin.get(f"{first_path}/{first_receipt['id']}").json()
+    assert evidence["state"] == "SUCCEEDED" and evidence["currentness"] == "STALE"
+    assert evidence["input"]["deploymentRevision"] == 1
+    assert "CANDIDATE_CHANGED" in evidence["currentnessReasons"]
+    assert not process_connection_check(second_receipt["id"], dependencies=dependencies)
+    assert len(calls) == 1
+    with journey.database.owner.connect() as db:
+        reason = db.execute(
+            text(
+                "SELECT reason FROM audit.audit_event WHERE target_id=:id "
+                "AND action='model_connection_check.completed'"
+            ),
+            {"id": first_receipt["id"]},
+        ).scalar_one()
+        assert json.loads(reason)["inputCurrentness"] == "STALE"
+
+
+def test_queued_actor_loses_current_qualification_before_any_provider_access(
+    journey: Journey,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configured(tmp_path, monkeypatch)
+    deployment = candidate(journey)
+    path, receipt = accept(journey, deployment)
+    _grant(journey.admin, journey.member_id, "platform.model.read")
+    actor_id = journey.admin.get("/api/v1/me").json()["accountId"]
+    # Isolated owner fixture simulates a current disabled fact, bypassing the last-admin API guard.
+    with journey.database.owner.begin() as db:
+        db.execute(
+            text("UPDATE identity.account SET status='DISABLED',version=version+1 WHERE id=:id"),
+            {"id": actor_id},
+        )
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return response()
+
+    dependencies = worker(handler)
+    assert not process_connection_check(receipt["id"], dependencies=dependencies)
+    assert not calls
+    value = journey.member.get(f"{path}/{receipt['id']}").json()
+    assert value["state"] == "BLOCKED" and value["reason"] == "ACTOR_INELIGIBLE"
+
+
+def test_request_and_terminal_audit_failures_are_atomic_without_resending(
+    journey: Journey,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import patch
+
+    configured(tmp_path, monkeypatch)
+    deployment = candidate(journey)
+    path = f"{BASE}/{deployment['id']}/connection-checks"
+
+    class FailingAudit:
+        def append_in_transaction(self, db: object, envelope: object) -> None:
+            raise RuntimeError("synthetic audit failure")
+
+    runtime = bootstrap.model_gateway_http_runtime()
+    broken = replace(runtime, dependencies=replace(runtime.dependencies, audit=FailingAudit()))
+    with patch.object(bootstrap, "model_gateway_http_runtime", return_value=broken):
+        with TestClient(
+            bootstrap.create_app(), base_url="https://testserver", raise_server_exceptions=False
+        ) as client:
+            client.cookies.update(journey.admin.cookies)
+            failure = client.post(
+                path,
+                json={},
+                headers={
+                    **SAME_ORIGIN,
+                    "If-Match": '"v1"',
+                    "Idempotency-Key": "check-audit-rollback",
+                },
+            )
+            assert failure.status_code == 500
+    with journey.database.owner.connect() as db:
+        assert (
+            db.execute(text("SELECT count(*) FROM model_gateway.connection_check")).scalar_one()
+            == 0
+        )
+        assert (
+            db.execute(
+                text(
+                    "SELECT count(*) FROM model_gateway.idempotency_record "
+                    "WHERE idempotency_key='check-audit-rollback'"
+                )
+            ).scalar_one()
+            == 0
+        )
+    _, receipt = accept(journey, deployment, key="check-audit-rollback")
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return response()
+
+    dependencies = worker(handler)
+    broken_worker = replace(dependencies, common=replace(dependencies.common, audit=FailingAudit()))
+    with pytest.raises(RuntimeError, match="synthetic audit failure"):
+        process_connection_check(receipt["id"], dependencies=broken_worker)
+    assert journey.admin.get(f"{path}/{receipt['id']}").json()["state"] == "RUNNING"
+    assert not process_connection_check(receipt["id"], dependencies=dependencies)
+    later = dependencies.common.now() + timedelta(seconds=30)
+    recovery = replace(dependencies, common=replace(dependencies.common, now=lambda: later))
+    assert recover_expired_checks(dependencies=recovery, limit=10) == 1
+    assert len(calls) == 1
+    assert journey.admin.get(f"{path}/{receipt['id']}").json()["state"] == "UNKNOWN"
+    with journey.database.owner.connect() as db:
+        assert (
+            db.execute(
+                text("SELECT count(*) FROM audit.audit_event WHERE target_id=:id"),
+                {"id": receipt["id"]},
+            ).scalar_one()
+            == 2
+        )
