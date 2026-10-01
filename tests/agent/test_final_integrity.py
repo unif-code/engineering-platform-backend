@@ -172,14 +172,19 @@ def test_review_counterexamples_are_rejected_at_normal_ingress(kind: str) -> Non
 def test_start_response_is_not_persisted_as_plaintext(
     isolated_agent_database: IsolatedAgentDatabase,
 ) -> None:
-    result = start(dependencies(isolated_agent_database))
+    deps = dependencies(isolated_agent_database)
+    result = start(deps)
     with isolated_agent_database.owner.connect() as db:
         sealed = bytes(
             db.execute(text("SELECT sealed_response FROM agent.idempotency_key")).scalar_one()
         )
     assert result.attempt.fencing_token.encode() not in sealed
     assert result.run.id.encode() not in sealed
-    assert not sealed.startswith(b"{")
+    plaintext = unseal(sealed, deps.secret_manager.load().idempotency_sealing_key)
+    assert sealed != plaintext
+    assert SealedIdempotentEnvelope.model_validate_json(
+        plaintext
+    ).response.body == result.model_dump(mode="json")
 
 
 def test_receipts_are_append_only_and_downgrade_preserves_durable_evidence(
@@ -290,7 +295,12 @@ def test_authenticated_replay_fails_closed_without_new_protected_facts(
         )
         encrypted = bytes(row["sealed_response"])
         assert result.attempt.fencing_token.encode() not in encrypted
-        assert not encrypted.startswith(b"{")
+        material = deps.secret_manager.load().idempotency_sealing_key
+        plaintext = unseal(encrypted, material)
+        assert encrypted != plaintext
+        assert SealedIdempotentEnvelope.model_validate_json(
+            plaintext
+        ).response.body == result.model_dump(mode="json")
         if attack == "tamper":
             changed = bytes([encrypted[0] ^ 1]) + encrypted[1:]
         elif attack == "plaintext":
@@ -300,7 +310,6 @@ def test_authenticated_replay_fails_closed_without_new_protected_facts(
                 {"key": key},
             )
         else:
-            material = deps.secret_manager.load().idempotency_sealing_key
             envelope = SealedIdempotentEnvelope.model_validate_json(
                 unseal(encrypted, material)
             ).model_dump(mode="json")

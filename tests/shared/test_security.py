@@ -344,3 +344,20 @@ def test_same_origin_rejection_is_rendered_as_a_403_problem() -> None:
     assert response.status_code == 403
     assert response.headers["content-type"] == "application/problem+json"
     assert response.json()["title"] == "Cross-origin request forbidden"
+
+
+def test_authenticated_ciphertext_can_start_with_a_json_opening_byte(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The nonce is binary, so a JSON-looking first byte says nothing about encryption.
+    monkeypatch.setattr(
+        "control_plane.app.shared.security.sealed.os.urandom",
+        lambda size: b"{" + bytes(size - 1),
+    )
+    key = b"k" * 32
+    plaintext = b'{"result":"synthetic receipt"}'
+    encrypted = seal(plaintext, key)
+    assert encrypted.startswith(b"{") and encrypted != plaintext
+    assert unseal(encrypted, key) == plaintext
+    with pytest.raises(InvalidTag):
+        unseal(encrypted[:-1] + bytes([encrypted[-1] ^ 1]), key)
