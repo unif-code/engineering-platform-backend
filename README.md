@@ -95,6 +95,9 @@ Controller 契约。两者均入库并由 CI 确定性校验，私有契约不�
 - 端口 `8000`；liveness `/healthz`，readiness `/readyz`（DB 不可达返回 503 `application/problem+json`）。
 - 环境变量：`DATABASE_URL`（审计运行时，`audit_rw` 受限角色）、`IDENTITY_DATABASE_URL`（身份运行时，`identity_rw` 受限角色）、`MIGRATION_DATABASE_URL`（迁移 Job，owner 角色），格式 `postgresql+psycopg://user:pass@host:5432/platform`。
 - 迁移 Job 使用同一镜像执行 `alembic upgrade heads`（镜像已含 `migrations/` 与 `alembic.ini`）。
+- 模型候选目录使用 `MODEL_GATEWAY_DATABASE_URL`，运行账号须继承 `model_gateway_rw`。
+  迁移只创建该 NOLOGIN 权限角色；登录账号与凭据由部署侧配置。目录管理无需 Provider 凭据，
+  `connectionRef` 仅保存引用，不解析连接或发起模型调用。
 - 容器以非 root（uid/gid 999）运行；镜像 Private，集群侧需 `read:packages` 的 imagePullSecret。
 
 ## 约定速查

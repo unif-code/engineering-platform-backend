@@ -258,12 +258,16 @@ def test_catalog_authority_scope_revocation_and_sensitive_input(journey: Journey
     )
     assert member.get(BASE).status_code == 403
     _grant(admin, journey.member_id, "platform.model.read")
-    account = admin.get(f"/api/v1/admin/accounts/{journey.member_id}")
+    account = next(
+        row
+        for row in admin.get("/api/v1/admin/accounts").json()["items"]
+        if row["id"] == journey.member_id
+    )
     _write(
         admin,
         f"/api/v1/admin/accounts/{journey.member_id}/disable",
         {"reason": "Disabled account"},
-        etag=account.headers["etag"],
+        etag=account["etag"],
         status=204,
     )
     assert member.get(BASE).status_code == 401
