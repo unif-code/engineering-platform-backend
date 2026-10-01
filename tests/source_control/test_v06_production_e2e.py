@@ -115,6 +115,7 @@ def production_database(
                     "requirement",
                     "source_control",
                     "model_gateway",
+                    "model_gateway_worker",
                 )
             }
             for name, factory in {
@@ -126,6 +127,7 @@ def production_database(
                 "requirement": "requirement_runtime_engine",
                 "source_control": "source_control_query_runtime_engine",
                 "model_gateway": "model_gateway_runtime_engine",
+                "model_gateway_worker": "model_gateway_worker_runtime_engine",
             }.items():
                 monkeypatch.setattr(bootstrap, factory, lambda name=name: engines[name])
             _clear_composition()

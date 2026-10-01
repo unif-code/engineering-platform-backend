@@ -85,6 +85,11 @@ from control_plane.app.modules.identity.api.super_admin_routes import (
     create_super_admin_router,
 )
 from control_plane.app.modules.model_gateway import CatalogDependencies
+from control_plane.app.modules.model_gateway.adapters.connections import (
+    FileConnectionDirectory,
+    ModelConnectionSettings,
+)
+from control_plane.app.modules.model_gateway.api.check_routes import create_model_check_router
 from control_plane.app.modules.model_gateway.api.routes import (
     ModelGatewayHttpRuntime,
     create_model_gateway_router,
@@ -273,9 +278,19 @@ def model_gateway_runtime_engine() -> Engine:
 
 
 @lru_cache(maxsize=1)
+def model_gateway_worker_runtime_engine() -> Engine:
+    return create_engine(
+        DbSettings().model_gateway_worker_database_url,
+        pool_pre_ping=True,
+        connect_args={"connect_timeout": 2},
+    )
+
+
+@lru_cache(maxsize=1)
 def model_gateway_http_runtime() -> ModelGatewayHttpRuntime:
     return ModelGatewayHttpRuntime(
         engine=model_gateway_runtime_engine(),
+        connections=FileConnectionDirectory(ModelConnectionSettings()),
         dependencies=CatalogDependencies(
             audit=SqlAlchemyTransactionalAuditAppender(),
             now=SystemClock().now,
@@ -706,6 +721,13 @@ def create_app(
         create_workspace_router(
             workspace_http_runtime,
             cast(Callable[[], SessionPrincipal], protected_principal),
+            authorization_capability_guard,
+        )
+    )
+    app.include_router(
+        create_model_check_router(
+            model_gateway_http_runtime,
+            protected_principal,
             authorization_capability_guard,
         )
     )

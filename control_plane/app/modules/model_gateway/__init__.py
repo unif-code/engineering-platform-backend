@@ -19,3 +19,19 @@ __all__ = [
     "ModelDeploymentCatalog",
     "PatchDeployment",
 ]
+
+from control_plane.app.modules.model_gateway.application.checks import ModelConnectionChecks
+from control_plane.app.modules.model_gateway.application.worker import (
+    ModelCheckWorkerDependencies,
+    process_connection_check,
+    recover_expired_checks,
+    run_model_check_batch,
+)
+
+__all__ += [
+    "ModelConnectionChecks",
+    "ModelCheckWorkerDependencies",
+    "run_model_check_batch",
+    "process_connection_check",
+    "recover_expired_checks",
+]

@@ -1,0 +1,144 @@
+from datetime import datetime
+from typing import Any
+
+from sqlalchemy import text
+
+from control_plane.app.modules.model_gateway.adapters import SqlAlchemyDeploymentRepository
+from control_plane.app.modules.model_gateway.domain.checks import ConnectionCheck
+
+
+class SqlAlchemyCheckRepository(SqlAlchemyDeploymentRepository):
+    def check(self, check_id: str, *, for_update: bool = False) -> ConnectionCheck | None:
+        suffix = " FOR UPDATE" if for_update else ""
+        row = (
+            self.db.execute(
+                text(f"SELECT * FROM model_gateway.connection_check WHERE id=:id{suffix}"),
+                {"id": check_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return None if row is None else _check(row)
+
+    def insert_check(self, value: ConnectionCheck) -> bool:
+        return (
+            self.db.execute(
+                text("""
+            INSERT INTO model_gateway.connection_check
+                (id,deployment_id,revision,requested_by,requested_at,input,connection_ref,
+                 state,reason,attempt,material_currentness,finished_at)
+            VALUES (:id,:deployment_id,:revision,:requested_by,:requested_at,CAST(:input AS JSONB),
+                    :connection_ref,:state,:reason,:attempt,:material_currentness,:finished_at)
+            ON CONFLICT DO NOTHING RETURNING id
+        """),
+                _parameters(value),
+            ).scalar_one_or_none()
+            is not None
+        )
+
+    def active_check(self, deployment_id: str) -> ConnectionCheck | None:
+        row = (
+            self.db.execute(
+                text(
+                    "SELECT * FROM model_gateway.connection_check WHERE deployment_id=:id "
+                    "AND state IN ('QUEUED','RUNNING')"
+                ),
+                {"id": deployment_id},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return None if row is None else _check(row)
+
+    def list_checks(
+        self, deployment_id: str, *, before_at: datetime | None, before_id: str | None, limit: int
+    ) -> list[ConnectionCheck]:
+        cursor = " AND (requested_at,id) < (:before_at,:before_id)" if before_at else ""
+        rows = self.db.execute(
+            text(
+                "SELECT * FROM model_gateway.connection_check WHERE deployment_id=:id"
+                + cursor
+                + " ORDER BY requested_at DESC,id DESC LIMIT :limit"
+            ),
+            {"id": deployment_id, "before_at": before_at, "before_id": before_id, "limit": limit},
+        ).mappings()
+        return [_check(row) for row in rows]
+
+    def queued_ids(self, *, limit: int) -> list[str]:
+        return [
+            str(value)
+            for value in self.db.execute(
+                text(
+                    "SELECT id FROM model_gateway.connection_check WHERE state='QUEUED' "
+                    "ORDER BY requested_at,id LIMIT :limit"
+                ),
+                {"limit": limit},
+            ).scalars()
+        ]
+
+    def expired_ids(self, *, now: datetime, limit: int) -> list[str]:
+        return [
+            str(value)
+            for value in self.db.execute(
+                text(
+                    "SELECT id FROM model_gateway.connection_check WHERE state='RUNNING' "
+                    "AND deadline_at<=:now ORDER BY deadline_at,id LIMIT :limit"
+                ),
+                {"now": now, "limit": limit},
+            ).scalars()
+        ]
+
+    def connection_busy(self, reference: str) -> bool:
+        self.db.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:reference,0))"),
+            {"reference": f"model-gateway:{reference}"},
+        )
+        return bool(
+            self.db.execute(
+                text(
+                    "SELECT EXISTS(SELECT 1 FROM model_gateway.connection_check "
+                    "WHERE connection_ref=:reference AND state='RUNNING')"
+                ),
+                {"reference": reference},
+            ).scalar_one()
+        )
+
+    def save_check(self, value: ConnectionCheck, *, expected_revision: int) -> bool:
+        result = self.db.execute(
+            text("""
+            UPDATE model_gateway.connection_check SET
+                revision=:revision,state=:state,reason=:reason,attempt=:attempt,
+                execution_token=:execution_token,started_at=:started_at,deadline_at=:deadline_at,
+                finished_at=:finished_at,elapsed_ms=:elapsed_ms,provider_request_id=:provider_request_id,
+                reported_model_id=:reported_model_id,usage=CAST(:usage AS JSONB),
+                material_currentness=:material_currentness
+            WHERE id=:id AND revision=:expected_revision AND state IN ('QUEUED','RUNNING')
+                AND (:state <> 'RUNNING' OR EXISTS (
+                    SELECT 1 FROM model_gateway.deployment d
+                    WHERE d.id=connection_check.deployment_id AND d.state='DRAFT'
+                      AND d.revision=(connection_check.input->>'deployment_revision')::integer))
+        """),
+            _parameters(value) | {"expected_revision": expected_revision},
+        )
+        return result.rowcount == 1
+
+
+def _parameters(value: ConnectionCheck) -> dict[str, Any]:
+    return value.model_dump() | {
+        "input": value.input.model_dump_json(),
+        "connection_ref": value.input.connection_ref,
+        "usage": value.usage.model_dump_json() if value.usage else None,
+    }
+
+
+def _check(row: Any) -> ConnectionCheck:
+    values = dict(row)
+    values.pop("connection_ref")
+    return ConnectionCheck.model_validate(
+        values
+        | {
+            "id": str(row["id"]),
+            "deployment_id": str(row["deployment_id"]),
+            "execution_token": str(row["execution_token"]) if row["execution_token"] else None,
+        }
+    )

@@ -64,9 +64,9 @@ def test_fresh_database_upgrade_heads_installs_all_visible_module_heads(
                 db.execute(text("SELECT version_num FROM alembic_version")).scalars()
             )
         assert expected_heads == {
-            "0001_model_gateway_catalog",
+            "0002_model_connection_checks",
             "0003_agent_run_recovery",
-            "0009_audit_model_gateway_grant",
+            "0010_audit_model_worker_grant",
             "0011_identity_reauth_consumption",
             "0001_organization_base",
             "0001_workspace_base",
@@ -80,7 +80,7 @@ def test_fresh_database_upgrade_heads_installs_all_visible_module_heads(
         # in the script graph and their schemas have dedicated lifecycle coverage.
         assert installed_heads == {
             "0003_agent_run_recovery",
-            "0009_audit_model_gateway_grant",
+            "0010_audit_model_worker_grant",
             "0011_identity_reauth_consumption",
             "0010_auth_model_catalog",
             "0009_req_formal_owner_denial",

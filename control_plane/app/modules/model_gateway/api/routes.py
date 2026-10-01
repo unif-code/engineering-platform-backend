@@ -26,6 +26,7 @@ from control_plane.app.modules.model_gateway.api.dto import (
     ModelDeploymentsResponseDto,
     PatchModelDeploymentRequestDto,
 )
+from control_plane.app.modules.model_gateway.ports.checks import ConnectionDirectoryPort
 from control_plane.app.shared.api.concurrency import entity_tag, require_if_match
 from control_plane.app.shared.api.idempotency import require_idempotency_key
 from control_plane.app.shared.api.problem import (
@@ -75,6 +76,7 @@ class ModelGatewayHttpRuntime:
     engine: Engine
     dependencies: CatalogDependencies
     secret_manager: SecretManagerPort
+    connections: ConnectionDirectoryPort
 
 
 def _dto(value: Deployment) -> ModelDeploymentDto:
@@ -91,9 +93,9 @@ def _entity(value: Deployment, status: int) -> IdempotentResponse:
 
 def _denial(error: CatalogError) -> IdempotentResponse:
     status = 409
-    if error.code == "MODEL_DEPLOYMENT_NOT_FOUND":
+    if error.code in {"MODEL_DEPLOYMENT_NOT_FOUND", "MODEL_CONNECTION_CHECK_NOT_FOUND"}:
         status = 404
-    elif error.code == "INVALID_MODEL_DEPLOYMENT_CURSOR":
+    elif error.code in {"INVALID_MODEL_DEPLOYMENT_CURSOR", "INVALID_MODEL_CONNECTION_CHECK_CURSOR"}:
         status = 422
     return IdempotentResponse(
         status_code=status,

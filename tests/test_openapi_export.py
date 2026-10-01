@@ -18,8 +18,8 @@ def test_render_is_deterministic_and_versioned() -> None:
     first, second = render(), render()
     assert first == second
     assert f'"version": "{__version__}"' in first
-    assert json.loads(first)["info"]["version"] == "0.11.0"
-    assert json.loads(render_sandbox())["info"]["version"] == "0.11.0"
+    assert json.loads(first)["info"]["version"] == "0.12.0"
+    assert json.loads(render_sandbox())["info"]["version"] == "0.12.0"
 
 
 def test_render_contains_the_typed_requirement_contract() -> None:

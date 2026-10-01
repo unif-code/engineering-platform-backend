@@ -45,7 +45,12 @@ def test_default_app_contract_exposes_only_catalog_commands() -> None:
     paths = {
         path: methods
         for path, methods in schema["paths"].items()
-        if path.startswith("/api/v1/admin/model-deployments")
+        if path
+        in {
+            "/api/v1/admin/model-deployments",
+            "/api/v1/admin/model-deployments/{deploymentId}",
+            "/api/v1/admin/model-deployments/{deploymentId}:archive",
+        }
     }
     operations = {
         operation["operationId"] for methods in paths.values() for operation in methods.values()

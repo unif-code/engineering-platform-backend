@@ -62,6 +62,39 @@ uv run pytest                  # 无 DB 时集成测试自动 skip（勿据此�
 
 ## 两条发布链
 
+### Model Gateway 连接检查 worker
+
+Control Plane 仅受理和查询检查；独立 worker 使用 `MODEL_GATEWAY_WORKER_DATABASE_URL`
+及 `model_gateway_worker_rw` 权限角色执行。候选状态仍为 DRAFT/ARCHIVED，检查不会激活部署。
+
+两个入口读取同一非敏感清单：`MODEL_GATEWAY_CONNECTIONS_PATH` 指向受控 JSON，
+`MODEL_GATEWAY_ENVIRONMENT` 必须与清单的 `environment` 一致。清单结构为
+`{ "environment": "...", "connections": [...] }`；每项包含 `reference`、`version`、
+`materialVersion`、`providerKind`、`region`、`workspaceId`、`allowedModelIds`、`secretRef`。
+字段约束以 [ConnectionDefinition](control_plane/app/modules/model_gateway/domain/connections.py)
+为准。目标只由 Workspace 与批准区域派生，不接收浏览器 URL 或任意 Header。
+协议依据[百炼 compatible-mode Chat](https://www.alibabacloud.com/help/en/model-studio/qwen-api-via-openai-chat-completions)。
+
+只有 worker 配置 `MODEL_GATEWAY_SECRET_REFERENCE_ROOT` 并挂载 Provider 材料。
+`secret-ref:...` 对应文件是 UTF-8 JSON，字段为 `version` 和 `value`；`version` 必须等于
+清单的 `materialVersion`，`value` 是密钥。轮换必须同时发布新的非敏感版本及匹配材料，
+不能原地换值却复用版本；材料不进入候选表、Identity 的密钥目录、公开 DTO 或审计正文。
+Control Plane 不挂载这组文件。
+
+```bash
+uv run python -m control_plane.tools.model_gateway_worker --limit 20
+```
+
+每个检查最多进入一次发送边界；`attempted` 表示到达该边界，不证明 Provider 已执行。
+固定探针使用非流式文本、64 个最大 completion tokens、20 秒总 HTTP 时限、64 KiB 响应上限，
+每连接最多一个 RUNNING。Provider 超时或 worker 丢失结果收敛 UNKNOWN，不自动重发；
+新检查需管理员明确发起，先前请求可能已经执行并计费。
+检查 ETag 是含当前性的 opaque 表示标识，不能用于候选 If-Match。
+清单及探针变化会实时改变查询当前性，检查自身 revision 只表示持久检查状态的版本。
+
+实际使用仍需部署侧确定区域/Workspace、批准模型、专用材料及费用预算。
+一次基础响应通过不证明完整能力、价格、配额或数据处理等级。
+
 ### Source Control worker
 
 API 默认提供 V0.6 Artifact、Acceptance 与 Formal Delivery 路由。worker 与 Connector 共用生产运行时，
