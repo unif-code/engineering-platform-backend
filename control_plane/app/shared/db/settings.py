@@ -30,6 +30,9 @@ class DbSettings(BaseSettings):
     agent_run_database_url: str = (
         "postgresql+psycopg://agent_run_rw:localdev@localhost:5432/platform"
     )
+    model_gateway_database_url: str = (
+        "postgresql+psycopg://model_gateway_rw:localdev@localhost:5432/platform"
+    )
     migration_database_url: str = (
         "postgresql+psycopg://platform_owner:localdev@localhost:5432/platform"
     )

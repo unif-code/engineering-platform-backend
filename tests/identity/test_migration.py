@@ -276,9 +276,9 @@ def test_current_alembic_heads_are_installed(identity_owner_engine: Engine) -> N
     assert installed == {
         "0003_agent_run_recovery",
         "0009_req_formal_owner_denial",
-        "0008_audit_requirement_grant",
+        "0009_audit_model_gateway_grant",
         "0011_identity_reauth_consumption",
-        "0009_auth_v06_routes",
+        "0010_auth_model_catalog",
         "0003_event_acceptance_receipt",
         "0011_sc_delivery_join",
     }

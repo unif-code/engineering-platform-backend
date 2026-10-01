@@ -6,7 +6,7 @@ from alembic.config import Config
 from sqlalchemy import text
 
 from control_plane.app.bootstrap.app import _DEFAULT_NAVIGATION_ACTION_CAPABILITIES
-from control_plane.app.modules.authorization import V02_SUPER_ADMIN_PLATFORM_CAPABILITIES
+from control_plane.app.modules.authorization import SUPER_ADMIN_PLATFORM_CAPABILITIES
 from tests.requirement.conftest import IsolatedRequirementDatabase
 
 V05 = [
@@ -47,7 +47,7 @@ def test_v06_migration_registers_explicit_workspace_actions_and_reverses_without
     expected = [{"capability": capability, "scopeType": "WORKSPACE"} for capability in V05 + ADDED]
     assert registered == expected
     assert set(V05 + ADDED) <= _DEFAULT_NAVIGATION_ACTION_CAPABILITIES
-    assert set(ADDED).isdisjoint(V02_SUPER_ADMIN_PLATFORM_CAPABILITIES)
+    assert set(ADDED).isdisjoint(SUPER_ADMIN_PLATFORM_CAPABILITIES)
     command.downgrade(config, "0008_auth_v05_routes")
     with database.owner.connect() as db:
         assert db.execute(query).scalar_one() == expected[:7]

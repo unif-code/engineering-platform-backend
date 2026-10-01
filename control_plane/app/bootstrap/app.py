@@ -84,6 +84,11 @@ from control_plane.app.modules.identity.api.auth_routes import (
 from control_plane.app.modules.identity.api.super_admin_routes import (
     create_super_admin_router,
 )
+from control_plane.app.modules.model_gateway import CatalogDependencies
+from control_plane.app.modules.model_gateway.api.routes import (
+    ModelGatewayHttpRuntime,
+    create_model_gateway_router,
+)
 from control_plane.app.modules.organization import OrganizationDependencies
 from control_plane.app.modules.organization.adapters import (
     SqlAlchemyIdentityAccountLookup as OrganizationIdentityAccountLookup,
@@ -173,6 +178,7 @@ from control_plane.app.shared.security import FileSecretManager
 
 _DEFAULT_NAVIGATION_ACTION_CAPABILITIES = frozenset(
     {
+        "platform.model.manage",
         WORK_ITEM_CREATE_CAPABILITY,
         WORK_ITEM_ASSIGN_CAPABILITY,
         REQUIREMENT_BASELINE_SUBMIT_CAPABILITY,
@@ -254,6 +260,28 @@ def source_control_query_runtime_engine() -> Engine:
         DbSettings().source_control_database_url,
         pool_pre_ping=True,
         connect_args={"connect_timeout": 2},
+    )
+
+
+@lru_cache(maxsize=1)
+def model_gateway_runtime_engine() -> Engine:
+    return create_engine(
+        DbSettings().model_gateway_database_url,
+        pool_pre_ping=True,
+        connect_args={"connect_timeout": 2},
+    )
+
+
+@lru_cache(maxsize=1)
+def model_gateway_http_runtime() -> ModelGatewayHttpRuntime:
+    return ModelGatewayHttpRuntime(
+        engine=model_gateway_runtime_engine(),
+        dependencies=CatalogDependencies(
+            audit=SqlAlchemyTransactionalAuditAppender(),
+            now=SystemClock().now,
+            new_id=SystemRandom().uuid4,
+        ),
+        secret_manager=FileSecretManager(SecuritySettings()),
     )
 
 
@@ -678,6 +706,13 @@ def create_app(
         create_workspace_router(
             workspace_http_runtime,
             cast(Callable[[], SessionPrincipal], protected_principal),
+            authorization_capability_guard,
+        )
+    )
+    app.include_router(
+        create_model_gateway_router(
+            model_gateway_http_runtime,
+            protected_principal,
             authorization_capability_guard,
         )
     )

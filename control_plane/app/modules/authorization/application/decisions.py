@@ -9,14 +9,14 @@ from control_plane.app.modules.authorization.application.dependencies import (
 )
 from control_plane.app.modules.authorization.domain import (
     RESERVED_PLATFORM_CAPABILITIES,
-    V02_SUPER_ADMIN_PLATFORM_CAPABILITIES,
+    SUPER_ADMIN_PLATFORM_CAPABILITIES,
     AuthorizationDecision,
     AuthorizationPrincipal,
     DecisionCode,
     Scope,
     ScopedCapability,
     ScopeType,
-    is_v02_super_admin_platform_capability,
+    is_super_admin_platform_capability,
 )
 from control_plane.app.modules.authorization.domain.errors import AuthorizationUnavailable
 from control_plane.app.modules.authorization.ports import AuthorizationRepository
@@ -134,7 +134,7 @@ def _principal_capabilities(
                 continue
         add_capability(ScopedCapability(capability=item.capability, scope=item.scope))
     if is_super_admin:
-        for capability in sorted(V02_SUPER_ADMIN_PLATFORM_CAPABILITIES):
+        for capability in sorted(SUPER_ADMIN_PLATFORM_CAPABILITIES):
             add_capability(ScopedCapability(capability=capability, scope=Scope.platform()))
     return tuple(values.values())
 
@@ -210,7 +210,7 @@ def authorize(
                 version=state.version,
                 reason="authorization convergence pending",
             )
-    if is_v02_super_admin_platform_capability(
+    if is_super_admin_platform_capability(
         capability,
         scope,
         is_super_admin=bool(session.is_super_admin),
@@ -467,7 +467,7 @@ def principal_has_capability(
     state = principal_version_dto(state_row)
     if state.dirty_generation is not None or state.version != principal.authorization_version:
         raise AuthorizationUnavailable("authorization principal changed")
-    if is_v02_super_admin_platform_capability(
+    if is_super_admin_platform_capability(
         capability,
         scope,
         is_super_admin=principal.is_super_admin,

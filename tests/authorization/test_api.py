@@ -14,7 +14,7 @@ from sqlalchemy import Engine, create_engine, text
 
 from control_plane.app.bootstrap.app import _DEFAULT_NAVIGATION_ACTION_CAPABILITIES
 from control_plane.app.modules.authorization import (
-    V02_SUPER_ADMIN_PLATFORM_CAPABILITIES,
+    SUPER_ADMIN_PLATFORM_CAPABILITIES,
     AuthorizationPrincipal,
     Scope,
     grant,
@@ -184,19 +184,19 @@ def test_super_admin_me_and_navigation_are_exact_v02_projection(
         "audit",
         "admin.workspaces",
         "admin.organization",
+        "admin.models",
         "admin.users",
         "admin.grants",
         "admin.policies",
     ]
     assert [item["routeKey"] for item in navigation.json()] == expected_route_keys
     assert {item["capability"] for item in me.json()["capabilities"]} == set(
-        V02_SUPER_ADMIN_PLATFORM_CAPABILITIES
+        SUPER_ADMIN_PLATFORM_CAPABILITIES
     )
     assert not {
         "tasks",
         "workspaces",
         "admin.skills",
-        "admin.models",
         "admin.roles",
         "admin.menus",
     } & set(expected_route_keys)

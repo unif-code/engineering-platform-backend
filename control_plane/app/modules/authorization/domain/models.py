@@ -5,10 +5,11 @@ from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 
 PLATFORM_CONFIGURATION_MANAGE = "platform.configuration.manage"
 PLATFORM_SUPER_ADMIN_MANAGE = "platform.super_admin.manage"
+PLATFORM_MODEL_MANAGE = "platform.model.manage"
 RESERVED_PLATFORM_CAPABILITIES = frozenset(
-    {PLATFORM_CONFIGURATION_MANAGE, PLATFORM_SUPER_ADMIN_MANAGE}
+    {PLATFORM_CONFIGURATION_MANAGE, PLATFORM_SUPER_ADMIN_MANAGE, PLATFORM_MODEL_MANAGE}
 )
-V02_SUPER_ADMIN_PLATFORM_CAPABILITIES = frozenset(
+SUPER_ADMIN_PLATFORM_CAPABILITIES = frozenset(
     {
         "platform.home.read",
         "platform.admin.access",
@@ -21,6 +22,8 @@ V02_SUPER_ADMIN_PLATFORM_CAPABILITIES = frozenset(
         "platform.authorization.manage",
         PLATFORM_CONFIGURATION_MANAGE,
         PLATFORM_SUPER_ADMIN_MANAGE,
+        "platform.model.read",
+        PLATFORM_MODEL_MANAGE,
     }
 )
 
@@ -63,7 +66,7 @@ class Scope(BaseModel):
         return cls(scope_type=ScopeType.WORKSPACE, scope_id=workspace_id)
 
 
-def is_v02_super_admin_platform_capability(
+def is_super_admin_platform_capability(
     capability: str,
     scope: Scope,
     *,
@@ -72,7 +75,7 @@ def is_v02_super_admin_platform_capability(
     return (
         is_super_admin
         and scope.scope_type is ScopeType.PLATFORM
-        and capability in V02_SUPER_ADMIN_PLATFORM_CAPABILITIES
+        and capability in SUPER_ADMIN_PLATFORM_CAPABILITIES
     )
 
 

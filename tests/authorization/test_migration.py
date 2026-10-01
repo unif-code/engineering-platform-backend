@@ -6,7 +6,7 @@ from alembic.config import Config
 from sqlalchemy import Engine, inspect, text
 from sqlalchemy.exc import IntegrityError, ProgrammingError
 
-from control_plane.app.modules.authorization import V02_SUPER_ADMIN_PLATFORM_CAPABILITIES
+from control_plane.app.modules.authorization import SUPER_ADMIN_PLATFORM_CAPABILITIES
 
 pytestmark = pytest.mark.integration
 
@@ -38,9 +38,7 @@ def test_authorization_0008_registers_v05_delivery_actions_without_super_admin_b
                 )
             ).scalar_one()
         assert registered == v05
-        assert {item["capability"] for item in v05}.isdisjoint(
-            V02_SUPER_ADMIN_PLATFORM_CAPABILITIES
-        )
+        assert {item["capability"] for item in v05}.isdisjoint(SUPER_ADMIN_PLATFORM_CAPABILITIES)
 
         command.downgrade(config, "0007_auth_v04_routes")
         with authorization_owner_engine.connect() as db:
@@ -78,7 +76,7 @@ def test_authorization_0007_registers_v04_workspace_actions_without_super_admin_
             ).scalar_one()
         assert registered == expected
         assert {item["capability"] for item in expected}.isdisjoint(
-            V02_SUPER_ADMIN_PLATFORM_CAPABILITIES
+            SUPER_ADMIN_PLATFORM_CAPABILITIES
         )
 
         command.downgrade(config, "0006_auth_v03_routes")
@@ -122,7 +120,7 @@ def test_authorization_0006_installs_workspace_requirement_route_without_super_a
             20,
             {"name": "Requirements", "order": 20},
         )
-        assert capabilities.isdisjoint(V02_SUPER_ADMIN_PLATFORM_CAPABILITIES)
+        assert capabilities.isdisjoint(SUPER_ADMIN_PLATFORM_CAPABILITIES)
 
         command.downgrade(config, "0005_authorization_v02_routes")
         with authorization_owner_engine.connect() as db:

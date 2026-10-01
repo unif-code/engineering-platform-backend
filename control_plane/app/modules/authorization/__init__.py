@@ -53,7 +53,7 @@ from control_plane.app.modules.authorization.domain import (
     PLATFORM_CONFIGURATION_MANAGE,
     PLATFORM_SUPER_ADMIN_MANAGE,
     RESERVED_PLATFORM_CAPABILITIES,
-    V02_SUPER_ADMIN_PLATFORM_CAPABILITIES,
+    SUPER_ADMIN_PLATFORM_CAPABILITIES,
     AuthorizationDecision,
     AuthorizationDenied,
     AuthorizationError,
@@ -70,7 +70,7 @@ from control_plane.app.modules.authorization.domain import (
     ScopedCapability,
     ScopeType,
     StaleGrantVersion,
-    is_v02_super_admin_platform_capability,
+    is_super_admin_platform_capability,
 )
 from control_plane.app.modules.authorization.domain.qualification import ActorQualificationSnapshot
 from control_plane.app.modules.authorization.ports.qualification import ActorQualificationPort
@@ -295,13 +295,13 @@ __all__ = [
     "SecurityChangeTicket",
     "ScopeType",
     "StaleGrantVersion",
-    "V02_SUPER_ADMIN_PLATFORM_CAPABILITIES",
+    "SUPER_ADMIN_PLATFORM_CAPABILITIES",
     "bump_version",
     "authorize",
     "clear_fence",
     "effective_grants",
     "grant",
-    "is_v02_super_admin_platform_capability",
+    "is_super_admin_platform_capability",
     "list_grants",
     "mark_fence",
     "principal_version",

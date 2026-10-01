@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import Engine, text
 
 from control_plane.app.modules.authorization import (
-    V02_SUPER_ADMIN_PLATFORM_CAPABILITIES,
+    SUPER_ADMIN_PLATFORM_CAPABILITIES,
     AuthorizationPrincipal,
     AuthorizationUnavailable,
     DecisionCode,
@@ -26,7 +26,7 @@ from tests.identity.test_auth_flow import _initialize_account
 
 pytestmark = pytest.mark.integration
 
-EXPECTED_V02_SUPER_ADMIN_CAPABILITIES = {
+EXPECTED_SUPER_ADMIN_CAPABILITIES = {
     "platform.home.read",
     "platform.admin.access",
     "audit.read",
@@ -38,6 +38,8 @@ EXPECTED_V02_SUPER_ADMIN_CAPABILITIES = {
     "platform.authorization.manage",
     "platform.configuration.manage",
     "platform.super_admin.manage",
+    "platform.model.read",
+    "platform.model.manage",
 }
 
 
@@ -95,6 +97,7 @@ def _initialize_current_super_admin(
     [
         "platform.configuration.manage",
         "platform.super_admin.manage",
+        "platform.model.manage",
     ],
 )
 def test_reserved_capability_ignores_ordinary_grant_in_decision_and_resource_guard(
@@ -216,13 +219,13 @@ def test_current_super_admin_fact_confers_exact_v02_platform_capabilities_withou
             decision_dependencies=decision_dependencies,
         )
     assert resolved.principal is not None
-    assert V02_SUPER_ADMIN_PLATFORM_CAPABILITIES == EXPECTED_V02_SUPER_ADMIN_CAPABILITIES
+    assert SUPER_ADMIN_PLATFORM_CAPABILITIES == EXPECTED_SUPER_ADMIN_CAPABILITIES
     assert {
         (item.capability, item.scope.scope_type.value, item.scope.scope_id)
         for item in resolved.principal.capabilities
-    } == {(capability, "PLATFORM", None) for capability in EXPECTED_V02_SUPER_ADMIN_CAPABILITIES}
+    } == {(capability, "PLATFORM", None) for capability in EXPECTED_SUPER_ADMIN_CAPABILITIES}
 
-    for capability in EXPECTED_V02_SUPER_ADMIN_CAPABILITIES:
+    for capability in EXPECTED_SUPER_ADMIN_CAPABILITIES:
         with authorization_rw_engine.begin() as db:
             decision = authorize(
                 db,
