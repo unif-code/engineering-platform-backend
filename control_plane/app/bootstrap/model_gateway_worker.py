@@ -10,7 +10,8 @@ from control_plane.app.modules.model_gateway.adapters.connections import (
     ModelConnectionSettings,
 )
 from control_plane.app.modules.model_gateway.adapters.probe import HttpxModelProbe
-from control_plane.app.modules.model_gateway.ports.checks import ProbePort
+from control_plane.app.modules.model_gateway.adapters.secrets import FileModelSecretPort
+from control_plane.app.modules.model_gateway.ports.checks import ModelSecretPort, ProbePort
 
 
 class ModelWorkerSettings(ModelConnectionSettings):
@@ -18,7 +19,7 @@ class ModelWorkerSettings(ModelConnectionSettings):
 
 
 def model_check_worker_dependencies(
-    *, probe_factory: Callable[[Path | None], ProbePort] = HttpxModelProbe
+    *, probe_factory: Callable[[ModelSecretPort], ProbePort] = HttpxModelProbe
 ) -> ModelCheckWorkerDependencies:
     settings = ModelWorkerSettings()
     return ModelCheckWorkerDependencies(
@@ -32,5 +33,5 @@ def model_check_worker_dependencies(
             control_plane.authorization_runtime_engine(),
             control_plane.authorization_dependencies(),
         ),
-        probe=probe_factory(settings.secret_reference_root),
+        probe=probe_factory(FileModelSecretPort(settings.secret_reference_root)),
     )

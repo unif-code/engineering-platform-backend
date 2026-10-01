@@ -9,10 +9,10 @@ import ssl
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from pathlib import Path
+from threading import Thread
 
 import httpx
-from pydantic import BaseModel, ConfigDict, SecretStr, TypeAdapter, ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from control_plane.app.modules.model_gateway.domain import ProviderModelId
 from control_plane.app.modules.model_gateway.domain.checks import (
@@ -26,31 +26,50 @@ from control_plane.app.modules.model_gateway.domain.connections import (
     MAX_RESPONSE_BYTES,
     PROBE_TIMEOUT_SECONDS,
     ConnectionDefinition,
-    VersionLabel,
     probe_body,
 )
-from control_plane.app.shared.security.file_references import (
-    FileSecretReferenceReader,
-    SecretReferenceUnavailable,
+from control_plane.app.modules.model_gateway.ports.checks import (
+    ModelSecretPort,
+    ProviderSecretMaterial,
 )
-
-
-class FileMaterial(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-    version: VersionLabel
-    value: SecretStr
 
 
 @dataclass(frozen=True)
 class PreparedProbe:
     hostname: str
     address: str
-    material: FileMaterial
+    material: ProviderSecretMaterial
 
 
 async def public_addresses(hostname: str) -> tuple[str, ...]:
-    rows = await asyncio.get_running_loop().getaddrinfo(hostname, 443, type=socket.SOCK_STREAM)
-    return tuple(sorted({str(row[4][0]) for row in rows}))
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[tuple[str, ...]] = loop.create_future()
+    system_resolver = socket.getaddrinfo
+
+    def resolve() -> None:
+        addresses: tuple[str, ...] | None
+        try:
+            rows = system_resolver(hostname, 443, type=socket.SOCK_STREAM)
+            addresses = tuple(sorted({str(row[4][0]) for row in rows}))
+        except OSError:
+            addresses = None
+
+        def complete() -> None:
+            if future.done():
+                return
+            if addresses is None:
+                future.set_exception(OSError("DNS resolution unavailable"))
+            else:
+                future.set_result(addresses)
+
+        try:
+            loop.call_soon_threadsafe(complete)
+        except RuntimeError:
+            pass  # The timed-out caller has closed its loop; never initiate HTTP here.
+
+    # The OS resolver cannot be cancelled; it must not hold up timeout or process shutdown.
+    Thread(target=resolve, daemon=True).start()
+    return await future
 
 
 def _safe_identifier(value: object) -> str:
@@ -124,23 +143,20 @@ def parse_response(raw: bytes, requested_model: str) -> ProbeOutcome:
 class HttpxModelProbe:
     def __init__(
         self,
-        secret_root: Path | None,
+        secrets: ModelSecretPort,
         *,
         transport: httpx.AsyncBaseTransport | None = None,
         resolver: Callable[[str], Awaitable[tuple[str, ...]]] = public_addresses,
     ) -> None:
-        self.secret_root, self.transport, self.resolver = secret_root, transport, resolver
+        self.secrets, self.transport, self.resolver = secrets, transport, resolver
 
-    def _material(self, connection: ConnectionDefinition) -> FileMaterial:
+    def _material(self, connection: ConnectionDefinition) -> ProviderSecretMaterial:
         try:
-            if self.secret_root is None:
-                raise ValueError
-            raw = FileSecretReferenceReader(self.secret_root).resolve(connection.secret_ref)
-            material = FileMaterial.model_validate_json(raw)
+            material = self.secrets.resolve(connection.secret_ref)
             if re.fullmatch(r"[A-Za-z0-9._/-]{8,8192}", material.value.get_secret_value()) is None:
                 raise ValueError
             return material
-        except (SecretReferenceUnavailable, ValueError, ValidationError):
+        except (ValueError, ValidationError):
             raise CheckBlocked(CheckReason.MATERIAL_UNAVAILABLE) from None
 
     def material_version(self, connection: ConnectionDefinition) -> str:

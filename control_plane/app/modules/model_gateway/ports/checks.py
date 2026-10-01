@@ -1,9 +1,14 @@
 from datetime import datetime
 from typing import Any, Protocol
 
+from pydantic import BaseModel, ConfigDict, SecretStr
+
 from control_plane.app.modules.model_gateway.domain import Deployment
 from control_plane.app.modules.model_gateway.domain.checks import ConnectionCheck, ProbeOutcome
-from control_plane.app.modules.model_gateway.domain.connections import ConnectionDefinition
+from control_plane.app.modules.model_gateway.domain.connections import (
+    ConnectionDefinition,
+    VersionLabel,
+)
 from control_plane.app.shared.idempotency import IdempotencyRepository
 
 
@@ -35,3 +40,13 @@ class ProbePort(Protocol):
     def prepare(self, connection: ConnectionDefinition) -> Any: ...
     def send(self, prepared: Any, model_id: str) -> ProbeOutcome: ...
     def material_version(self, connection: ConnectionDefinition) -> str: ...
+
+
+class ProviderSecretMaterial(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    version: VersionLabel
+    value: SecretStr
+
+
+class ModelSecretPort(Protocol):
+    def resolve(self, reference: str) -> ProviderSecretMaterial: ...

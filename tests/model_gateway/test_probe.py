@@ -10,6 +10,7 @@ from control_plane.app.modules.model_gateway.adapters.connections import (
     ModelConnectionSettings,
 )
 from control_plane.app.modules.model_gateway.adapters.probe import HttpxModelProbe
+from control_plane.app.modules.model_gateway.adapters.secrets import FileModelSecretPort
 from control_plane.app.modules.model_gateway.domain.checks import (
     CheckBlocked,
     CheckReason,
@@ -80,7 +81,9 @@ def test_single_send_uses_pinned_public_ip_original_sni_fixed_probe_and_optional
         assert request.headers["authorization"] == "Bearer synthetic-only-secret"
         return response()
 
-    probe = HttpxModelProbe(tmp_path, transport=httpx.MockTransport(handler), resolver=public_dns)
+    probe = HttpxModelProbe(
+        FileModelSecretPort(tmp_path), transport=httpx.MockTransport(handler), resolver=public_dns
+    )
     prepared = probe.prepare(ConnectionDefinition.model_validate(CONNECTION))
     result = probe.send(prepared, "synthetic-model")
     assert result.state is CheckState.SUCCEEDED and result.usage is None
@@ -135,7 +138,9 @@ def test_protocol_failures_are_bounded_sanitized_and_never_retried(
         calls.append(request)
         return response(body, status=status, headers=headers)
 
-    probe = HttpxModelProbe(tmp_path, transport=httpx.MockTransport(handler), resolver=public_dns)
+    probe = HttpxModelProbe(
+        FileModelSecretPort(tmp_path), transport=httpx.MockTransport(handler), resolver=public_dns
+    )
     result = probe.send(
         probe.prepare(ConnectionDefinition.model_validate(CONNECTION)), "synthetic-model"
     )
@@ -158,7 +163,9 @@ def test_send_timeout_is_unknown_and_usage_is_preserved_without_inventing_zero(
     monkeypatch.setattr(
         "control_plane.app.modules.model_gateway.adapters.probe.PROBE_TIMEOUT_SECONDS", 0.01
     )
-    probe = HttpxModelProbe(tmp_path, transport=httpx.MockTransport(handler), resolver=public_dns)
+    probe = HttpxModelProbe(
+        FileModelSecretPort(tmp_path), transport=httpx.MockTransport(handler), resolver=public_dns
+    )
     result = probe.send(
         probe.prepare(ConnectionDefinition.model_validate(CONNECTION)), "synthetic-model"
     )
@@ -185,7 +192,7 @@ def test_private_or_unproven_targets_cannot_reach_send(
         return addresses
 
     with pytest.raises(CheckBlocked) as error:
-        HttpxModelProbe(tmp_path, resolver=dns).prepare(
+        HttpxModelProbe(FileModelSecretPort(tmp_path), resolver=dns).prepare(
             ConnectionDefinition.model_validate(CONNECTION)
         )
     assert error.value.reason is CheckReason.TARGET_NOT_ALLOWED
@@ -194,11 +201,11 @@ def test_private_or_unproven_targets_cannot_reach_send(
 def test_material_version_and_manifest_admission_fail_closed(tmp_path: Path) -> None:
     connection = ConnectionDefinition.model_validate(CONNECTION)
     with pytest.raises(CheckBlocked) as error:
-        HttpxModelProbe(tmp_path, resolver=public_dns).prepare(connection)
+        HttpxModelProbe(FileModelSecretPort(tmp_path), resolver=public_dns).prepare(connection)
     assert error.value.reason is CheckReason.MATERIAL_UNAVAILABLE
     material(tmp_path, "material-2")
     with pytest.raises(CheckBlocked) as error:
-        HttpxModelProbe(tmp_path, resolver=public_dns).prepare(connection)
+        HttpxModelProbe(FileModelSecretPort(tmp_path), resolver=public_dns).prepare(connection)
     assert error.value.reason is CheckReason.MATERIAL_VERSION_CHANGED
     manifest = tmp_path / "connections.json"
     manifest.write_text(json.dumps({"environment": "TEST", "connections": [CONNECTION]}))
@@ -214,7 +221,7 @@ def test_material_version_and_manifest_admission_fail_closed(tmp_path: Path) -> 
 def test_provider_cannot_echo_material_in_otherwise_valid_metadata(tmp_path: Path) -> None:
     material(tmp_path)
     probe = HttpxModelProbe(
-        tmp_path,
+        FileModelSecretPort(tmp_path),
         resolver=public_dns,
         transport=httpx.MockTransport(
             lambda request: response(RESPONSE | {"id": "chatcmpl-synthetic-only-secret"})
@@ -225,3 +232,47 @@ def test_provider_cannot_echo_material_in_otherwise_valid_metadata(tmp_path: Pat
     )
     assert result.state is CheckState.FAILED and result.reason is CheckReason.INVALID_RESPONSE
     assert "synthetic-only-secret" not in result.model_dump_json()
+
+
+def test_dns_timeout_does_not_wait_for_the_blocked_system_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import socket
+    import time
+    from threading import Event
+
+    from control_plane.app.modules.model_gateway.adapters.probe import public_addresses
+
+    release = Event()
+
+    def slow_dns(*args: object, **kwargs: object) -> list[object]:
+        release.wait(2)
+        return []
+
+    monkeypatch.setattr(socket, "getaddrinfo", slow_dns)
+    started = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError):
+            asyncio.run(asyncio.wait_for(public_addresses("synthetic.invalid"), timeout=0.02))
+        assert time.monotonic() - started < 1
+    finally:
+        release.set()
+
+
+def test_probe_gets_versioned_material_only_through_the_injected_secret_port() -> None:
+    from unittest.mock import Mock
+
+    from pydantic import SecretStr
+
+    from control_plane.app.modules.model_gateway.ports.checks import ProviderSecretMaterial
+
+    secrets = Mock(spec=["resolve"])
+    secrets.resolve.return_value = ProviderSecretMaterial(
+        version="material-1", value=SecretStr("synthetic-only-secret")
+    )
+    probe = HttpxModelProbe(secrets, resolver=public_dns)
+    connection = ConnectionDefinition.model_validate(CONNECTION)
+    prepared = probe.prepare(connection)
+    secrets.resolve.assert_called_once_with("secret-ref:trial-key")
+    assert prepared.material.version == "material-1"
+    assert "synthetic-only-secret" not in repr(prepared)
