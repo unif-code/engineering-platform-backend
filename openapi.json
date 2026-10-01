@@ -1380,7 +1380,7 @@
         "type": "object"
       },
       "ConnectionCheckDto": {
-        "description": "SUCCEEDED proves one basic text response only.\n\nIt never activates or fully verifies a candidate.\n\nUNKNOWN may have executed and incurred Provider charges; never automatically resubmit.\ncurrentness is recomputed from the current candidate and non-secret connection/probe versions.",
+        "description": "SUCCEEDED has a kind-specific, limited meaning.\n\nBASIC_TEXT proves one complete basic text response. STREAM_TEXT proves valid text\nincrements, normal completion and the final completion marker. STREAM_STOP proves\ntext was observed and the local response stream/client were closed; Provider-side\ncancellation and stopped billing remain unconfirmed. No kind activates or fully\nverifies a candidate.\n\nUNKNOWN may have executed and incurred Provider charges; never automatically resubmit.\ncurrentness is recomputed from the current candidate and non-secret connection/probe versions.",
         "properties": {
           "attempt": {
             "title": "Attempt",

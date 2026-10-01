@@ -120,9 +120,13 @@ CheckObservationDto = Annotated[
 
 
 class ConnectionCheckDto(CamelModel):
-    """SUCCEEDED proves one basic text response only.
+    """SUCCEEDED has a kind-specific, limited meaning.
 
-    It never activates or fully verifies a candidate.
+    BASIC_TEXT proves one complete basic text response. STREAM_TEXT proves valid text
+    increments, normal completion and the final completion marker. STREAM_STOP proves
+    text was observed and the local response stream/client were closed; Provider-side
+    cancellation and stopped billing remain unconfirmed. No kind activates or fully
+    verifies a candidate.
 
     UNKNOWN may have executed and incurred Provider charges; never automatically resubmit.
     currentness is recomputed from the current candidate and non-secret connection/probe versions.
