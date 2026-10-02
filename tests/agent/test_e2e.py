@@ -384,6 +384,9 @@ def test_http_postgres_attempt_interrupt_authorize_resume_and_finish(e2e: AgentE
     assert e2e.member.get("/api/v1/agent-definitions").status_code == 200
     started = e2e.start()
     assert started.json()["run"]["createdBy"] == "00000002"
+    source = started.json()["run"]["businessContext"]
+    assert source["requirementId"] == e2e.requirement_id
+    assert source["workItemId"] == e2e.work_item_id
     assert started.json()["run"]["goalRef"] == (
         f"requirement:{e2e.requirement_id}:work-item:{e2e.work_item_id}"
     )
@@ -425,6 +428,7 @@ def test_http_postgres_attempt_interrupt_authorize_resume_and_finish(e2e: AgentE
     finished = e2e.member.get(f"/api/v1/agent-runs/{started.json()['run']['id']}")
     assert finished.status_code == 200
     assert finished.json()["run"]["state"] == "SUCCEEDED"
+    assert finished.json()["run"]["businessContext"] == source
     assert finished.json()["attempts"][0]["state"] == "SUCCEEDED"
     final_facts = e2e.facts()
     assert [row["state"] for row in final_facts["workflow_command"]] == ["DISPATCHED", "DISPATCHED"]

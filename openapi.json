@@ -621,6 +621,33 @@
         "title": "AgentPushState",
         "type": "string"
       },
+      "AgentRunBusinessContextResponseDto": {
+        "additionalProperties": false,
+        "properties": {
+          "assignmentId": {
+            "format": "uuid",
+            "title": "Assignmentid",
+            "type": "string"
+          },
+          "requirementId": {
+            "format": "uuid",
+            "title": "Requirementid",
+            "type": "string"
+          },
+          "workItemId": {
+            "format": "uuid",
+            "title": "Workitemid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "requirementId",
+          "workItemId",
+          "assignmentId"
+        ],
+        "title": "AgentRunBusinessContextResponseDto",
+        "type": "object"
+      },
       "AgentRunDetailsResponseDto": {
         "additionalProperties": false,
         "properties": {
@@ -706,6 +733,16 @@
       "AgentRunResponseDto": {
         "additionalProperties": false,
         "properties": {
+          "businessContext": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentRunBusinessContextResponseDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "createdAt": {
             "format": "date-time",
             "title": "Createdat",
@@ -765,6 +802,7 @@
         "required": [
           "id",
           "workspaceId",
+          "businessContext",
           "goalRef",
           "createdBy",
           "definitionId",
@@ -7937,7 +7975,7 @@
   "info": {
     "description": "内部研发平台 Control Plane API。\n\n全局约定：JSON 一律 camelCase；ID 一律 string；错误统一 application/problem+json（RFC 9457）；\n分页 cursor 型 {items, nextCursor}；写并发 If-Match/ETag；变更命令 Idempotency-Key——\n后三者自 V0.2 首个真实接口起强制执行。",
     "title": "engineering-platform-control-plane",
-    "version": "1.5.0"
+    "version": "1.6.0"
   },
   "openapi": "3.1.0",
   "paths": {

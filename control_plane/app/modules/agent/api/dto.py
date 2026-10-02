@@ -92,9 +92,16 @@ class AgentDefinitionListResponseDto(StrictResponseCamelModel):
         return cls(items=[AgentDefinitionResponseDto.from_domain(item) for item in definitions])
 
 
+class AgentRunBusinessContextResponseDto(StrictResponseCamelModel):
+    requirement_id: UUID
+    work_item_id: UUID
+    assignment_id: UUID
+
+
 class AgentRunResponseDto(StrictResponseCamelModel):
     id: UUID
     workspace_id: UUID
+    business_context: AgentRunBusinessContextResponseDto | None
     goal_ref: PublicReference
     created_by: PublicReference
     definition_id: UUID
@@ -107,9 +114,19 @@ class AgentRunResponseDto(StrictResponseCamelModel):
 
     @classmethod
     def from_domain(cls, run: AgentRun) -> "AgentRunResponseDto":
+        source = run.business_context
         return cls(
             id=UUID(run.id),
             workspace_id=UUID(run.workspace_id),
+            business_context=(
+                AgentRunBusinessContextResponseDto(
+                    requirement_id=UUID(source.requirement_id),
+                    work_item_id=UUID(source.work_item_id),
+                    assignment_id=UUID(source.assignment_id),
+                )
+                if source is not None
+                else None
+            ),
             goal_ref=run.goal_ref,
             created_by=run.created_by,
             definition_id=UUID(run.definition_id),

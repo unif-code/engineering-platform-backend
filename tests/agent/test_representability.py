@@ -97,6 +97,14 @@ def test_all_projected_uuid_fields_reject_non_uuid(
             type(model).model_validate({**model.model_dump(), field: "not-a-uuid"})
 
 
+@pytest.mark.parametrize("field", ["requirementId", "workItemId", "assignmentId"])
+def test_public_business_source_rejects_non_uuid_identities(field: str) -> None:
+    value = AgentRunResponseDto.from_domain(RUN).model_dump(mode="json", by_alias=True)
+    value["businessContext"][field] = "not-a-uuid"
+    with pytest.raises(ValidationError):
+        AgentRunResponseDto.model_validate(value)
+
+
 @pytest.mark.parametrize(
     "model,fields",
     [

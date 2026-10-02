@@ -1097,6 +1097,8 @@ def test_mismatched_requirement_context_returns_typed_invalid_input(
         {"goal": ""},
         {"goal": "x" * 10_001},
         {"unknown": "EXTRA_SECRET_SENTINEL"},
+        {"assignmentId": "00000000-0000-0000-0000-000000009901"},
+        {"businessContext": {"assignmentId": "00000000-0000-0000-0000-000000009901"}},
     ],
 )
 def test_start_rejects_invalid_bounded_inputs_without_sensitive_echo(
