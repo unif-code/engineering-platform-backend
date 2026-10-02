@@ -90,7 +90,7 @@ def test_fresh_upgrade_installs_independent_heads_and_deterministic_seed(
                 )
             ).one()
         assert expected_heads == {
-            "0005_model_search_sources",
+            "0006_model_validation_dossiers",
             "0003_agent_run_recovery",
             "0010_audit_model_worker_grant",
             "0011_identity_reauth_consumption",
@@ -102,7 +102,7 @@ def test_fresh_upgrade_installs_independent_heads_and_deterministic_seed(
             "0011_sc_delivery_join",
         }
         assert installed_heads == {
-            "0005_model_search_sources",
+            "0006_model_validation_dossiers",
             "0003_agent_run_recovery",
             "0010_audit_model_worker_grant",
             "0011_identity_reauth_consumption",

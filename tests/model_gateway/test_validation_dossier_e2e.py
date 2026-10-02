@@ -312,7 +312,7 @@ def test_dossiers_bind_failed_unknown_and_blocked_checks_truthfully(
             def provider(request: httpx.Request, result_state: str = state) -> httpx.Response:
                 if result_state == "UNKNOWN":
                     raise httpx.ReadError("synthetic interrupted response", request=request)
-                return httpx.Response(200, json={"invalid": True})
+                return response({"invalid": True})
 
             process_connection_check(receipt["id"], dependencies=worker(provider))
         check = journey.admin.get(f"{check_path}/{receipt['id']}").json()
