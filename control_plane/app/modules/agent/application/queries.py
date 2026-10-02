@@ -1,7 +1,7 @@
 import base64
 import binascii
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
@@ -97,8 +97,9 @@ def list_runs(
             before_at = datetime.fromisoformat(values[3])
             if before_at.tzinfo is None:
                 raise ValueError
+            before_at = before_at.astimezone(UTC)
             before_id = str(UUID(values[4]))
-        except (ValueError, TypeError, binascii.Error):
+        except (ValueError, TypeError, OverflowError, binascii.Error):
             raise InvalidRunCursor("invalid Workspace/state Run cursor") from None
 
     def operation(uow: AgentUnitOfWork) -> AgentRunPage:

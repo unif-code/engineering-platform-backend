@@ -677,6 +677,7 @@ def test_agent_openapi_declares_exact_operations_cookie_security_and_problem_con
     operations = {
         ("/api/v1/agent-definitions", "get"): "agent_definitions_list",
         ("/api/v1/agent-runs", "post"): "agent_runs_start",
+        ("/api/v1/agent-runs", "get"): "agent_runs_list",
         ("/api/v1/agent-runs/{runId}", "get"): "agent_runs_get",
         ("/api/v1/agent-runs/{runId}/events", "get"): "agent_run_events_list",
         (

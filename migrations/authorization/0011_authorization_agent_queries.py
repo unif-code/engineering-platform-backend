@@ -1,0 +1,48 @@
+"""Register Workspace-scoped Agent run reading without granting execution or other authority."""
+
+from alembic import op
+
+revision = "0011_auth_agent_queries"
+down_revision = "0010_auth_model_catalog"
+branch_labels = None
+depends_on = None
+
+_VALUES = """
+    ('agent-runs','agent.run.read','WORKSPACE',21,
+        jsonb_build_object('name','Agent 运行记录','order',21))
+"""
+
+
+def upgrade() -> None:
+    op.execute(f"""
+        DO $migration$
+        DECLARE conflict_key TEXT;
+        BEGIN
+            SELECT actual.route_key INTO conflict_key
+            FROM "authorization".route_registry AS actual
+            JOIN (VALUES {_VALUES}) AS desired (route_key,capability,scope_type,sort,meta)
+                ON desired.route_key=actual.route_key
+            WHERE (actual.capability,actual.scope_type,actual.sort,actual.meta)
+                IS DISTINCT FROM (desired.capability,desired.scope_type,desired.sort,desired.meta)
+            LIMIT 1;
+            IF conflict_key IS NOT NULL THEN
+                RAISE EXCEPTION 'conflicting managed route: %', conflict_key;
+            END IF;
+        END
+        $migration$
+    """)
+    op.execute(f"""
+        INSERT INTO "authorization".route_registry (route_key,capability,scope_type,sort,meta)
+        VALUES {_VALUES} ON CONFLICT (route_key) DO NOTHING
+    """)
+
+
+def downgrade() -> None:
+    op.execute(f"""
+        DELETE FROM "authorization".route_registry AS actual
+        USING (VALUES {_VALUES}) AS desired (route_key,capability,scope_type,sort,meta)
+        WHERE actual.route_key=desired.route_key AND
+            (actual.capability,actual.scope_type,actual.sort,actual.meta)
+            IS NOT DISTINCT FROM
+            (desired.capability,desired.scope_type,desired.sort,desired.meta)
+    """)

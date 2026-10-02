@@ -107,6 +107,8 @@ def test_run_page_forwards_workspace_filter_and_bounded_seek_without_loading_det
         [1, RUN.workspace_id, None, NOW.isoformat(), True],
         [True, RUN.workspace_id, None, NOW.isoformat(), RUN.id],
         [1, RUN.workspace_id, None, "2026-10-02", RUN.id],
+        [1, RUN.workspace_id, None, "0001-01-01T00:00:00+08:00", RUN.id],
+        [1, RUN.workspace_id, None, "9999-12-31T23:59:59-08:00", RUN.id],
         [1, RUN.workspace_id, None, NOW.isoformat(), "invalid"],
         [1, RUN.workspace_id, "INVALID", NOW.isoformat(), RUN.id],
     ],

@@ -279,7 +279,7 @@ def test_current_alembic_heads_are_installed(identity_owner_engine: Engine) -> N
         "0009_req_formal_owner_denial",
         "0010_audit_model_worker_grant",
         "0011_identity_reauth_consumption",
-        "0010_auth_model_catalog",
+        "0011_auth_agent_queries",
         "0003_event_acceptance_receipt",
         "0011_sc_delivery_join",
     }

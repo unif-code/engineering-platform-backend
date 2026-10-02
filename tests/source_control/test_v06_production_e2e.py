@@ -58,6 +58,8 @@ def _clear_composition() -> None:
         "workspace_http_runtime",
         "configuration_http_runtime",
         "model_gateway_http_runtime",
+        "agent_dependencies",
+        "agent_http_runtime",
         "requirement_http_runtime",
         "source_control_query_runtime",
         "security_change_orchestrator",
@@ -116,6 +118,7 @@ def production_database(
                     "source_control",
                     "model_gateway",
                     "model_gateway_worker",
+                    "agent",
                 )
             }
             for name, factory in {
@@ -128,6 +131,7 @@ def production_database(
                 "source_control": "source_control_query_runtime_engine",
                 "model_gateway": "model_gateway_runtime_engine",
                 "model_gateway_worker": "model_gateway_worker_runtime_engine",
+                "agent": "agent_runtime_engine",
             }.items():
                 monkeypatch.setattr(bootstrap, factory, lambda name=name: engines[name])
             _clear_composition()

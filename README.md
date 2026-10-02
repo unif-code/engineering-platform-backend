@@ -141,6 +141,18 @@ relativePath 和 copySha256；规范化引用与外部版本必须唯一，不�
 核对记录只追加，详情每次实际重测来源以识别同版本、同大小/mtime 的内容替换。当前性、材料期限
 与历史核对结果独立；目录版本、文件存在或摘要相等都不证明来源权威、语义真实性或模型可激活。
 
+### Agent 运行只读查询
+
+`GET /api/v1/agent-runs` 要求显式 workspaceId 和该 Workspace 的 `agent.run.read`，支持
+RunState 筛选、opaque cursor 和 1–100 的 limit（默认 50）。列表按 createdAt/id 倒序，
+每项一次读取 Run、其实际 latestAttempt 与匹配的 Binding 摘要；来源缺失或不一致返回不可用，
+不补造 DEV_FAKE。导航 `agent-runs` 只登记该读能力，不授予 Grant 或执行权限。
+
+既有详情和事件接口按 Run 的实际 Workspace 鉴权。事件按 Attempt number、generation、sequence、
+eventId 升序作数据库有界取页，保留既有 Run/eventId opaque cursor；读取不产生新事件或推进运行。
+DEV_FAKE 是开发模拟记录，CONFIGURATION 仅表示配置绑定，两者均不单独证明真实 Runner/Provider
+执行。详情 ETag 仍为最新 Attempt revision，不能当作整个聚合的永久版本。
+
 ### Source Control worker
 
 API 默认提供 V0.6 Artifact、Acceptance 与 Formal Delivery 路由。worker 与 Connector 共用生产运行时，

@@ -5,12 +5,17 @@ from uuid import UUID
 from pydantic import ConfigDict, Field
 
 from control_plane.app.modules.agent.application.control import AttemptControlResult
-from control_plane.app.modules.agent.application.queries import AgentRunView, CanonicalEventPage
+from control_plane.app.modules.agent.application.queries import (
+    AgentRunPage,
+    AgentRunView,
+    CanonicalEventPage,
+)
 from control_plane.app.modules.agent.application.runs import StartRunResult
 from control_plane.app.modules.agent.domain import (
     AgentAttempt,
     AgentDefinition,
     AgentRun,
+    AgentRunListItem,
     AttemptState,
     CanonicalEventInput,
     CheckpointInput,
@@ -210,6 +215,39 @@ class AgentRunDetailsResponseDto(StrictResponseCamelModel):
             bindings=[
                 ExecutionBindingSummaryResponseDto.from_domain(item) for item in view.bindings
             ],
+        )
+
+
+class AgentRunListItemResponseDto(StrictResponseCamelModel):
+    """Actual persisted latest execution association, not a runtime-health claim.
+
+    DEV_FAKE is a development simulation; CONFIGURATION only identifies the binding source.
+    """
+
+    run: AgentRunResponseDto
+    latest_attempt: AgentAttemptResponseDto
+    binding: ExecutionBindingSummaryResponseDto
+
+    @classmethod
+    def from_domain(cls, value: AgentRunListItem) -> "AgentRunListItemResponseDto":
+        return cls(
+            run=AgentRunResponseDto.from_domain(value.run),
+            latest_attempt=AgentAttemptResponseDto.from_domain(value.latest_attempt),
+            binding=ExecutionBindingSummaryResponseDto.from_domain(value.binding),
+        )
+
+
+class AgentRunListResponseDto(StrictResponseCamelModel):
+    """Workspace/state-scoped, descending createdAt/id page. No execution side effects."""
+
+    items: list[AgentRunListItemResponseDto]
+    next_cursor: str | None = Field(max_length=2048)
+
+    @classmethod
+    def from_domain(cls, page: AgentRunPage) -> "AgentRunListResponseDto":
+        return cls(
+            items=[AgentRunListItemResponseDto.from_domain(value) for value in page.items],
+            next_cursor=page.next_cursor,
         )
 
 

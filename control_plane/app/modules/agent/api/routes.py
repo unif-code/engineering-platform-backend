@@ -11,14 +11,17 @@ from sqlalchemy.exc import SQLAlchemyError
 from control_plane.app.modules.agent import (
     cancel_attempt,
     get_run,
+    get_run_metadata,
     list_definitions,
     list_events,
+    list_runs,
     resume_attempt,
     start_run,
 )
 from control_plane.app.modules.agent.api.dto import (
     AgentDefinitionListResponseDto,
     AgentRunDetailsResponseDto,
+    AgentRunListResponseDto,
     AttemptControlRequestDto,
     AttemptControlResponseDto,
     CanonicalEventPageResponseDto,
@@ -46,6 +49,8 @@ from control_plane.app.modules.agent.application.queries import (
     AgentRunNotFound,
     InvalidEventCursor,
     InvalidEventPageLimit,
+    InvalidRunCursor,
+    InvalidRunPageLimit,
 )
 from control_plane.app.modules.agent.application.runs import (
     DefinitionUnavailable,
@@ -53,7 +58,12 @@ from control_plane.app.modules.agent.application.runs import (
     IdempotencyInProgress,
     StartRunCommand,
 )
-from control_plane.app.modules.agent.domain import AgentDomainError, RepositoryWriteForbidden
+from control_plane.app.modules.agent.domain import (
+    AgentDomainError,
+    AgentQueryUnavailable,
+    RepositoryWriteForbidden,
+    RunState,
+)
 from control_plane.app.modules.requirement import (
     RequirementDependencyUnavailable,
     RequirementNotFound,
@@ -138,7 +148,11 @@ def _problem(error: Exception) -> Response:
         return problem_response(404, "Agent subject not found")
     if isinstance(error, InvalidEventCursor):
         return problem_response(422, "Invalid Agent event cursor")
-    if isinstance(error, (InvalidEventPageLimit, InvalidRequirementExecutionContext)):
+    if isinstance(error, InvalidRunCursor):
+        return problem_response(422, "Invalid Agent Run cursor")
+    if isinstance(
+        error, (InvalidEventPageLimit, InvalidRunPageLimit, InvalidRequirementExecutionContext)
+    ):
         return problem_response(422, "Invalid Agent input")
     if isinstance(
         error,
@@ -164,6 +178,7 @@ def _problem(error: Exception) -> Response:
             SecretMaterialUnavailable,
             AgentReplayUnavailable,
             EventReplayUnavailable,
+            AgentQueryUnavailable,
         ),
     ):
         return problem_response(503, "Agent service unavailable")
@@ -202,6 +217,36 @@ def create_agent_router(
     capability_guard: Callable[[Any, str, str | None], None],
 ) -> APIRouter:
     router = APIRouter(tags=["agent"])
+
+    @router.get(
+        "/api/v1/agent-runs",
+        operation_id="agent_runs_list",
+        response_model=AgentRunListResponseDto,
+        responses=_RESPONSES,
+    )
+    def agent_runs_list(
+        workspace_id: Annotated[UUID, Query(alias="workspaceId")],
+        principal: Annotated[Any, Depends(principal_provider)],
+        state: Annotated[RunState | None, Query()] = None,
+        cursor: Annotated[str | None, Query(min_length=1, max_length=2048)] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    ) -> Response:
+        capability_guard(principal, AGENT_RUN_READ_CAPABILITY, str(workspace_id))
+        try:
+            page = list_runs(
+                None,
+                workspace_id=str(workspace_id),
+                state=state,
+                cursor=cursor,
+                limit=limit,
+                dependencies=runtime_provider().dependencies,
+            )
+            return JSONResponse(
+                json_content(AgentRunListResponseDto.from_domain(page)),
+                headers={"Cache-Control": "no-store"},
+            )
+        except Exception as error:
+            return _problem(error)
 
     @router.get(
         "/api/v1/agent-definitions",
@@ -306,10 +351,10 @@ def create_agent_router(
     ) -> Response | CanonicalEventPageResponseDto:
         try:
             runtime = runtime_provider()
-            view = get_run(None, run_id=str(run_id), dependencies=runtime.dependencies)
+            run = get_run_metadata(None, run_id=str(run_id), dependencies=runtime.dependencies)
         except Exception as error:
             return _problem(error)
-        capability_guard(principal, AGENT_RUN_READ_CAPABILITY, view.run.workspace_id)
+        capability_guard(principal, AGENT_RUN_READ_CAPABILITY, run.workspace_id)
         try:
             page = list_events(
                 None,
