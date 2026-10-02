@@ -1,4 +1,5 @@
 from dataclasses import replace
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 from uuid import UUID, uuid4
@@ -12,6 +13,10 @@ from control_plane.app.modules.agent import accept_workflow_event
 from control_plane.app.modules.agent.adapters.requirement import RequirementFacadeExecutionContext
 from control_plane.app.modules.agent.adapters.sqlalchemy import SqlAlchemyAgentRepository
 from control_plane.app.modules.agent.api.dto import AgentRunResponseDto
+from control_plane.app.modules.requirement import (
+    acknowledge_repository_binding_request,
+    claim_repository_binding_requests,
+)
 from tests.agent.test_events import event
 from tests.agent.test_repository import DEFINITION, RUN, insert_predecessor_run
 from tests.agent.test_run_queries import seed_run
@@ -141,6 +146,25 @@ def test_default_session_real_requirement_source_survives_reassignment_and_repla
         run_id = started.json()["run"]["id"]
         assert started.json()["run"]["businessContext"] == source
         assert started.json()["run"]["workspaceId"] == journey.workspace_id
+        # Controlled workflow acceptance makes reassignment legal without executing repositories.
+        requirement_dependencies = bootstrap.requirement_dependencies()
+        now = requirement_dependencies.clock.now()
+        with journey.database.engines["requirement"].begin() as db:
+            messages = claim_repository_binding_requests(
+                db,
+                limit=1,
+                available_before=now,
+                lease_until=now + timedelta(minutes=1),
+                dependencies=requirement_dependencies,
+            )
+            assert len(messages) == 1 and messages[0].requirement_id == source["requirementId"]
+            prepared = acknowledge_repository_binding_request(
+                db,
+                message_id=messages[0].message_id,
+                consumer="SOURCE_CONTROL",
+                dependencies=requirement_dependencies,
+            )
+            assert prepared.state.value == "PREPARING"
         details = journey.member.get(f"/api/v1/requirements/{source['requirementId']}").json()
         assert details["workItemAssignments"][0]["id"] == source["assignmentId"]
         work = next(item for item in details["workItems"] if item["id"] == source["workItemId"])
