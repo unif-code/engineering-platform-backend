@@ -236,7 +236,6 @@ def prepare_finalizing(
             event_id=str(uuid4()),
             event_type="ATTEMPT_FINALIZING",
             sequence=4,
-            data={"evidenceRef": "artifact:already-recorded"},
         ),
         dependencies=deps,
     )
@@ -251,6 +250,12 @@ def test_finalizing_cancel_and_completion_obey_the_first_locked_transition(
     database = isolated_agent_database
     deps, started, finalizing = prepare_finalizing(database)
     before = persisted_control_state(database, finalizing.id)
+    evidence_query = text(
+        "SELECT to_jsonb(e) FROM agent.canonical_event e "
+        "WHERE attempt_id=CAST(:id AS UUID) AND event_type='ATTEMPT_FINALIZING'"
+    )
+    with database.owner.connect() as db:
+        original_evidence = db.execute(evidence_query, {"id": finalizing.id}).scalar_one()
     cancel_runner = ObservedTransactionRunner(database, pause_after_run_lock=cancel_wins)
     event_runner = ObservedTransactionRunner(database, pause_after_run_lock=not cancel_wins)
     cancel_results: list[AttemptControlResult] = []
@@ -344,14 +349,8 @@ def test_finalizing_cancel_and_completion_obey_the_first_locked_transition(
         assert current.state.value == run.state.value == terminal
         assert cancel_commands == []
     with database.owner.connect() as db:
-        evidence = db.execute(
-            text(
-                "SELECT data FROM agent.canonical_event WHERE attempt_id=CAST(:id AS UUID) "
-                "AND event_type='ATTEMPT_FINALIZING'"
-            ),
-            {"id": finalizing.id},
-        ).scalar_one()
-    assert evidence == {"evidenceRef": "artifact:already-recorded"}
+        evidence = db.execute(evidence_query, {"id": finalizing.id}).scalar_one()
+    assert evidence == original_evidence
 
 
 @pytest.mark.parametrize(
