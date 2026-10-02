@@ -7,9 +7,11 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Res
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from control_plane.app.modules.agent import (
     cancel_attempt,
+    get_business_context_status,
     get_run,
     get_run_metadata,
     list_definitions,
@@ -20,6 +22,7 @@ from control_plane.app.modules.agent import (
 )
 from control_plane.app.modules.agent.api.dto import (
     AgentDefinitionListResponseDto,
+    AgentRunBusinessContextStatusResponseDto,
     AgentRunDetailsResponseDto,
     AgentRunListResponseDto,
     AttemptControlRequestDto,
@@ -42,10 +45,15 @@ from control_plane.app.modules.agent.application.control import (
     ResumeAttemptCommand,
 )
 from control_plane.app.modules.agent.application.dependencies import AgentDependencies
-from control_plane.app.modules.agent.application.errors import InvalidRequirementExecutionContext
+from control_plane.app.modules.agent.application.errors import (
+    AgentBusinessContextReason,
+    InvalidRequirementExecutionContext,
+)
 from control_plane.app.modules.agent.application.events import EventReplayUnavailable
 from control_plane.app.modules.agent.application.idempotency import AgentReplayUnavailable
 from control_plane.app.modules.agent.application.queries import (
+    AgentBusinessContextCurrentness,
+    AgentRunBusinessContextStatus,
     AgentRunNotFound,
     InvalidEventCursor,
     InvalidEventPageLimit,
@@ -315,6 +323,57 @@ def create_agent_router(
             status_code=202,
             revision=result.attempt.revision,
         )
+
+    @router.get(
+        "/api/v1/agent-runs/{runId}/business-context-status",
+        operation_id="agent_run_business_context_status_get",
+        response_model=AgentRunBusinessContextStatusResponseDto,
+        responses={
+            **_RESPONSES,
+            200: {
+                "headers": {
+                    "Cache-Control": {
+                        "description": "Fresh association observation; no execution authority",
+                        "schema": {"type": "string", "const": "no-store"},
+                    }
+                }
+            },
+        },
+    )
+    def agent_run_business_context_status_get(
+        run_id: Annotated[UUID, Path(alias="runId")],
+        principal: Annotated[Any, Depends(principal_provider)],
+    ) -> Response:
+        try:
+            runtime = runtime_provider()
+            run = get_run_metadata(None, run_id=str(run_id), dependencies=runtime.dependencies)
+        except Exception as error:
+            return _problem(error)
+        capability_guard(principal, AGENT_RUN_READ_CAPABILITY, run.workspace_id)
+        if run.business_context is None:
+            result = get_business_context_status(None, run=run, dependencies=runtime.dependencies)
+        else:
+            try:
+                with runtime.requirement_engine.connect() as requirement_db:
+                    dependencies = runtime.dependencies.with_requirement_context(
+                        runtime.requirement_context_factory(requirement_db)
+                    )
+                    result = get_business_context_status(None, run=run, dependencies=dependencies)
+            except Exception as error:
+                if isinstance(error, StarletteHTTPException) and error.status_code in (401, 403):
+                    raise
+                result = AgentRunBusinessContextStatus(
+                    run_id=run.id,
+                    workspace_id=run.workspace_id,
+                    checked_at=runtime.dependencies.clock(),
+                    currentness=AgentBusinessContextCurrentness.UNVERIFIABLE,
+                    reasons=(AgentBusinessContextReason.OWNER_UNAVAILABLE,),
+                )
+        response = _json(
+            AgentRunBusinessContextStatusResponseDto.from_domain(result), status_code=200
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @router.get(
         "/api/v1/agent-runs/{runId}",

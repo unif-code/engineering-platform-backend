@@ -5,7 +5,10 @@ from uuid import UUID
 from pydantic import ConfigDict, Field
 
 from control_plane.app.modules.agent.application.control import AttemptControlResult
+from control_plane.app.modules.agent.application.errors import AgentBusinessContextReason
 from control_plane.app.modules.agent.application.queries import (
+    AgentBusinessContextCurrentness,
+    AgentRunBusinessContextStatus,
     AgentRunPage,
     AgentRunView,
     CanonicalEventPage,
@@ -96,6 +99,26 @@ class AgentRunBusinessContextResponseDto(StrictResponseCamelModel):
     requirement_id: UUID
     work_item_id: UUID
     assignment_id: UUID
+
+
+class AgentRunBusinessContextStatusResponseDto(StrictResponseCamelModel):
+    run_id: UUID
+    workspace_id: UUID
+    checked_at: datetime
+    currentness: AgentBusinessContextCurrentness
+    reasons: list[AgentBusinessContextReason]
+
+    @classmethod
+    def from_domain(
+        cls, value: AgentRunBusinessContextStatus
+    ) -> "AgentRunBusinessContextStatusResponseDto":
+        return cls(
+            run_id=UUID(value.run_id),
+            workspace_id=UUID(value.workspace_id),
+            checked_at=value.checked_at,
+            currentness=value.currentness,
+            reasons=list(value.reasons),
+        )
 
 
 class AgentRunResponseDto(StrictResponseCamelModel):

@@ -716,6 +716,10 @@ def test_agent_openapi_declares_exact_operations_cookie_security_and_problem_con
         ("/api/v1/agent-runs/{runId}", "get"): "agent_runs_get",
         ("/api/v1/agent-runs/{runId}/events", "get"): "agent_run_events_list",
         (
+            "/api/v1/agent-runs/{runId}/business-context-status",
+            "get",
+        ): "agent_run_business_context_status_get",
+        (
             "/api/v1/agent-runs/{runId}/attempts/{attemptId}/cancel",
             "post",
         ): "agent_attempt_cancel",
