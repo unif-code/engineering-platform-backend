@@ -41,21 +41,12 @@ def fresh_configuration_database_url(
     try:
         yield target_url
     finally:
-        with maintenance.connect() as db:
-            active = (
-                db.execute(
-                    text(
-                        "SELECT pid FROM pg_stat_activity "
-                        "WHERE datname=:database AND pid <> pg_backend_pid()"
-                    ),
-                    {"database": database_name},
-                )
-                .scalars()
-                .all()
-            )
-            assert active == []
-            db.execute(text(f'DROP DATABASE "{database_name}"'))
-        maintenance.dispose()
+        try:
+            with maintenance.connect() as db:
+                # Let PostgreSQL check connections atomically, as in the other migration fixtures.
+                db.execute(text(f'DROP DATABASE "{database_name}"'))
+        finally:
+            maintenance.dispose()
 
 
 def _config(database_url: URL) -> Config:
