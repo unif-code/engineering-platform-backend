@@ -53,6 +53,8 @@ def test_declared_material_normalization_preserves_path_without_executing_a_sour
         {"sourceReference": "https://example.org/" + "a" * 2048},
         {"declaredContentSha256": "fake"},
         {"expiresAt": "2026-10-02T02:00:00"},
+        {"expiresAt": "0001-01-01T00:00:00+08:00"},
+        {"expiresAt": "9999-12-31T23:59:59-08:00"},
         {"expiresAt": 1790906400},
         {"provenance": "DECLARED"},
         {"body": "raw source"},

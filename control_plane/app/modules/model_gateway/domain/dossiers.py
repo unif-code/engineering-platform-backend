@@ -64,10 +64,17 @@ def _datetime_input(value: object) -> object:
     return value
 
 
+def _utc_time(value: datetime) -> datetime:
+    try:
+        return value.astimezone(UTC)
+    except OverflowError:
+        raise ValueError("timestamp is outside the supported UTC range") from None
+
+
 DossierTime = Annotated[
     AwareDatetime,
     BeforeValidator(_datetime_input),
-    AfterValidator(lambda value: value.astimezone(UTC)),
+    AfterValidator(_utc_time),
 ]
 DossierId = Annotated[
     str,
