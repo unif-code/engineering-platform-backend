@@ -1457,5 +1457,5 @@ def test_bootstrap_cli_recovers_same_command_after_authorization_outage(
 
 
 def test_contract_version_is_0_10_0() -> None:
-    assert __version__ == "1.6.0"
-    assert bootstrap.create_app().openapi()["info"]["version"] == "1.6.0"
+    assert __version__ == "2.0.0"
+    assert bootstrap.create_app().openapi()["info"]["version"] == "2.0.0"

@@ -204,7 +204,8 @@ def test_database_columns_are_exact_platform_facts(
         ),
         "agent_run": (
             "id workspace_id goal_ref created_by definition_id definition_version "
-            "latest_attempt_id state revision created_at updated_at"
+            "latest_attempt_id state revision created_at updated_at "
+            "requirement_id work_item_id assignment_id"
         ),
         "agent_attempt": (
             "id run_id number state binding_id binding_digest runner_generation "

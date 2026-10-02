@@ -143,7 +143,7 @@ def test_repository_revalidates_bypassed_models_before_any_sql_fact(
     invalid: object,
     method: str,
 ) -> None:
-    forged = type(model).model_construct(**{**model.model_dump(), field: invalid})
+    forged = type(model).model_construct(**{**dict(model), field: invalid})
     before = facts(isolated_agent_database)
     with isolated_agent_database.runtime.begin() as db:
         with pytest.raises(ValidationError):

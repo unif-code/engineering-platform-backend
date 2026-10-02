@@ -99,10 +99,17 @@ def test_default_session_real_requirement_source_survives_reassignment_and_repla
         },
         status=201,
     ).json()
+    owner = journey.member.get(f"/api/v1/requirements/{created['requirement']['id']}")
+    assert owner.status_code == 200, owner.text
+    assignment = next(
+        item
+        for item in owner.json()["workItemAssignments"]
+        if item["workItemId"] == created["workItem"]["id"] and item["supersededAt"] is None
+    )
     source = {
         "requirementId": created["requirement"]["id"],
         "workItemId": created["workItem"]["id"],
-        "assignmentId": created["assignment"]["id"],
+        "assignmentId": assignment["id"],
     }
     for capability in ("agent.run.execute", "agent.run.read"):
         _grant(journey.admin, journey.member_id, capability, journey.workspace_id)
