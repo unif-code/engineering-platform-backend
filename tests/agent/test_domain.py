@@ -58,7 +58,11 @@ EXPECTED_TRANSITIONS = {
         AttemptState.CANCELING,
     },
     AttemptState.WAITING_INPUT: {AttemptState.QUEUED, AttemptState.CANCELING},
-    AttemptState.FINALIZING: {AttemptState.SUCCEEDED, AttemptState.FAILED},
+    AttemptState.FINALIZING: {
+        AttemptState.SUCCEEDED,
+        AttemptState.FAILED,
+        AttemptState.CANCELING,
+    },
     AttemptState.CANCELING: {AttemptState.CANCELED, AttemptState.TIMED_OUT},
     AttemptState.SUCCEEDED: set(),
     AttemptState.FAILED: set(),
@@ -84,6 +88,7 @@ APPROVED_TRANSITION_PAIRS = (
     (AttemptState.WAITING_INPUT, AttemptState.CANCELING),
     (AttemptState.FINALIZING, AttemptState.SUCCEEDED),
     (AttemptState.FINALIZING, AttemptState.FAILED),
+    (AttemptState.FINALIZING, AttemptState.CANCELING),
     (AttemptState.CANCELING, AttemptState.CANCELED),
     (AttemptState.CANCELING, AttemptState.TIMED_OUT),
 )

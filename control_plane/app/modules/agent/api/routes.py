@@ -144,6 +144,17 @@ def _versioned_preflight(
 
 
 def _problem(error: Exception) -> Response:
+    for error_type, code in (
+        (AttemptRevisionConflict, "ATTEMPT_REVISION_CONFLICT"),
+        (IdempotencyConflict, "IDEMPOTENCY_CONFLICT"),
+        (IdempotencyInProgress, "IDEMPOTENCY_IN_PROGRESS"),
+    ):
+        if isinstance(error, error_type):
+            return problem_response(409, "Agent state conflict", extra={"code": code})
+    if isinstance(error, AgentReplayUnavailable):
+        return problem_response(
+            503, "Agent service unavailable", extra={"code": "AGENT_REPLAY_UNAVAILABLE"}
+        )
     if isinstance(error, (AgentRunNotFound, AgentAttemptNotFound, RequirementNotFound)):
         return problem_response(404, "Agent subject not found")
     if isinstance(error, InvalidEventCursor):
@@ -157,9 +168,6 @@ def _problem(error: Exception) -> Response:
     if isinstance(
         error,
         (
-            IdempotencyConflict,
-            IdempotencyInProgress,
-            AttemptRevisionConflict,
             AttemptWaitingExpired,
             BindingDigestMismatch,
             DefinitionUnavailable,
@@ -176,7 +184,6 @@ def _problem(error: Exception) -> Response:
             RequirementDependencyUnavailable,
             SQLAlchemyError,
             SecretMaterialUnavailable,
-            AgentReplayUnavailable,
             EventReplayUnavailable,
             AgentQueryUnavailable,
         ),

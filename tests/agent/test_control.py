@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta
 from threading import Barrier, Event, Lock, Thread
 from time import monotonic
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import text
@@ -15,6 +16,7 @@ from control_plane.app.modules.agent.adapters.sqlalchemy import (
     SqlAlchemyAgentUnitOfWork,
 )
 from control_plane.app.modules.agent.application.control import (
+    AttemptControlResult,
     AttemptRevisionConflict,
     AttemptWaitingExpired,
     BindingDigestMismatch,
@@ -33,6 +35,7 @@ from control_plane.app.modules.agent.domain import (
     AgentRun,
     AttemptNotResumable,
     AttemptState,
+    IllegalAttemptTransition,
 )
 from control_plane.app.modules.agent.ports import AgentUnitOfWork
 from tests.agent.conftest import IsolatedAgentDatabase
@@ -43,6 +46,10 @@ from tests.agent.test_events import (
     event,
     start,
     waiting_event,
+)
+from tests.agent.test_start_run import (
+    AuditFailingTransactionRunner,
+    PersistenceFailingTransactionRunner,
 )
 
 
@@ -214,6 +221,155 @@ def cancel_command(
         idempotency_key=key,
         correlation_id="cancel-correlation-901",
     )
+
+
+def prepare_finalizing(
+    database: IsolatedAgentDatabase,
+) -> tuple[AgentDependencies, StartRunResult, AgentAttempt]:
+    deps = dependencies(database)
+    started = start(deps)
+    advance_to_running(deps, started.attempt.id)
+    accepted = accept_workflow_event(
+        None,
+        event=event(
+            started.attempt.id,
+            event_id=str(uuid4()),
+            event_type="ATTEMPT_FINALIZING",
+            sequence=4,
+            data={"evidenceRef": "artifact:already-recorded"},
+        ),
+        dependencies=deps,
+    )
+    return deps, started, accepted.attempt
+
+
+@pytest.mark.parametrize("cancel_wins", [True, False])
+@pytest.mark.parametrize("terminal", ["SUCCEEDED", "FAILED"])
+def test_finalizing_cancel_and_completion_obey_the_first_locked_transition(
+    isolated_agent_database: IsolatedAgentDatabase, cancel_wins: bool, terminal: str
+) -> None:
+    database = isolated_agent_database
+    deps, started, finalizing = prepare_finalizing(database)
+    before = persisted_control_state(database, finalizing.id)
+    cancel_runner = ObservedTransactionRunner(database, pause_after_run_lock=cancel_wins)
+    event_runner = ObservedTransactionRunner(database, pause_after_run_lock=not cancel_wins)
+    cancel_results: list[AttemptControlResult] = []
+    event_results: list[EventAcceptance] = []
+    cancel_errors: list[BaseException] = []
+    event_errors: list[BaseException] = []
+    command = cancel_command(started, revision=finalizing.revision)
+
+    def cancel() -> None:
+        try:
+            cancel_results.append(
+                cancel_attempt(
+                    None,
+                    command=command,
+                    dependencies=replace(deps, transaction_runner=cancel_runner),
+                )
+            )
+        except BaseException as error:
+            cancel_errors.append(error)
+
+    def finish() -> None:
+        try:
+            event_results.append(
+                accept_workflow_event(
+                    None,
+                    event=event(
+                        finalizing.id,
+                        event_id=str(uuid4()),
+                        event_type=f"ATTEMPT_{terminal}",
+                        sequence=5,
+                    ),
+                    dependencies=replace(deps, transaction_runner=event_runner),
+                )
+            )
+        except BaseException as error:
+            event_errors.append(error)
+
+    cancel_thread, event_thread = Thread(target=cancel), Thread(target=finish)
+    first, second = (cancel_thread, event_thread) if cancel_wins else (event_thread, cancel_thread)
+    first_runner, second_runner = (
+        (cancel_runner, event_runner) if cancel_wins else (event_runner, cancel_runner)
+    )
+    first.start()
+    try:
+        assert first_runner.run_locked.wait(timeout=5)
+        second.start()
+        assert second_runner.backend_pid_ready.wait(timeout=5)
+        assert first_runner.backend_pid is not None and second_runner.backend_pid is not None
+        assert_postgres_blocked_by(
+            database, waiting_pid=second_runner.backend_pid, blocking_pid=first_runner.backend_pid
+        )
+    finally:
+        first_runner.release_run.set()
+        first.join(timeout=10)
+        if second.ident is not None:
+            second.join(timeout=10)
+    assert not first.is_alive() and not second.is_alive()
+    assert cancel_runner.lock_order == event_runner.lock_order == ["run", "attempt"]
+    with database.runtime.connect() as db:
+        repository = SqlAlchemyAgentRepository(db)
+        current = repository.attempt_by_id(finalizing.id)
+        run = repository.run_by_id(started.run.id)
+    assert current is not None and run is not None
+    assert current.revision == finalizing.revision + 1
+    assert current.binding_id == finalizing.binding_id
+    assert current.runner_generation == finalizing.runner_generation
+    assert current.checkpoint == finalizing.checkpoint
+    after = persisted_control_state(database, finalizing.id)
+    assert after["binding"] == before["binding"]
+    assert after["checkpoint"] == before["checkpoint"]
+    cancel_commands = [row for row in after["workflow"] if row["kind"] == "CANCEL"]
+    if cancel_wins:
+        assert cancel_errors == [] and len(cancel_results) == 1
+        assert len(event_errors) == 1 and isinstance(event_errors[0], IllegalAttemptTransition)
+        assert current.state is AttemptState.CANCELING and run.state.value == "ACTIVE"
+        assert current.event_sequence == finalizing.event_sequence
+        assert len(cancel_commands) == 1
+        assert cancel_attempt(None, command=command, dependencies=deps) == cancel_results[0]
+        assert persisted_control_state(database, finalizing.id) == after
+        # Rejected completion does not consume an accepted-event sequence.
+        accept_workflow_event(
+            None,
+            event=event(
+                finalizing.id, event_id=str(uuid4()), event_type="ATTEMPT_CANCELED", sequence=5
+            ),
+            dependencies=deps,
+        )
+    else:
+        assert event_errors == [] and len(event_results) == 1
+        assert len(cancel_errors) == 1 and isinstance(cancel_errors[0], AttemptRevisionConflict)
+        assert current.state.value == run.state.value == terminal
+        assert cancel_commands == []
+    with database.owner.connect() as db:
+        evidence = db.execute(
+            text(
+                "SELECT data FROM agent.canonical_event WHERE attempt_id=CAST(:id AS UUID) "
+                "AND event_type='ATTEMPT_FINALIZING'"
+            ),
+            {"id": finalizing.id},
+        ).scalar_one()
+    assert evidence == {"evidenceRef": "artifact:already-recorded"}
+
+
+@pytest.mark.parametrize(
+    "runner_type", [AuditFailingTransactionRunner, PersistenceFailingTransactionRunner]
+)
+def test_finalizing_cancel_failure_rolls_back_state_command_audit_and_receipt(
+    isolated_agent_database: IsolatedAgentDatabase,
+    runner_type: type[AuditFailingTransactionRunner] | type[PersistenceFailingTransactionRunner],
+) -> None:
+    deps, started, finalizing = prepare_finalizing(isolated_agent_database)
+    before = persisted_control_state(isolated_agent_database, finalizing.id)
+    with pytest.raises(RuntimeError, match="unavailable"):
+        cancel_attempt(
+            None,
+            command=cancel_command(started, revision=finalizing.revision),
+            dependencies=replace(deps, transaction_runner=runner_type(isolated_agent_database)),
+        )
+    assert persisted_control_state(isolated_agent_database, finalizing.id) == before
 
 
 def test_resume_rotates_generation_and_rejects_late_event(

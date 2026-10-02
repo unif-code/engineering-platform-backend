@@ -24,9 +24,16 @@ from control_plane.app.modules.agent.adapters import (
 )
 from control_plane.app.modules.agent.adapters.dev_temporal import DevTemporalAdapter
 from control_plane.app.modules.agent.api import AgentHttpRuntime, create_agent_router
+from control_plane.app.modules.agent.api.routes import _problem
 from control_plane.app.modules.agent.api.runtime import CurrentPrincipalActorResolver
+from control_plane.app.modules.agent.application.control import AttemptRevisionConflict
 from control_plane.app.modules.agent.application.dependencies import AgentDependencies
 from control_plane.app.modules.agent.application.errors import InvalidRequirementExecutionContext
+from control_plane.app.modules.agent.application.idempotency import (
+    AgentReplayUnavailable,
+    IdempotencyConflict,
+    IdempotencyInProgress,
+)
 from control_plane.app.modules.agent.domain import CanonicalEventInput
 from control_plane.app.modules.agent.ports.repository import AgentTransactionRunner
 from control_plane.app.modules.agent.ports.runtime import (
@@ -66,6 +73,30 @@ START_BODY = {
     "definitionVersion": 1,
     "goal": "Prove the governed control-plane path without side effects",
 }
+
+
+@pytest.mark.parametrize(
+    ("error_type", "status", "code"),
+    [
+        (AttemptRevisionConflict, 409, "ATTEMPT_REVISION_CONFLICT"),
+        (IdempotencyConflict, 409, "IDEMPOTENCY_CONFLICT"),
+        (IdempotencyInProgress, 409, "IDEMPOTENCY_IN_PROGRESS"),
+        (AgentReplayUnavailable, 503, "AGENT_REPLAY_UNAVAILABLE"),
+    ],
+)
+def test_command_problem_codes_distinguish_rejection_from_unknown_outcome(
+    error_type: type[Exception], status: int, code: str
+) -> None:
+    response = _problem(error_type("PRIVATE_DIAGNOSTIC"))
+    payload = bytes(response.body)
+    body = json.loads(payload)
+    assert response.status_code == body["status"] == status
+    assert body["title"] == (
+        "Agent state conflict" if status == 409 else "Agent service unavailable"
+    )
+    assert body["code"] == code
+    assert "PRIVATE_DIAGNOSTIC" not in payload.decode()
+    assert response.headers["content-type"].startswith("application/problem+json")
 
 
 class MutableClock:
@@ -417,6 +448,7 @@ def test_start_exact_replay_is_sealed_and_changed_request_conflicts(
     )
     assert changed.status_code == 409
     assert changed.headers["content-type"].startswith("application/problem+json")
+    assert changed.json()["code"] == "IDEMPOTENCY_CONFLICT"
     assert "different governed goal" not in changed.text
 
 
@@ -462,6 +494,7 @@ def test_http_original_body_and_etag_survive_resume_cancel_and_terminal_advancem
         headers=_write_headers("advance-resume-901", etag=original_resume.headers["etag"]),
     )
     assert changed.status_code == 409
+    assert changed.json()["code"] == "IDEMPOTENCY_CONFLICT"
     agent.authorization.allowed.remove(("agent.run.control", WORKSPACE_ID))
     denied = agent.client.post(resume_path, json={}, headers=resume_headers)
     assert denied.status_code == 403
@@ -489,6 +522,7 @@ def test_http_unavailable_sealing_key_is_sanitized_and_rolls_back(
     )
     assert response.status_code == 503
     assert response.headers["content-type"].startswith("application/problem+json")
+    assert response.json()["code"] == "AGENT_REPLAY_UNAVAILABLE"
     assert "sensitive-sealing-detail" not in response.text
     assert facts(agent.database) == before
 
@@ -548,6 +582,7 @@ def test_cancel_requires_both_headers_and_replays_with_current_etag(
         headers=_write_headers("cancel-replay-901", etag=first.headers["etag"]),
     )
     assert conflict.status_code == 409
+    assert conflict.json()["code"] == "IDEMPOTENCY_CONFLICT"
 
 
 def test_resume_keeps_binding_and_returns_next_generation_etag(
@@ -1085,6 +1120,7 @@ def test_stale_revision_cross_run_attempt_and_cursor_are_rejected(
     path = f"/api/v1/agent-runs/{first['run']['id']}/attempts/{first['attempt']['id']}/cancel"
     stale = agent_api.client.post(path, headers=_write_headers("stale-revision", etag='"v1"'))
     assert stale.status_code == 409
+    assert stale.json()["code"] == "ATTEMPT_REVISION_CONFLICT"
     crossed = agent_api.client.post(
         f"/api/v1/agent-runs/{first['run']['id']}/attempts/{second['attempt']['id']}/cancel",
         headers=_write_headers("crossed-attempt", etag=f'"v{second["attempt"]["revision"]}"'),

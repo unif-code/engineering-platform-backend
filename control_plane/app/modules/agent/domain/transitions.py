@@ -33,7 +33,11 @@ ALLOWED_TRANSITIONS: dict[AttemptState, set[AttemptState]] = {
         AttemptState.CANCELING,
     },
     AttemptState.WAITING_INPUT: {AttemptState.QUEUED, AttemptState.CANCELING},
-    AttemptState.FINALIZING: {AttemptState.SUCCEEDED, AttemptState.FAILED},
+    AttemptState.FINALIZING: {
+        AttemptState.SUCCEEDED,
+        AttemptState.FAILED,
+        AttemptState.CANCELING,
+    },
     AttemptState.CANCELING: {AttemptState.CANCELED, AttemptState.TIMED_OUT},
     AttemptState.SUCCEEDED: set(),
     AttemptState.FAILED: set(),
