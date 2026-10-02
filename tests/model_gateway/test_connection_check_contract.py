@@ -94,3 +94,69 @@ def test_history_cursor_rejects_non_string_uuid_before_repository_query(bad_id: 
         checks.list(deployment_id, cursor=cursor, page_size=20)
     assert error.value.code == "INVALID_MODEL_CONNECTION_CHECK_CURSOR"
     repository.list_checks.assert_not_called()
+
+
+def test_thinking_contract_is_typed_and_contains_no_reasoning_text() -> None:
+    from control_plane.app.bootstrap.app import create_app
+
+    schemas = create_app().openapi()["components"]["schemas"]
+    assert "THINKING" in schemas["CheckKind"]["enum"]
+    assert "SEARCH" not in schemas["CheckKind"]["enum"]
+    assert "THINKING_SIGNAL_MISSING" in schemas["CheckReason"]["enum"]
+    observation = schemas["ThinkingObservationDto"]
+    assert observation["additionalProperties"] is False
+    assert {"reasoningObserved", "reasoningDeltaCount", "reasoningBytes"} <= set(
+        observation["required"]
+    )
+    assert (
+        not {"reasoningContent", "reasoning_content", "content", "prompt", "events"}
+        & observation["properties"].keys()
+    )
+    request = schemas["CreateConnectionCheckRequestDto"]
+    assert request["required"] == ["checkKind"] and set(request["properties"]) == {"checkKind"}
+    assert (
+        CreateConnectionCheckRequestDto.model_validate({"checkKind": "THINKING"}).check_kind
+        == "THINKING"
+    )
+    with pytest.raises(ValidationError):
+        CreateConnectionCheckRequestDto.model_validate(
+            {"checkKind": "THINKING", "thinking_budget": 2000}
+        )
+
+
+def test_thinking_request_is_fixed_and_other_probes_keep_their_original_requests() -> None:
+    from control_plane.app.modules.model_gateway.domain.connections import (
+        MAX_COMPLETION_TOKENS,
+        CheckKind,
+        probe_body,
+    )
+
+    assert "THINKING" in CheckKind.__members__
+    thinking = probe_body("synthetic-model", CheckKind("THINKING"))
+    assert thinking == {
+        "model": "synthetic-model",
+        "messages": [
+            {
+                "role": "user",
+                "content": "Compute 17 times 19. Think briefly, then reply with only the number.",
+            }
+        ],
+        "stream": True,
+        "enable_thinking": True,
+        "thinking_budget": MAX_COMPLETION_TOKENS // 2,
+        "max_completion_tokens": 64,
+        "stream_options": {"include_usage": True},
+    }
+    base = {
+        "model": "synthetic-model",
+        "messages": [{"role": "user", "content": "Reply with OK."}],
+        "stream": False,
+        "enable_thinking": False,
+        "max_completion_tokens": 64,
+    }
+    assert probe_body("synthetic-model", CheckKind.BASIC_TEXT) == base
+    for kind in (CheckKind.STREAM_TEXT, CheckKind.STREAM_STOP):
+        assert probe_body("synthetic-model", kind) == base | {
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        }

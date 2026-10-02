@@ -26,6 +26,7 @@ from control_plane.app.modules.model_gateway.domain.checks import (
     CheckState,
     ProbeOutcome,
     ProbeUsage,
+    ThinkingObservation,
     provider_request_id,
 )
 from control_plane.app.modules.model_gateway.domain.connections import (
@@ -200,6 +201,17 @@ class HttpxModelProbe:
                 outcome = ProbeOutcome(
                     state=CheckState.UNKNOWN, reason=CheckReason.REQUEST_OUTCOME_UNKNOWN
                 )
+        if (
+            outcome.state is CheckState.SUCCEEDED
+            and isinstance(outcome.observation, ThinkingObservation)
+            and not outcome.observation.reasoning_observed
+        ):
+            outcome = outcome.model_copy(
+                update={
+                    "state": CheckState.FAILED,
+                    "reason": CheckReason.THINKING_SIGNAL_MISSING,
+                }
+            )
         if prepared.material.value.get_secret_value() in outcome.model_dump_json():
             outcome = ProbeOutcome(state=CheckState.FAILED, reason=CheckReason.INVALID_RESPONSE)
         return outcome.model_copy(update={"elapsed_ms": int((time.monotonic() - start) * 1000)})

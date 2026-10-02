@@ -89,13 +89,19 @@ uv run python -m control_plane.tools.model_gateway_worker --limit 20
 固定探针使用 64 个最大 completion tokens、20 秒总 HTTP/清理时限、64 KiB 响应上限，
 每连接最多一个 RUNNING。Provider 超时或 worker 丢失结果收敛 UNKNOWN，不自动重发；
 新检查需管理员明确发起，先前请求可能已经执行并计费。
-检查 POST 必须显式提交 `checkKind`：`BASIC_TEXT`、`STREAM_TEXT` 或 `STREAM_STOP`。
+检查 POST 必须显式提交 `checkKind`：`BASIC_TEXT`、`STREAM_TEXT`、`STREAM_STOP` 或 `THINKING`。
 流式请求带 `include_usage`，按 SSE 事件处理；单事件上限 16 KiB，最多 256 个 data 事件。
 `STREAM_TEXT` 需要非空文本、正常 finish 和 `[DONE]`；`STREAM_STOP` 在首个合法非空文本
 增量后关闭本地响应及客户端。后者只证明本地停止接收，Provider 取消与停止计费均未确认。
 有限观测不包含正文；历史记录未记录的观测保持 null。新增迁移只补 BASIC_TEXT 种类，
 不改写旧冻结输入、幂等回执或执行状态；旧终态不重发，旧排队请求仍受当前资格与输入检查。
-API 1.0.0 统一要求显式种类，旧空对象请求不再受理；旧 key 配合新 body 不会变成新意图。
+API 统一要求显式种类，旧空对象请求不再受理；旧 key 配合新 body 不会变成新意图。
+
+THINKING 只核对本次专用 reasoning_content 信号和完整答案，不评价答案正确性或推理质量。
+使用固定算术提示词、开启思考与流式输出，thinking_budget 为 32；沿用 64 个总输出 token、
+20 秒总时限及现有响应/事件限制。完整响应缺少非空白专用信号返回 THINKING_SIGNAL_MISSING，
+仅表示本次未观察到；不会自动扩大预算或重发。只保存 reasoning 的观察标志、增量数和字节数，
+不保存推理或答案正文；这些计数不是 token、费用或能力认证。
 
 检查 ETag 是含当前性的 opaque 表示标识，不能用于候选 If-Match。
 清单及探针变化会实时改变查询当前性，检查自身 revision 只表示持久检查状态的版本。

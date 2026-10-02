@@ -1271,7 +1271,8 @@
         "enum": [
           "BASIC_TEXT",
           "STREAM_TEXT",
-          "STREAM_STOP"
+          "STREAM_STOP",
+          "THINKING"
         ],
         "title": "CheckKind",
         "type": "string"
@@ -1306,7 +1307,8 @@
           "STREAM_EVENT_TOO_LARGE",
           "STREAM_EVENT_LIMIT",
           "STREAM_INTERRUPTED",
-          "STREAM_CLOSE_FAILED"
+          "STREAM_CLOSE_FAILED",
+          "THINKING_SIGNAL_MISSING"
         ],
         "title": "CheckReason",
         "type": "string"
@@ -1380,7 +1382,7 @@
         "type": "object"
       },
       "ConnectionCheckDto": {
-        "description": "SUCCEEDED has a kind-specific, limited meaning.\n\nBASIC_TEXT proves one complete basic text response. STREAM_TEXT proves valid text\nincrements, normal completion and the final completion marker. STREAM_STOP proves\ntext was observed and the local response stream/client were closed; Provider-side\ncancellation and stopped billing remain unconfirmed. No kind activates or fully\nverifies a candidate.\n\nUNKNOWN may have executed and incurred Provider charges; never automatically resubmit.\ncurrentness is recomputed from the current candidate and non-secret connection/probe versions.",
+        "description": "SUCCEEDED has a kind-specific, limited meaning.\n\nBASIC_TEXT proves one complete basic text response. STREAM_TEXT proves valid text\nincrements, normal completion and the final completion marker. STREAM_STOP proves\ntext was observed and the local response stream/client were closed; Provider-side\ncancellation and stopped billing remain unconfirmed. THINKING proves nonblank dedicated\nreasoning, a complete answer and normal stream completion with local cleanup; it does not\nassess reasoning quality. THINKING_SIGNAL_MISSING means only that this complete response\ncontained no dedicated reasoning signal, not that the model lacks thinking support.\nNo kind activates or fully verifies a candidate.\n\nUNKNOWN may have executed and incurred Provider charges; never automatically resubmit.\ncurrentness is recomputed from the current candidate and non-secret connection/probe versions.",
         "properties": {
           "attempt": {
             "title": "Attempt",
@@ -1452,7 +1454,8 @@
                   "mapping": {
                     "BASIC_TEXT": "#/components/schemas/BasicTextObservationDto",
                     "STREAM_STOP": "#/components/schemas/StreamObservationDto",
-                    "STREAM_TEXT": "#/components/schemas/StreamObservationDto"
+                    "STREAM_TEXT": "#/components/schemas/StreamObservationDto",
+                    "THINKING": "#/components/schemas/ThinkingObservationDto"
                   },
                   "propertyName": "kind"
                 },
@@ -1462,6 +1465,9 @@
                   },
                   {
                     "$ref": "#/components/schemas/StreamObservationDto"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ThinkingObservationDto"
                   }
                 ]
               },
@@ -5744,7 +5750,6 @@
           }
         },
         "required": [
-          "kind",
           "consumedBytes",
           "dataEventCount",
           "textDeltaCount",
@@ -5752,7 +5757,8 @@
           "textObserved",
           "normalCompletionObserved",
           "completionMarkerObserved",
-          "localStreamClosed"
+          "localStreamClosed",
+          "kind"
         ],
         "title": "StreamObservationDto",
         "type": "object"
@@ -5937,6 +5943,95 @@
           "version"
         ],
         "title": "SuperAdminResponseDto",
+        "type": "object"
+      },
+      "ThinkingObservationDto": {
+        "additionalProperties": false,
+        "description": "Dedicated reasoning field observations, never reasoning text or a quality judgment.\n\nCounts and bytes are observed protocol metadata, not token usage or cost.",
+        "properties": {
+          "completionMarkerObserved": {
+            "title": "Completionmarkerobserved",
+            "type": "boolean"
+          },
+          "consumedBytes": {
+            "maximum": 65537.0,
+            "minimum": 0.0,
+            "title": "Consumedbytes",
+            "type": "integer"
+          },
+          "dataEventCount": {
+            "maximum": 257.0,
+            "minimum": 0.0,
+            "title": "Dataeventcount",
+            "type": "integer"
+          },
+          "kind": {
+            "const": "THINKING",
+            "title": "Kind",
+            "type": "string"
+          },
+          "localStreamClosed": {
+            "title": "Localstreamclosed",
+            "type": "boolean"
+          },
+          "normalCompletionObserved": {
+            "title": "Normalcompletionobserved",
+            "type": "boolean"
+          },
+          "providerCancellation": {
+            "const": "UNCONFIRMED",
+            "default": "UNCONFIRMED",
+            "title": "Providercancellation",
+            "type": "string"
+          },
+          "reasoningBytes": {
+            "maximum": 65536.0,
+            "minimum": 0.0,
+            "title": "Reasoningbytes",
+            "type": "integer"
+          },
+          "reasoningDeltaCount": {
+            "maximum": 256.0,
+            "minimum": 0.0,
+            "title": "Reasoningdeltacount",
+            "type": "integer"
+          },
+          "reasoningObserved": {
+            "title": "Reasoningobserved",
+            "type": "boolean"
+          },
+          "textBytes": {
+            "maximum": 65536.0,
+            "minimum": 0.0,
+            "title": "Textbytes",
+            "type": "integer"
+          },
+          "textDeltaCount": {
+            "maximum": 256.0,
+            "minimum": 0.0,
+            "title": "Textdeltacount",
+            "type": "integer"
+          },
+          "textObserved": {
+            "title": "Textobserved",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "consumedBytes",
+          "dataEventCount",
+          "textDeltaCount",
+          "textBytes",
+          "textObserved",
+          "normalCompletionObserved",
+          "completionMarkerObserved",
+          "localStreamClosed",
+          "kind",
+          "reasoningObserved",
+          "reasoningDeltaCount",
+          "reasoningBytes"
+        ],
+        "title": "ThinkingObservationDto",
         "type": "object"
       },
       "TotpEnrollmentDto": {
@@ -6556,7 +6651,7 @@
   "info": {
     "description": "内部研发平台 Control Plane API。\n\n全局约定：JSON 一律 camelCase；ID 一律 string；错误统一 application/problem+json（RFC 9457）；\n分页 cursor 型 {items, nextCursor}；写并发 If-Match/ETag；变更命令 Idempotency-Key——\n后三者自 V0.2 首个真实接口起强制执行。",
     "title": "engineering-platform-control-plane",
-    "version": "1.0.0"
+    "version": "1.1.0"
   },
   "openapi": "3.1.0",
   "paths": {

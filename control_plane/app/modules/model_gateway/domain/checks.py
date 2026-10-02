@@ -60,6 +60,7 @@ class CheckReason(StrEnum):
     STREAM_EVENT_LIMIT = "STREAM_EVENT_LIMIT"
     STREAM_INTERRUPTED = "STREAM_INTERRUPTED"
     STREAM_CLOSE_FAILED = "STREAM_CLOSE_FAILED"
+    THINKING_SIGNAL_MISSING = "THINKING_SIGNAL_MISSING"
 
 
 class InputCurrentness(StrEnum):
@@ -150,9 +151,8 @@ class BasicTextObservation(BaseModel):
     normal_completion_observed: bool
 
 
-class StreamObservation(BaseModel):
+class StreamObservationFields(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
-    kind: Literal[CheckKind.STREAM_TEXT, CheckKind.STREAM_STOP]
     consumed_bytes: int = Field(ge=0, le=65537)
     data_event_count: int = Field(ge=0, le=257)
     text_delta_count: int = Field(ge=0, le=256)
@@ -164,7 +164,20 @@ class StreamObservation(BaseModel):
     provider_cancellation: Literal["UNCONFIRMED"] = "UNCONFIRMED"
 
 
-ProbeObservation = Annotated[BasicTextObservation | StreamObservation, Field(discriminator="kind")]
+class StreamObservation(StreamObservationFields):
+    kind: Literal[CheckKind.STREAM_TEXT, CheckKind.STREAM_STOP]
+
+
+class ThinkingObservation(StreamObservationFields):
+    kind: Literal[CheckKind.THINKING]
+    reasoning_observed: bool
+    reasoning_delta_count: int = Field(ge=0, le=256)
+    reasoning_bytes: int = Field(ge=0, le=65536)
+
+
+ProbeObservation = Annotated[
+    BasicTextObservation | StreamObservation | ThinkingObservation, Field(discriminator="kind")
+]
 
 
 class ProbeOutcome(BaseModel):

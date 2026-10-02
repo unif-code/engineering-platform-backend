@@ -19,6 +19,7 @@ from control_plane.app.modules.model_gateway.domain.checks import (
     InputCurrentness,
     ProbeUsage,
     StreamObservation,
+    ThinkingObservation,
 )
 from control_plane.app.modules.model_gateway.domain.connections import CheckKind
 from control_plane.app.shared.api.camel import CamelModel
@@ -114,8 +115,16 @@ class StreamObservationDto(StreamObservation, CamelModel):
     """
 
 
+class ThinkingObservationDto(ThinkingObservation, CamelModel):
+    """Dedicated reasoning field observations, never reasoning text or a quality judgment.
+
+    Counts and bytes are observed protocol metadata, not token usage or cost.
+    """
+
+
 CheckObservationDto = Annotated[
-    BasicTextObservationDto | StreamObservationDto, Field(discriminator="kind")
+    BasicTextObservationDto | StreamObservationDto | ThinkingObservationDto,
+    Field(discriminator="kind"),
 ]
 
 
@@ -125,8 +134,11 @@ class ConnectionCheckDto(CamelModel):
     BASIC_TEXT proves one complete basic text response. STREAM_TEXT proves valid text
     increments, normal completion and the final completion marker. STREAM_STOP proves
     text was observed and the local response stream/client were closed; Provider-side
-    cancellation and stopped billing remain unconfirmed. No kind activates or fully
-    verifies a candidate.
+    cancellation and stopped billing remain unconfirmed. THINKING proves nonblank dedicated
+    reasoning, a complete answer and normal stream completion with local cleanup; it does not
+    assess reasoning quality. THINKING_SIGNAL_MISSING means only that this complete response
+    contained no dedicated reasoning signal, not that the model lacks thinking support.
+    No kind activates or fully verifies a candidate.
 
     UNKNOWN may have executed and incurred Provider charges; never automatically resubmit.
     currentness is recomputed from the current candidate and non-secret connection/probe versions.

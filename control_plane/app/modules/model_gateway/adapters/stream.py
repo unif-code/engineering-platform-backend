@@ -1,4 +1,4 @@
-"""Bounded SSE parsing for the two fixed model probes; event text never becomes evidence."""
+"""Bounded SSE parsing for fixed probes; event text never becomes evidence."""
 
 import json
 from collections.abc import Iterator
@@ -12,6 +12,7 @@ from control_plane.app.modules.model_gateway.domain.checks import (
     ProbeOutcome,
     ProbeUsage,
     StreamObservation,
+    ThinkingObservation,
     provider_request_id,
 )
 from control_plane.app.modules.model_gateway.domain.connections import (
@@ -80,6 +81,10 @@ class StreamProbe:
         self.events = 0
         self.text_deltas = 0
         self.text_bytes = 0
+        self.answer_observed = False
+        self.reasoning_observed = False
+        self.reasoning_deltas = 0
+        self.reasoning_bytes = 0
         self.normal_completion = False
         self.done = False
         self.local_closed = False
@@ -89,19 +94,30 @@ class StreamProbe:
         self.reported_model: str | None = None
         self.usage: ProbeUsage | None = None
 
-    def observation(self) -> StreamObservation:
-        assert self.kind in (CheckKind.STREAM_TEXT, CheckKind.STREAM_STOP)
-        return StreamObservation(
-            kind=self.kind,
-            consumed_bytes=self.frames.consumed_bytes,
-            data_event_count=self.events,
-            text_delta_count=self.text_deltas,
-            text_bytes=self.text_bytes,
-            text_observed=self.text_deltas > 0,
-            normal_completion_observed=self.normal_completion,
-            completion_marker_observed=self.done,
-            local_stream_closed=self.local_closed,
-        )
+    def observation(self) -> StreamObservation | ThinkingObservation:
+        values = {
+            "kind": self.kind,
+            "consumed_bytes": self.frames.consumed_bytes,
+            "data_event_count": self.events,
+            "text_delta_count": self.text_deltas,
+            "text_bytes": self.text_bytes,
+            "text_observed": self.answer_observed
+            if self.kind is CheckKind.THINKING
+            else self.text_deltas > 0,
+            "normal_completion_observed": self.normal_completion,
+            "completion_marker_observed": self.done,
+            "local_stream_closed": self.local_closed,
+        }
+        if self.kind is CheckKind.THINKING:
+            return ThinkingObservation.model_validate(
+                values
+                | {
+                    "reasoning_observed": self.reasoning_observed,
+                    "reasoning_delta_count": self.reasoning_deltas,
+                    "reasoning_bytes": self.reasoning_bytes,
+                }
+            )
+        return StreamObservation.model_validate(values)
 
     def outcome(self, state: CheckState, reason: CheckReason | None = None) -> ProbeOutcome:
         return ProbeOutcome(
@@ -120,6 +136,8 @@ class StreamProbe:
         if data.strip() == b"[DONE]":
             self.done = True
             if not self.normal_completion or self.text_deltas == 0:
+                raise StreamProtocolError(CheckReason.INVALID_STREAM_RESPONSE)
+            if self.kind is CheckKind.THINKING and not self.answer_observed:
                 raise StreamProtocolError(CheckReason.INVALID_STREAM_RESPONSE)
             return True
         try:
@@ -164,10 +182,20 @@ class StreamProbe:
                 raise ValueError
             if self.normal_completion:
                 raise ValueError
+            if self.kind is CheckKind.THINKING:
+                reasoning = delta.get("reasoning_content")
+                if reasoning is not None and not isinstance(reasoning, str):
+                    raise ValueError
+                if reasoning:
+                    encoded_reasoning = reasoning.encode("utf-8")
+                    self.reasoning_deltas += 1
+                    self.reasoning_bytes += len(encoded_reasoning)
+                    self.reasoning_observed |= bool(reasoning.strip())
             if content:
                 encoded_content = content.encode("utf-8")
                 self.text_deltas += 1
                 self.text_bytes += len(encoded_content)
+                self.answer_observed |= bool(content.strip())
             if choice.get("finish_reason") == "stop":
                 self.normal_completion = True
             return self.kind is CheckKind.STREAM_STOP and self.text_deltas > 0

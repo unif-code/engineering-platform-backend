@@ -116,7 +116,9 @@ class SqlAlchemyCheckRepository(SqlAlchemyDeploymentRepository):
                 observed_normal_completion=:observed_normal_completion,observed_data_events=:observed_data_events,
                 observed_text_deltas=:observed_text_deltas,observed_text_bytes=:observed_text_bytes,
                 observed_completion_marker=:observed_completion_marker,observed_local_closed=:observed_local_closed,
-                provider_cancellation=:provider_cancellation
+                provider_cancellation=:provider_cancellation,
+                observed_reasoning=:observed_reasoning,observed_reasoning_deltas=:observed_reasoning_deltas,
+                observed_reasoning_bytes=:observed_reasoning_bytes
             WHERE id=:id AND revision=:expected_revision AND state IN ('QUEUED','RUNNING')
                 AND (:state <> 'RUNNING' OR EXISTS (
                     SELECT 1 FROM model_gateway.deployment d
@@ -138,6 +140,9 @@ _OBSERVATION_FIELDS = {
     "observed_completion_marker": "completion_marker_observed",
     "observed_local_closed": "local_stream_closed",
     "provider_cancellation": "provider_cancellation",
+    "observed_reasoning": "reasoning_observed",
+    "observed_reasoning_deltas": "reasoning_delta_count",
+    "observed_reasoning_bytes": "reasoning_bytes",
 }
 
 

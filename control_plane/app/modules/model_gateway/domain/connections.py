@@ -29,12 +29,14 @@ class CheckKind(StrEnum):
     BASIC_TEXT = "BASIC_TEXT"
     STREAM_TEXT = "STREAM_TEXT"
     STREAM_STOP = "STREAM_STOP"
+    THINKING = "THINKING"
 
 
 PROBE_VERSIONS = {
     CheckKind.BASIC_TEXT: "basic-text-v1",
     CheckKind.STREAM_TEXT: "stream-text-v1",
     CheckKind.STREAM_STOP: "stream-stop-v1",
+    CheckKind.THINKING: "thinking-v1",
 }
 MAX_STREAM_EVENT_BYTES = 16384
 MAX_STREAM_EVENTS = 256
@@ -101,4 +103,13 @@ def probe_body(model_id: str, check_kind: CheckKind) -> dict[str, object]:
 
     if check_kind is not CheckKind.BASIC_TEXT:
         body["stream_options"] = {"include_usage": True}
+    if check_kind is CheckKind.THINKING:
+        body["messages"] = [
+            {
+                "role": "user",
+                "content": "Compute 17 times 19. Think briefly, then reply with only the number.",
+            }
+        ]
+        body["enable_thinking"] = True
+        body["thinking_budget"] = MAX_COMPLETION_TOKENS // 2
     return body
