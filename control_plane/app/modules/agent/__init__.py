@@ -32,6 +32,7 @@ from control_plane.app.modules.agent.application.events import (
 )
 from control_plane.app.modules.agent.application.idempotency import AgentReplayUnavailable
 from control_plane.app.modules.agent.application.queries import (
+    AgentRunPage,
     AgentRunView,
     CanonicalEventPage,
 )
@@ -39,8 +40,12 @@ from control_plane.app.modules.agent.application.queries import (
     get_run as _get_run,
 )
 from control_plane.app.modules.agent.application.queries import (
+    get_run_metadata as _get_run_metadata,
+)
+from control_plane.app.modules.agent.application.queries import (
     list_events as _list_events,
 )
+from control_plane.app.modules.agent.application.queries import list_runs as _list_runs
 from control_plane.app.modules.agent.application.runs import (
     StartRunCommand,
     StartRunResult,
@@ -58,7 +63,12 @@ from control_plane.app.modules.agent.application.workflow import (
 from control_plane.app.modules.agent.application.workflow import (
     reconcile_workflow_commands as _reconcile_workflow_commands,
 )
-from control_plane.app.modules.agent.domain import AgentDefinition, CanonicalEventInput
+from control_plane.app.modules.agent.domain import (
+    AgentDefinition,
+    AgentRun,
+    CanonicalEventInput,
+    RunState,
+)
 
 
 def register_definition(
@@ -106,6 +116,26 @@ def get_run(db: Any, *, run_id: str, dependencies: AgentDependencies) -> AgentRu
     return _get_run(run_id, dependencies=dependencies)
 
 
+def get_run_metadata(db: Any, *, run_id: str, dependencies: AgentDependencies) -> AgentRun:
+    del db
+    return _get_run_metadata(run_id, dependencies=dependencies)
+
+
+def list_runs(
+    db: Any,
+    *,
+    workspace_id: str,
+    state: RunState | None,
+    cursor: str | None,
+    limit: int,
+    dependencies: AgentDependencies,
+) -> AgentRunPage:
+    del db
+    return _list_runs(
+        workspace_id, state=state, cursor=cursor, limit=limit, dependencies=dependencies
+    )
+
+
 def list_events(
     db: Any,
     *,
@@ -139,6 +169,8 @@ __all__ = [
     "dispatch_workflow_commands",
     "cancel_attempt",
     "get_run",
+    "get_run_metadata",
+    "list_runs",
     "list_definitions",
     "list_events",
     "register_definition",

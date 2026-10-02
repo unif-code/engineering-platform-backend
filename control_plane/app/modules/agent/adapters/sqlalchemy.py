@@ -14,15 +14,19 @@ from control_plane.app.modules.agent.domain import (
     AgentAuditAppend,
     AgentDefinition,
     AgentIdempotencyRecord,
+    AgentQueryUnavailable,
     AgentRun,
+    AgentRunListItem,
     AttemptMutation,
     CanonicalEventInput,
     CheckpointInput,
     EventAcceptanceReceipt,
+    EventCursorAnchorMissing,
     ExecutionBinding,
     IdempotencyCompletion,
     IdempotencyReservation,
     RunMutation,
+    RunState,
     WorkflowClaimMode,
     WorkflowCommand,
     WorkflowCommandState,
@@ -135,6 +139,71 @@ class SqlAlchemyAgentRepository:
             .one_or_none()
         )
         return self._run(row) if row is not None else None
+
+    def runs_page(
+        self,
+        workspace_id: str,
+        *,
+        state: RunState | None,
+        before_at: datetime | None,
+        before_id: str | None,
+        limit: int,
+    ) -> tuple[AgentRunListItem, ...]:
+        if type(limit) is not int or not 1 <= limit <= 101:
+            raise ValueError("bounded Run repository limit required")
+        state_filter = " AND run.state=:state" if state is not None else ""
+        cursor_filter = (
+            " AND (run.created_at,run.id)<(:before_at,CAST(:before_id AS UUID))"
+            if before_at is not None
+            else ""
+        )
+        rows = self.db.execute(
+            text(
+                "SELECT to_jsonb(run) AS run, to_jsonb(attempt) AS latest_attempt, "
+                "to_jsonb(binding) AS binding, to_jsonb(checkpoint) AS checkpoint "
+                "FROM agent.agent_run AS run "
+                "LEFT JOIN agent.agent_attempt AS attempt ON attempt.id=run.latest_attempt_id AND attempt.run_id=run.id "
+                "LEFT JOIN agent.execution_binding AS binding ON binding.attempt_id=attempt.id AND binding.id=attempt.binding_id "
+                "LEFT JOIN agent.checkpoint AS checkpoint ON checkpoint.id=attempt.checkpoint_id AND checkpoint.attempt_id=attempt.id "
+                "WHERE run.workspace_id=CAST(:workspace_id AS UUID)"
+                + state_filter
+                + cursor_filter
+                + " ORDER BY run.created_at DESC,run.id DESC LIMIT :limit"
+            ),
+            {
+                "workspace_id": workspace_id,
+                "state": state.value if state is not None else None,
+                "before_at": before_at,
+                "before_id": before_id,
+                "limit": limit,
+            },
+        ).mappings()
+        result = []
+        for row in rows:
+            try:
+                if row["latest_attempt"] is None or row["binding"] is None:
+                    raise ValueError("latest execution association missing")
+                attempt_values = _dto_values(row["latest_attempt"])
+                checkpoint_id = attempt_values.pop("checkpoint_id", None)
+                checkpoint = (
+                    self._checkpoint(row["checkpoint"]) if row["checkpoint"] is not None else None
+                )
+                if checkpoint_id is not None and (
+                    checkpoint is None or checkpoint.id != checkpoint_id
+                ):
+                    raise ValueError("checkpoint association missing")
+                result.append(
+                    AgentRunListItem(
+                        run=self._run(row["run"]),
+                        latest_attempt=AgentAttempt.model_validate(
+                            attempt_values | {"checkpoint": checkpoint}
+                        ),
+                        binding=self._binding(row["binding"]),
+                    )
+                )
+            except (ValueError, TypeError, KeyError):
+                raise AgentQueryUnavailable("Agent Run associations unavailable") from None
+        return tuple(result)
 
     def compare_and_set_run(
         self, run_id: str, *, expected_revision: int, mutation: RunMutation
@@ -378,15 +447,61 @@ class SqlAlchemyAgentRepository:
         )
         return self._event(row) if row is not None else None
 
-    def events_by_run_id(self, run_id: str) -> tuple[CanonicalEventInput, ...]:
+    def events_page_by_run_id(
+        self,
+        run_id: str,
+        *,
+        after_event_id: str | None,
+        limit: int,
+    ) -> tuple[CanonicalEventInput, ...]:
+        if type(limit) is not int or not 1 <= limit <= 101:
+            raise ValueError("bounded event repository limit required")
+        anchor = None
+        if after_event_id is not None:
+            anchor = (
+                self.db.execute(
+                    text(
+                        "SELECT attempt.number, event.runner_generation, event.sequence, event.event_id "
+                        "FROM agent.canonical_event AS event JOIN agent.agent_attempt AS attempt ON attempt.id=event.attempt_id "
+                        "WHERE attempt.run_id=CAST(:run_id AS UUID) AND event.event_id=CAST(:event_id AS UUID)"
+                    ),
+                    {"run_id": run_id, "event_id": after_event_id},
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if anchor is None:
+                raise EventCursorAnchorMissing("event cursor does not belong to Agent Run")
+        cursor_filter = (
+            (
+                " AND (attempt.number,event.runner_generation,event.sequence,event.event_id)>"
+                "(:number,:generation,:sequence,CAST(:event_id AS UUID))"
+            )
+            if anchor is not None
+            else ""
+        )
         rows = self.db.execute(
             text(
                 "SELECT event.* FROM agent.canonical_event AS event "
                 "JOIN agent.agent_attempt AS attempt ON attempt.id=event.attempt_id "
                 "WHERE attempt.run_id=CAST(:run_id AS UUID) "
-                "ORDER BY attempt.number, event.runner_generation, event.sequence, event.event_id"
+                + cursor_filter
+                + " ORDER BY attempt.number, event.runner_generation, event.sequence, event.event_id LIMIT :limit"
             ),
-            {"run_id": run_id},
+            {
+                "run_id": run_id,
+                "limit": limit,
+                **(
+                    {
+                        "number": anchor["number"],
+                        "generation": anchor["runner_generation"],
+                        "sequence": anchor["sequence"],
+                        "event_id": str(anchor["event_id"]),
+                    }
+                    if anchor is not None
+                    else {}
+                ),
+            },
         ).mappings()
         return tuple(self._event(row) for row in rows)
 

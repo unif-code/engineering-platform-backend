@@ -7,7 +7,7 @@ from enum import StrEnum
 from types import MappingProxyType
 from typing import Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 from control_plane.app.modules.agent.domain.errors import RepositoryWriteForbidden
 from control_plane.app.modules.agent.domain.types import (
@@ -222,6 +222,25 @@ class AgentAttempt(FrozenPlatformModel):
     @field_serializer("terminal_evidence")
     def serialize_terminal_evidence(self, value: Mapping[str, object] | None) -> object:
         return _thaw_json(value) if value is not None else None
+
+
+class AgentRunListItem(FrozenPlatformModel):
+    """One consistent read of a Run and its actual latest Attempt/Binding."""
+
+    run: AgentRun
+    latest_attempt: AgentAttempt
+    binding: ExecutionBinding
+
+    @model_validator(mode="after")
+    def same_execution(self) -> Self:
+        if (
+            self.latest_attempt.id != self.run.latest_attempt_id
+            or self.latest_attempt.run_id != self.run.id
+            or self.latest_attempt.binding_id != self.binding.id
+            or self.latest_attempt.binding_digest != self.binding.digest
+        ):
+            raise ValueError("Run/latest Attempt/Binding identities do not match")
+        return self
 
 
 class AttemptMutation(FrozenPlatformModel):

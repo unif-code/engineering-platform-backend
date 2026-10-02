@@ -36,3 +36,11 @@ class EventReplayConflict(AgentDomainError):
     """Raised when an event replay changes immutable canonical evidence."""
 
     pass
+
+
+class AgentQueryUnavailable(RuntimeError):
+    """Persisted read associations cannot be represented consistently."""
+
+
+class EventCursorAnchorMissing(ValueError):
+    """The existing event cursor does not identify an event in this Run."""

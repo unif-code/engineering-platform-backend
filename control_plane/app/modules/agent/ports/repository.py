@@ -10,6 +10,7 @@ from control_plane.app.modules.agent.domain import (
     AgentDefinition,
     AgentIdempotencyRecord,
     AgentRun,
+    AgentRunListItem,
     AttemptMutation,
     CanonicalEventInput,
     CheckpointInput,
@@ -18,6 +19,7 @@ from control_plane.app.modules.agent.domain import (
     IdempotencyCompletion,
     IdempotencyReservation,
     RunMutation,
+    RunState,
     WorkflowClaimMode,
     WorkflowCommand,
     WorkflowCommandState,
@@ -39,6 +41,16 @@ class AgentRepository(Protocol):
     def insert_run(self, run: AgentRun) -> AgentRun: ...
 
     def run_by_id(self, run_id: str, *, for_update: bool = False) -> AgentRun | None: ...
+
+    def runs_page(
+        self,
+        workspace_id: str,
+        *,
+        state: RunState | None,
+        before_at: datetime | None,
+        before_id: str | None,
+        limit: int,
+    ) -> tuple[AgentRunListItem, ...]: ...
 
     def compare_and_set_run(
         self,
@@ -76,7 +88,13 @@ class AgentRepository(Protocol):
 
     def event_receipt_by_id(self, event_id: str) -> EventAcceptanceReceipt | None: ...
 
-    def events_by_run_id(self, run_id: str) -> tuple[CanonicalEventInput, ...]: ...
+    def events_page_by_run_id(
+        self,
+        run_id: str,
+        *,
+        after_event_id: str | None,
+        limit: int,
+    ) -> tuple[CanonicalEventInput, ...]: ...
 
     def insert_checkpoint(
         self, attempt_id: str, checkpoint: CheckpointInput
