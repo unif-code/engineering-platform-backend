@@ -1,3 +1,4 @@
+import json
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, cast
@@ -266,14 +267,20 @@ def test_agent_run_route_registration_does_not_overwrite_operator_configuration(
     from sqlalchemy.exc import DBAPIError
 
     migration = importlib.import_module("migrations.authorization.0011_authorization_agent_queries")
+    update_meta = text(
+        'UPDATE "authorization".route_registry '
+        "SET meta=CAST(:meta AS JSONB) WHERE route_key=:route_key"
+    )
     with journey.database.owner.connect() as db:
         grants = db.execute(text('SELECT count(*) FROM "authorization"."grant"')).scalar_one()
+        original_meta = db.execute(
+            text('SELECT meta FROM "authorization".route_registry WHERE route_key=:route_key'),
+            {"route_key": "agent-runs"},
+        ).scalar_one()
     with journey.database.owner.begin() as db:
         db.execute(
-            text(
-                'UPDATE "authorization".route_registry '
-                "SET meta='{\"name\":\"Operator custom\"}' WHERE route_key='agent-runs'"
-            )
+            update_meta,
+            {"meta": json.dumps({"name": "Operator custom"}), "route_key": "agent-runs"},
         )
     try:
         with (
@@ -295,9 +302,6 @@ def test_agent_run_route_registration_does_not_overwrite_operator_configuration(
     finally:
         with journey.database.owner.begin() as db:
             db.execute(
-                text(
-                    'UPDATE "authorization".route_registry '
-                    'SET meta=\'{"name":"Agent 运行记录","order":21}\' '
-                    "WHERE route_key='agent-runs'"
-                )
+                update_meta,
+                {"meta": json.dumps(original_meta), "route_key": "agent-runs"},
             )
