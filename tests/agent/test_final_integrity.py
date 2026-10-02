@@ -1,11 +1,15 @@
 """Regression evidence for immutable receipts and authenticated command replay."""
 
 from dataclasses import replace
+from importlib import import_module
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
 import pytest
 from alembic import command as migration
 from alembic.config import Config
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
@@ -46,7 +50,7 @@ from tests.agent.test_events import (
     start,
     waiting_event,
 )
-from tests.agent.test_repository import EVENT, _seed
+from tests.agent.test_repository import ATTEMPT, BINDING, DEFINITION, EVENT, insert_predecessor_run
 from tests.agent.test_start_run import AuditFailingTransactionRunner
 
 
@@ -199,8 +203,11 @@ def test_receipts_are_append_only_and_downgrade_preserves_durable_evidence(
         with pytest.raises(DBAPIError, match="permission denied"):
             with isolated_agent_database.runtime.begin() as db:
                 db.execute(text(sql))
+    receipt_migration = import_module("migrations.agent.0003_event_acceptance_receipt")
     with pytest.raises(DBAPIError, match="durable receipts"):
-        migration.downgrade(Config("alembic.ini"), "agent@0002_workflow_claim_lease")
+        with isolated_agent_database.owner.begin() as db:
+            with patch.object(receipt_migration, "op", Operations(MigrationContext.configure(db))):
+                receipt_migration.downgrade()
     assert facts(isolated_agent_database) == before
 
 
@@ -210,7 +217,10 @@ def test_upgrade_keeps_predecessor_events_but_never_fabricates_acceptance(
     migration.downgrade(Config("alembic.ini"), "agent@0002_workflow_claim_lease")
     with isolated_agent_database.runtime.begin() as db:
         repository = SqlAlchemyAgentRepository(db)
-        _seed(repository)
+        repository.insert_definition(DEFINITION)
+        insert_predecessor_run(db)
+        repository.insert_attempt(ATTEMPT)
+        repository.insert_binding(ATTEMPT.id, BINDING)
         repository.append_event(EVENT)
     with isolated_agent_database.owner.connect() as db:
         old_event = dict(db.execute(text("SELECT * FROM agent.canonical_event")).mappings().one())
@@ -220,6 +230,55 @@ def test_upgrade_keeps_predecessor_events_but_never_fabricates_acceptance(
     assert before["event_acceptance_receipt"] == []
     with pytest.raises(EventReplayUnavailable, match="unavailable"):
         accept_workflow_event(None, event=EVENT, dependencies=dependencies(isolated_agent_database))
+    assert facts(isolated_agent_database) == before
+
+
+@pytest.mark.parametrize("historical_absence", [False, True])
+def test_start_replay_preserves_original_source_and_sealed_predecessor_receipts(
+    isolated_agent_database: IsolatedAgentDatabase,
+    historical_absence: bool,
+) -> None:
+    deps = dependencies(isolated_agent_database)
+    created = start(deps)
+    assert created.run.business_context is not None
+    if historical_absence:
+        material = deps.secret_manager.load()
+        with isolated_agent_database.owner.begin() as db:
+            sealed = db.execute(
+                text("SELECT sealed_response FROM agent.idempotency_key")
+            ).scalar_one()
+            envelope = SealedIdempotentEnvelope.model_validate_json(
+                unseal(sealed, material.idempotency_sealing_key)
+            )
+            body = envelope.response.model_dump()["body"]
+            del body["run"]["business_context"]
+            predecessor = envelope.model_copy(
+                update={"response": envelope.response.model_copy(update={"body": body})}
+            )
+            db.execute(
+                text("UPDATE agent.idempotency_key SET sealed_response=:sealed"),
+                {
+                    "sealed": seal(
+                        predecessor.model_dump_json().encode(), material.idempotency_sealing_key
+                    )
+                },
+            )
+            db.execute(
+                text(
+                    "UPDATE agent.agent_run SET requirement_id=NULL,work_item_id=NULL,"
+                    "assignment_id=NULL"
+                )
+            )
+    current_owner = Mock()
+    current_owner.resolve.side_effect = AssertionError(
+        "replay cannot re-resolve a reassigned owner"
+    )
+    before = facts(isolated_agent_database)
+    replay = start(replace(deps, requirement_context=current_owner))
+    assert replay.run.business_context == (
+        None if historical_absence else created.run.business_context
+    )
+    current_owner.resolve.assert_not_called()
     assert facts(isolated_agent_database) == before
 
 

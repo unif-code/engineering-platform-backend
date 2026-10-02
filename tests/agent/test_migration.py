@@ -214,7 +214,7 @@ def test_workflow_claim_lease_migration_has_exact_types_checks_index_and_fresh_h
     )
     script_heads = set(ScriptDirectory.from_config(Config("alembic.ini")).get_heads())
     assert installed_heads <= script_heads
-    assert "0003_event_acceptance_receipt" in installed_heads
+    assert "0004_run_business_context" in installed_heads
     assert "0001_agent_control_plane" not in installed_heads
 
 
@@ -658,3 +658,99 @@ def test_agent_database_constraints_reject_invalid_platform_facts(
                     "'40000000-0000-0000-0000-000000000905', 'ACTIVE', 1)"
                 )
             )
+
+
+def test_run_source_migration_preserves_predecessor_null_without_guessing_goal_ref(
+    isolated_agent_database: IsolatedAgentDatabase,
+) -> None:
+    from control_plane.app.modules.agent.adapters.sqlalchemy import SqlAlchemyAgentRepository
+    from control_plane.app.modules.agent.domain import RunMutation, RunState
+    from tests.agent.test_repository import (
+        ATTEMPT,
+        BINDING,
+        DEFINITION,
+        RUN,
+        insert_predecessor_run,
+    )
+
+    config = Config("alembic.ini")
+    command.downgrade(config, "agent@0003_event_acceptance_receipt")
+    with isolated_agent_database.runtime.begin() as db:
+        repository = SqlAlchemyAgentRepository(db)
+        repository.insert_definition(DEFINITION)
+        insert_predecessor_run(db)
+        repository.insert_attempt(ATTEMPT)
+        repository.insert_binding(ATTEMPT.id, BINDING)
+    with isolated_agent_database.owner.connect() as db:
+        original = dict(db.execute(text("SELECT * FROM agent.agent_run")).mappings().one())
+    command.upgrade(config, "heads")
+    with isolated_agent_database.runtime.begin() as db:
+        row = dict(db.execute(text("SELECT * FROM agent.agent_run")).mappings().one())
+        assert {key: row[key] for key in original} == original
+        assert [row[key] for key in ("requirement_id", "work_item_id", "assignment_id")] == [
+            None,
+            None,
+            None,
+        ]
+        repository = SqlAlchemyAgentRepository(db)
+        legacy = repository.run_by_id(RUN.id)
+        assert legacy is not None and legacy.business_context is None
+        updated = repository.compare_and_set_run(
+            RUN.id,
+            expected_revision=1,
+            mutation=RunMutation(
+                state=RunState.ACTIVE,
+                latest_attempt_id=ATTEMPT.id,
+                now=RUN.updated_at,
+            ),
+        )
+        assert updated is not None and updated.business_context is None and updated.revision == 2
+
+
+def test_run_source_columns_reject_partial_facts_and_runtime_updates_or_deletion(
+    isolated_agent_database: IsolatedAgentDatabase,
+) -> None:
+    from control_plane.app.modules.agent.adapters.sqlalchemy import SqlAlchemyAgentRepository
+    from control_plane.app.modules.agent.domain import RunMutation, RunState
+    from tests.agent.test_repository import RUN, _seed
+
+    database = isolated_agent_database
+    with database.runtime.begin() as db:
+        _seed(SqlAlchemyAgentRepository(db))
+    with database.owner.connect() as db:
+        source_columns = db.execute(
+            text(
+                "SELECT column_name,data_type,is_nullable FROM information_schema.columns "
+                "WHERE table_schema='agent' AND table_name='agent_run' "
+                "AND column_name IN ('requirement_id','work_item_id','assignment_id')"
+            )
+        ).all()
+    assert set(source_columns) == {
+        (name, "uuid", "YES") for name in ("requirement_id", "work_item_id", "assignment_id")
+    }
+    for column in ("requirement_id", "work_item_id", "assignment_id"):
+        with pytest.raises(DBAPIError, match="permission denied"):
+            with database.runtime.begin() as db:
+                db.execute(text(f"UPDATE agent.agent_run SET {column}={column}"))
+    with pytest.raises(DBAPIError, match="permission denied"):
+        with database.runtime.begin() as db:
+            db.execute(text("DELETE FROM agent.agent_run"))
+    with pytest.raises(DBAPIError, match="ck_agent_run_business_context"):
+        with database.owner.begin() as db:
+            db.execute(text("UPDATE agent.agent_run SET assignment_id=NULL"))
+    with database.runtime.begin() as db:
+        updated = SqlAlchemyAgentRepository(db).compare_and_set_run(
+            RUN.id,
+            expected_revision=1,
+            mutation=RunMutation(
+                state=RunState.ACTIVE,
+                latest_attempt_id=RUN.latest_attempt_id,
+                now=RUN.updated_at,
+            ),
+        )
+        assert updated is not None and updated.business_context == RUN.business_context
+        assert updated.revision == 2
+    with pytest.raises(DBAPIError, match="business source snapshots"):
+        command.downgrade(Config("alembic.ini"), "agent@0003_event_acceptance_receipt")
+    with database.runtime.connect() as db:
+        assert SqlAlchemyAgentRepository(db).run_by_id(RUN.id) == updated

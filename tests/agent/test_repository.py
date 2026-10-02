@@ -1,9 +1,10 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from threading import Barrier, Event, Thread
+from unittest.mock import Mock
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import Connection, text
 from sqlalchemy.exc import DBAPIError
 
 from control_plane.app.modules.agent.adapters.sqlalchemy import (
@@ -15,7 +16,9 @@ from control_plane.app.modules.agent.domain import (
     AgentAuditAppend,
     AgentDefinition,
     AgentIdempotencyRecord,
+    AgentQueryUnavailable,
     AgentRun,
+    AgentRunBusinessContext,
     AttemptMutation,
     AttemptState,
     CanonicalEventInput,
@@ -75,6 +78,11 @@ ATTEMPT = AgentAttempt(
 RUN = AgentRun(
     id=ATTEMPT.run_id,
     workspace_id="10000000-0000-0000-0000-000000000815",
+    business_context=AgentRunBusinessContext(
+        requirement_id="10000000-0000-0000-0000-000000000816",
+        work_item_id="10000000-0000-0000-0000-000000000817",
+        assignment_id="10000000-0000-0000-0000-000000000818",
+    ),
     goal_ref="goal:immutable-repository-test",
     created_by="employee-815",
     definition_id=DEFINITION.id,
@@ -124,6 +132,47 @@ def _seed(repository: SqlAlchemyAgentRepository) -> None:
     assert repository.insert_run(RUN) == RUN
     assert repository.insert_attempt(ATTEMPT) == ATTEMPT
     assert repository.insert_binding(ATTEMPT.id, BINDING) == BINDING
+
+
+def insert_predecessor_run(db: Connection, run: AgentRun = RUN) -> None:
+    """Seed the pre-0004 contract explicitly, without a runtime compatibility path."""
+    db.execute(
+        text(
+            "INSERT INTO agent.agent_run (id, workspace_id, goal_ref, created_by, definition_id, "
+            "definition_version, latest_attempt_id, state, revision, created_at, updated_at) "
+            "VALUES (:id, :workspace_id, :goal_ref, :created_by, :definition_id, "
+            ":definition_version, :latest_attempt_id, :state, :revision, :created_at, :updated_at)"
+        ),
+        run.model_dump(mode="json", exclude={"business_context"}),
+    )
+
+
+def test_new_run_insert_rejects_missing_source_before_sql() -> None:
+    db = Mock()
+    with pytest.raises(ValueError, match="complete business context"):
+        SqlAlchemyAgentRepository(db).insert_run(RUN.model_copy(update={"business_context": None}))
+    db.execute.assert_not_called()
+
+
+@pytest.mark.parametrize("missing", [None, "assignment_id", "work_item_id", "requirement_id"])
+def test_run_storage_maps_explicit_null_but_rejects_partial_source(missing: str | None) -> None:
+    row = RUN.model_dump(exclude={"business_context"}) | {
+        "requirement_id": None,
+        "work_item_id": None,
+        "assignment_id": None,
+    }
+    assert SqlAlchemyAgentRepository._run(row).business_context is None
+    assert RUN.business_context is not None
+    row.update(RUN.business_context.model_dump())
+    if missing is None:
+        assert SqlAlchemyAgentRepository._run(row) == RUN
+    else:
+        row[missing] = None
+        with pytest.raises(AgentQueryUnavailable):
+            SqlAlchemyAgentRepository._run(row)
+        del row[missing]
+        with pytest.raises(AgentQueryUnavailable):
+            SqlAlchemyAgentRepository._run(row)
 
 
 def test_repository_port_contains_only_platform_dtos_and_uow_seams() -> None:

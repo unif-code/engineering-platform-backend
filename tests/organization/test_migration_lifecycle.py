@@ -72,7 +72,7 @@ def test_fresh_database_upgrade_heads_installs_all_visible_module_heads(
             "0001_workspace_base",
             "0012_auth_agent_control",
             "0009_req_formal_owner_denial",
-            "0003_event_acceptance_receipt",
+            "0004_run_business_context",
             "0011_sc_delivery_join",
         }
         # Alembic replaces dependency heads in the version table with the revision
@@ -85,7 +85,7 @@ def test_fresh_database_upgrade_heads_installs_all_visible_module_heads(
             "0011_identity_reauth_consumption",
             "0012_auth_agent_control",
             "0009_req_formal_owner_denial",
-            "0003_event_acceptance_receipt",
+            "0004_run_business_context",
             "0011_sc_delivery_join",
         }
         assert set(inspect(engine).get_table_names(schema="organization")) == {

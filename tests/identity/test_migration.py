@@ -280,7 +280,7 @@ def test_current_alembic_heads_are_installed(identity_owner_engine: Engine) -> N
         "0010_audit_model_worker_grant",
         "0011_identity_reauth_consumption",
         "0012_auth_agent_control",
-        "0003_event_acceptance_receipt",
+        "0004_run_business_context",
         "0011_sc_delivery_join",
     }
 

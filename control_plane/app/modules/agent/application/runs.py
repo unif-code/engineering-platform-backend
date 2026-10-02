@@ -1,4 +1,5 @@
 import hashlib
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -17,6 +18,7 @@ from control_plane.app.modules.agent.domain import (
     AgentAttempt,
     AgentAuditAppend,
     AgentRun,
+    AgentRunBusinessContext,
     AttemptState,
     CanonicalEventInput,
     EventAcceptanceReceipt,
@@ -31,6 +33,7 @@ from control_plane.app.modules.agent.domain.types import PlatformReference, Plat
 from control_plane.app.modules.agent.ports import AgentUnitOfWork
 from control_plane.app.modules.agent.ports.runtime import (
     ExecutionBindingRequest,
+    RequirementExecutionContext,
     RequirementExecutionRequest,
     ResolvedActorReference,
 )
@@ -88,9 +91,25 @@ def start_run(command: StartRunCommand, *, dependencies: AgentDependencies) -> S
                 work_item_id=command.work_item_id,
             )
         )
-        if context.workspace_id != command.workspace_id:
+        try:
+            context = RequirementExecutionContext.model_validate(context.model_dump(mode="python"))
+            workspace_id = str(UUID(context.workspace_id))
+            business_context = AgentRunBusinessContext(
+                requirement_id=context.requirement_id,
+                work_item_id=context.work_item_id,
+                assignment_id=context.assignment_id,
+            )
+        except ValueError:
             raise InvalidRequirementExecutionContext(
-                "Requirement context workspace does not match Agent workspace"
+                "Requirement context identities are invalid"
+            ) from None
+        if (
+            workspace_id != command.workspace_id
+            or business_context.requirement_id != command.requirement_id
+            or business_context.work_item_id != command.work_item_id
+        ):
+            raise InvalidRequirementExecutionContext(
+                "Requirement context identities do not match Agent request"
             )
         definition = repository.definition_by_id(command.definition_id, command.definition_version)
         if definition is None:
@@ -125,7 +144,8 @@ def start_run(command: StartRunCommand, *, dependencies: AgentDependencies) -> S
         ).model_copy(update={"event_sequence": 1})
         run = AgentRun(
             id=run_id,
-            workspace_id=context.workspace_id,
+            workspace_id=workspace_id,
+            business_context=business_context,
             goal_ref=context.goal_ref,
             created_by=actor.reference,
             definition_id=definition.id,

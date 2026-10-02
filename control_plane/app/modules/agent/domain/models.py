@@ -182,9 +182,16 @@ class CheckpointInput(FrozenPlatformModel):
     classification: PlatformName
 
 
+class AgentRunBusinessContext(FrozenPlatformModel):
+    requirement_id: PlatformUUID
+    work_item_id: PlatformUUID
+    assignment_id: PlatformUUID
+
+
 class AgentRun(FrozenPlatformModel):
     id: PlatformUUID
     workspace_id: PlatformUUID
+    business_context: AgentRunBusinessContext | None = None
     goal_ref: PlatformReference
     created_by: PlatformReference
     definition_id: PlatformUUID

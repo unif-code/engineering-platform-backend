@@ -141,6 +141,24 @@ def test_transition_table_matches_the_approved_state_machine() -> None:
     assert ALLOWED_TRANSITIONS == EXPECTED_TRANSITIONS
 
 
+@pytest.mark.parametrize("field", ["requirement_id", "work_item_id", "assignment_id"])
+def test_business_source_requires_all_valid_uuid_identities(field: str) -> None:
+    from control_plane.app.modules.agent.domain import AgentRun, AgentRunBusinessContext
+    from tests.agent.test_repository import RUN
+
+    assert RUN.business_context is not None
+    values = RUN.business_context.model_dump()
+    with pytest.raises(ValueError):
+        AgentRunBusinessContext.model_validate({**values, field: "not-a-uuid"})
+    del values[field]
+    with pytest.raises(ValueError):
+        AgentRunBusinessContext.model_validate(values)
+    assert (
+        AgentRun.model_validate(RUN.model_dump(exclude={"business_context"})).business_context
+        is None
+    )
+
+
 @pytest.mark.parametrize(("source", "target"), GENERIC_TRANSITION_PAIRS)
 def test_transition_attempt_allows_each_supported_generic_transition(
     source: AttemptState,

@@ -98,7 +98,7 @@ def test_fresh_upgrade_installs_independent_heads_and_deterministic_seed(
             "0001_workspace_base",
             "0012_auth_agent_control",
             "0009_req_formal_owner_denial",
-            "0003_event_acceptance_receipt",
+            "0004_run_business_context",
             "0011_sc_delivery_join",
         }
         assert installed_heads == {
@@ -108,7 +108,7 @@ def test_fresh_upgrade_installs_independent_heads_and_deterministic_seed(
             "0011_identity_reauth_consumption",
             "0012_auth_agent_control",
             "0009_req_formal_owner_denial",
-            "0003_event_acceptance_receipt",
+            "0004_run_business_context",
             "0011_sc_delivery_join",
         }
         assert counts == (7, 1, 1, 1)

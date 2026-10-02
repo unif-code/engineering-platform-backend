@@ -4,6 +4,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from threading import Barrier, Thread
+from types import SimpleNamespace
+from typing import Any, cast
+from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
@@ -41,6 +44,7 @@ from control_plane.app.modules.agent.ports.runtime import (
     RequirementExecutionRequest,
 )
 from tests.agent.conftest import IsolatedAgentDatabase, TestSecretManager
+from tests.shared.test_idempotency_contract import MemoryRepository
 
 NOW = datetime(2026, 8, 31, 9, 0, tzinfo=UTC)
 WORKSPACE_ID = "10000000-0000-0000-0000-000000000901"
@@ -69,6 +73,105 @@ class StaticRequirementContext:
             assignment_id=self.assignment_id,
             goal_ref=f"requirement:{command.requirement_id}:work-item:{command.work_item_id}",
         )
+
+
+@pytest.fixture
+def start_application(monkeypatch: pytest.MonkeyPatch) -> tuple[AgentDependencies, Mock, Mock]:
+    from control_plane.app.modules.agent.application import idempotency
+    from control_plane.app.modules.agent.ports import AgentRepository, AgentTransactionRunner
+    from tests.agent.test_repository import DEFINITION
+
+    # Real start and shared sealed-command engine; PostgreSQL tests prove persistence/rollback.
+    memory = MemoryRepository()
+    monkeypatch.setattr(idempotency, "_SharedRepository", lambda _repository: memory)
+    repository = Mock(spec=AgentRepository)
+    repository.definition_by_id.return_value = DEFINITION.model_copy(update={"id": DEFINITION_ID})
+    for name in ("insert_run", "insert_attempt", "append_event", "insert_workflow_command"):
+        getattr(repository, name).side_effect = lambda value: value
+    repository.insert_binding.side_effect = lambda _attempt_id, binding: binding
+    context = Mock()
+    context.resolve.return_value = StaticRequirementContext().resolve(
+        RequirementExecutionRequest(
+            workspace_id=WORKSPACE_ID, requirement_id=REQUIREMENT_ID, work_item_id=WORK_ITEM_ID
+        )
+    )
+    uow = SimpleNamespace(repository=lambda: repository, append_audit_event=Mock())
+    dependencies = AgentDependencies(
+        transaction_runner=cast(AgentTransactionRunner, lambda operation: operation(uow)),
+        requirement_context=context,
+        binding_policy=DevExecutionBindingPolicy(),
+        definition_availability=AlwaysActiveDefinitionAvailability(),
+        actor_resolver=DevActorResolver(),
+        clock=lambda: NOW,
+        new_id=DeterministicIds(),
+        cursor_codec=DevEventCursorCodec(),
+        secret_manager=TestSecretManager(),
+    )
+    return dependencies, repository, context
+
+
+def test_start_copies_complete_owner_context_and_replays_without_resolving_it_again(
+    start_application: tuple[AgentDependencies, Mock, Mock],
+) -> None:
+    dependencies, repository, context = start_application
+    first = start_run(None, command=_command(), dependencies=dependencies)
+    assert first.run.model_dump()["business_context"] == {
+        "requirement_id": REQUIREMENT_ID,
+        "work_item_id": WORK_ITEM_ID,
+        "assignment_id": ASSIGNMENT_ID,
+    }
+    context.resolve.side_effect = AssertionError(
+        "historical replay must not resolve current Assignment"
+    )
+    replay = start_run(None, command=_command(), dependencies=dependencies)
+    assert replay == first
+    assert context.resolve.call_count == repository.insert_run.call_count == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("workspace_id", "10000000-0000-0000-0000-000000009999"),
+        ("requirement_id", "10000000-0000-0000-0000-000000009999"),
+        ("work_item_id", "10000000-0000-0000-0000-000000009999"),
+        ("assignment_id", None),
+        ("assignment_id", ""),
+        ("assignment_id", "not-a-uuid"),
+    ],
+)
+def test_start_rejects_incomplete_or_mismatched_owner_context_before_inserting_facts(
+    start_application: tuple[AgentDependencies, Mock, Mock],
+    field: str,
+    value: Any,
+) -> None:
+    from control_plane.app.modules.agent.application.errors import (
+        InvalidRequirementExecutionContext,
+    )
+
+    dependencies, repository, context = start_application
+    context.resolve.return_value = RequirementExecutionContext.model_construct(
+        **{**context.resolve.return_value.model_dump(), field: value}
+    )
+    with pytest.raises(InvalidRequirementExecutionContext):
+        start_run(None, command=_command(), dependencies=dependencies)
+    repository.insert_run.assert_not_called()
+    repository.insert_workflow_command.assert_not_called()
+
+
+def test_start_revalidates_an_owner_context_missing_assignment(
+    start_application: tuple[AgentDependencies, Mock, Mock],
+) -> None:
+    from control_plane.app.modules.agent.application.errors import (
+        InvalidRequirementExecutionContext,
+    )
+
+    dependencies, repository, context = start_application
+    context.resolve.return_value = RequirementExecutionContext.model_construct(
+        **context.resolve.return_value.model_dump(exclude={"assignment_id"})
+    )
+    with pytest.raises(InvalidRequirementExecutionContext):
+        start_run(None, command=_command(), dependencies=dependencies)
+    repository.insert_run.assert_not_called()
 
 
 class DeterministicIds:
@@ -240,6 +343,14 @@ def test_start_persists_one_queued_attempt_binding_command_and_safe_audit(
 
     result = start_run(None, command=_command(), dependencies=dependencies)
 
+    assert result.run.business_context is not None
+    assert result.run.business_context.model_dump() == {
+        "requirement_id": REQUIREMENT_ID,
+        "work_item_id": WORK_ITEM_ID,
+        "assignment_id": ASSIGNMENT_ID,
+    }
+    with isolated_agent_database.runtime.connect() as db:
+        assert SqlAlchemyAgentRepository(db).run_by_id(result.run.id) == result.run
     assert result.attempt.state is AttemptState.QUEUED
     assert result.binding.source == "DEV_FAKE"
     assert result.binding.runtime_permissions == (
@@ -712,3 +823,41 @@ def test_register_definition_creates_an_immutable_new_version(
     assert created.version == 2
     assert [item.version for item in list_definitions(None, dependencies=dependencies)] == [1, 2]
     assert _agent_audit_count(isolated_agent_database) == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("workspace_id", "10000000-0000-0000-0000-000000009999"),
+        ("requirement_id", "10000000-0000-0000-0000-000000009999"),
+        ("work_item_id", "10000000-0000-0000-0000-000000009999"),
+        ("assignment_id", None),
+        ("assignment_id", "not-a-uuid"),
+    ],
+)
+def test_invalid_owner_source_rolls_back_the_real_start_transaction(
+    isolated_agent_database: IsolatedAgentDatabase,
+    field: str,
+    value: Any,
+) -> None:
+    from control_plane.app.modules.agent.application.errors import (
+        InvalidRequirementExecutionContext,
+    )
+    from tests.agent.test_final_integrity import facts
+
+    context = Mock()
+    context.resolve.return_value = RequirementExecutionContext.model_construct(
+        **{
+            "workspace_id": WORKSPACE_ID,
+            "requirement_id": REQUIREMENT_ID,
+            "work_item_id": WORK_ITEM_ID,
+            "assignment_id": ASSIGNMENT_ID,
+            "goal_ref": "goal:opaque-unparsed",
+            field: value,
+        }
+    )
+    dependencies = replace(_dependencies(isolated_agent_database), requirement_context=context)
+    before = facts(isolated_agent_database)
+    with pytest.raises(InvalidRequirementExecutionContext):
+        start_run(None, command=_command(), dependencies=dependencies)
+    assert facts(isolated_agent_database) == before

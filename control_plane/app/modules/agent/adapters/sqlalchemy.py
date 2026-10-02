@@ -16,6 +16,7 @@ from control_plane.app.modules.agent.domain import (
     AgentIdempotencyRecord,
     AgentQueryUnavailable,
     AgentRun,
+    AgentRunBusinessContext,
     AgentRunListItem,
     AttemptMutation,
     CanonicalEventInput,
@@ -111,17 +112,21 @@ class SqlAlchemyAgentRepository:
 
     def insert_run(self, run: AgentRun) -> AgentRun:
         run = AgentRun.model_validate(run.model_dump(mode="python"))
+        if run.business_context is None:
+            raise ValueError("New Agent Run requires a complete business context")
         row = (
             self.db.execute(
                 text(
                     "INSERT INTO agent.agent_run "
                     "(id, workspace_id, goal_ref, created_by, definition_id, definition_version, "
-                    "latest_attempt_id, state, revision, created_at, updated_at) VALUES "
+                    "latest_attempt_id, state, revision, created_at, updated_at, "
+                    "requirement_id, work_item_id, assignment_id) VALUES "
                     "(:id, :workspace_id, :goal_ref, :created_by, :definition_id, "
                     ":definition_version, :latest_attempt_id, :state, :revision, "
-                    ":created_at, :updated_at) RETURNING *"
+                    ":created_at, :updated_at, :requirement_id, :work_item_id, :assignment_id) RETURNING *"
                 ),
-                run.model_dump(mode="json"),
+                run.model_dump(mode="json", exclude={"business_context"})
+                | run.business_context.model_dump(mode="json"),
             )
             .mappings()
             .one()
@@ -774,7 +779,20 @@ class SqlAlchemyAgentRepository:
 
     @staticmethod
     def _run(row: Any) -> AgentRun:
-        return AgentRun.model_validate(_dto_values(row))
+        values = _dto_values(row)
+        try:
+            source = {
+                name: values.pop(name)
+                for name in ("requirement_id", "work_item_id", "assignment_id")
+            }
+            values["business_context"] = (
+                None
+                if all(value is None for value in source.values())
+                else AgentRunBusinessContext.model_validate(source)
+            )
+        except (ValueError, TypeError, KeyError):
+            raise AgentQueryUnavailable("Agent Run business context unavailable") from None
+        return AgentRun.model_validate(values)
 
     def _attempt(self, row: Any) -> AgentAttempt:
         values = _dto_values(row)
