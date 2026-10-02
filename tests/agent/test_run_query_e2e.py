@@ -216,7 +216,9 @@ def test_default_session_directory_details_events_navigation_and_readonly_facts(
             navigation = client.get("/api/v1/navigation").json()
             route = next(row for row in navigation if row["routeKey"] == "agent-runs")
             assert route["capability"] == "agent.run.read" and route["scopeType"] == "WORKSPACE"
-            assert "actionCapabilities" not in route["meta"]
+            assert route["meta"]["actionCapabilities"] == [
+                {"capability": "agent.run.control", "scopeType": "WORKSPACE"}
+            ]
     external.assert_not_called()
     assert agent_facts(journey) == before
     _revoke(journey, journey.member_id, "agent.run.read")

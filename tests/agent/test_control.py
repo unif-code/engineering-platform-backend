@@ -662,35 +662,50 @@ def test_terminal_attempt_cannot_resume(
         )
 
 
-def test_terminal_cancel_is_safe_without_another_workflow_command(
+@pytest.mark.parametrize(
+    "state",
+    [
+        AttemptState.CANCELING,
+        AttemptState.CANCELED,
+        AttemptState.TIMED_OUT,
+        AttemptState.SUCCEEDED,
+        AttemptState.FAILED,
+    ],
+)
+def test_canceling_and_terminal_cancel_are_safe_without_another_workflow_command(
     isolated_agent_database: IsolatedAgentDatabase,
+    state: AttemptState,
 ) -> None:
-    deps = dependencies(isolated_agent_database)
-    started = start(deps)
-    canceling = cancel_attempt(None, command=cancel_command(started, revision=3), dependencies=deps)
-    accept_workflow_event(
-        None,
-        event=event(
-            started.attempt.id,
-            event_id="10000000-0000-0000-0000-000000001312",
-            event_type="ATTEMPT_CANCELED",
-            sequence=2,
-        ),
-        dependencies=deps,
-    )
-
-    terminal = cancel_attempt(
-        None,
-        command=cancel_command(
-            started, revision=canceling.attempt.revision + 1, key="cancel-terminal-901"
-        ),
-        dependencies=deps,
-    )
-
-    assert terminal.attempt.state is AttemptState.CANCELED
-    assert terminal.command is None
-    with isolated_agent_database.owner.connect() as db:
-        assert db.execute(text("SELECT count(*) FROM agent.workflow_command")).scalar_one() == 2
+    database = isolated_agent_database
+    if state in {AttemptState.SUCCEEDED, AttemptState.FAILED}:
+        deps, started, current = prepare_finalizing(database)
+    else:
+        deps = dependencies(database)
+        started = start(deps)
+        current = cancel_attempt(
+            None, command=cancel_command(started, revision=3), dependencies=deps
+        ).attempt
+    if state is not AttemptState.CANCELING:
+        current = accept_workflow_event(
+            None,
+            event=event(
+                current.id,
+                event_id=str(uuid4()),
+                event_type=f"ATTEMPT_{state.value}",
+                sequence=current.event_sequence + 1,
+            ),
+            dependencies=deps,
+        ).attempt
+    before = persisted_control_state(database, current.id)
+    command = cancel_command(started, revision=current.revision, key="cancel-safe-noop")
+    result = cancel_attempt(None, command=command, dependencies=deps)
+    assert result.attempt == current and result.command is None
+    assert cancel_attempt(None, command=command, dependencies=deps) == result
+    after = persisted_control_state(database, current.id)
+    for name in ("attempt", "binding", "checkpoint", "workflow"):
+        assert after[name] == before[name]
+    assert len(after["idempotency"]) == len(before["idempotency"]) + 1
+    assert len(after["audit"]) == len(before["audit"]) + 1
 
 
 def test_resume_rejects_binding_digest_mismatch_without_a_command(

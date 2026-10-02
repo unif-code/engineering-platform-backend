@@ -191,6 +191,7 @@ from control_plane.app.shared.security import FileSecretManager
 
 _DEFAULT_NAVIGATION_ACTION_CAPABILITIES = frozenset(
     {
+        "agent.run.control",
         "platform.model.manage",
         WORK_ITEM_CREATE_CAPABILITY,
         WORK_ITEM_ASSIGN_CAPABILITY,
