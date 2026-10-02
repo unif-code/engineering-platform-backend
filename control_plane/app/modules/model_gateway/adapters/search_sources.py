@@ -64,7 +64,9 @@ def _public_reference(value: object) -> str:
         if not isinstance(value, str) or not 8 <= len(value) <= MAX_SOURCE_URL_LENGTH:
             raise ValueError
         decoded = unquote(value)
-        if any(ord(char) <= 32 or ord(char) == 127 for char in value + decoded):
+        if any(ord(char) <= 32 or ord(char) == 127 for char in value) or any(
+            ord(char) < 32 or ord(char) == 127 for char in decoded
+        ):
             raise ValueError
         _non_secret(decoded)
         parts = urlsplit(value)

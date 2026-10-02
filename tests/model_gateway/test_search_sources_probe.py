@@ -325,3 +325,21 @@ def test_search_timeout_close_failure_and_oversize_never_replay(
     assert timed.send(prepared, "synthetic-model", CheckKind.SEARCH_SOURCES).state == "UNKNOWN"
     assert len(calls) == 2
     assert run_search(tmp_path, b"x" * 65537).reason == "RESPONSE_TOO_LARGE"
+
+
+def test_public_source_preserves_legal_percent_encoded_path_spaces(tmp_path: Path) -> None:
+    result = run_search(
+        tmp_path,
+        search_response(
+            [
+                {
+                    "type": "url",
+                    "url": "https://docs.example.com/Reference%20Guide?tracking=private#part",
+                },
+            ]
+        ),
+    )
+    assert result.state == "SUCCEEDED"
+    assert result.model_dump(mode="json")["observation"]["sources"] == [
+        {"call_id": "search-1", "sanitized_url": "https://docs.example.com/Reference%20Guide"},
+    ]
