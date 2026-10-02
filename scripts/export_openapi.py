@@ -1,4 +1,4 @@
-"""导出公开与私有 OpenAPI Artifact；--check 同时校验两个入库文件。"""
+"""导出公开/私有 OpenAPI 与 Model 来源清单 Schema；--check 校验所有入库构件。"""
 
 import json
 import sys
@@ -6,9 +6,11 @@ from pathlib import Path
 
 from control_plane.app.bootstrap.app import create_app
 from control_plane.app.bootstrap.sandbox_controller import create_sandbox_controller_app
+from control_plane.app.modules.model_gateway.adapters.material_sources import MaterialSourceManifest
 
 OUT = Path(__file__).resolve().parents[1] / "openapi.json"
 SANDBOX_OUT = Path(__file__).resolve().parents[1] / "sandbox-openapi.json"
+MATERIAL_SOURCES_OUT = OUT.parent / "model-material-sources.schema.json"
 
 
 def render() -> str:
@@ -27,10 +29,23 @@ def render_sandbox() -> str:
     )
 
 
+def render_material_sources() -> str:
+    return (
+        json.dumps(
+            MaterialSourceManifest.model_json_schema(by_alias=True),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
 def _artifacts() -> tuple[tuple[Path, bytes], ...]:
     return (
         (OUT, render().encode("utf-8")),
         (SANDBOX_OUT, render_sandbox().encode("utf-8")),
+        (MATERIAL_SOURCES_OUT, render_material_sources().encode("utf-8")),
     )
 
 
@@ -49,7 +64,7 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
-        print("openapi.json 与 sandbox-openapi.json 均与代码一致")
+        print("OpenAPI 与 Model 来源清单 Schema 均与代码一致")
         return 0
     for path, content in artifacts:
         path.write_bytes(content)

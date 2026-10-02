@@ -14,6 +14,14 @@ from scripts import export_openapi
 from scripts.export_openapi import render, render_sandbox
 
 
+def test_material_source_manifest_schema_is_exported_from_the_actual_port() -> None:
+    assert hasattr(export_openapi, "render_material_sources"), "manifest schema export is missing"
+    schema = json.loads(export_openapi.render_material_sources())
+    assert schema["additionalProperties"] is False
+    assert schema["properties"]["sources"]["maxItems"] == 100
+    assert schema["x-maxManifestBytes"] == schema["x-maxCopyBytes"] == 65536
+
+
 def test_render_is_deterministic_and_versioned() -> None:
     first, second = render(), render()
     assert first == second
@@ -132,11 +140,14 @@ def test_check_mode_passes_after_export(
     sandbox_artifact = tmp_path / "sandbox-openapi.json"
     monkeypatch.setattr(export_openapi, "OUT", artifact)
     monkeypatch.setattr(export_openapi, "SANDBOX_OUT", sandbox_artifact)
+    source_schema = tmp_path / "model-material-sources.schema.json"
+    monkeypatch.setattr(export_openapi, "MATERIAL_SOURCES_OUT", source_schema)
 
     monkeypatch.setattr(sys, "argv", ["export_openapi.py"])
     assert export_openapi.main() == 0
     assert artifact.read_text(encoding="utf-8") == render()
     assert sandbox_artifact.read_text(encoding="utf-8") == render_sandbox()
+    assert source_schema.read_text(encoding="utf-8") == export_openapi.render_material_sources()
 
     monkeypatch.setattr(sys, "argv", ["export_openapi.py", "--check"])
     assert export_openapi.main() == 0

@@ -1,0 +1,96 @@
+{
+  "$defs": {
+    "MaterialSourceEntry": {
+      "additionalProperties": false,
+      "properties": {
+        "copySha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Copysha256",
+          "type": "string"
+        },
+        "externalVersion": {
+          "anyOf": [
+            {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Externalversion"
+        },
+        "relativePath": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Relativepath",
+          "type": "string"
+        },
+        "sourceId": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Sourceid",
+          "type": "string"
+        },
+        "sourceReference": {
+          "maxLength": 2048,
+          "minLength": 5,
+          "title": "Sourcereference",
+          "type": "string"
+        },
+        "sourceVersion": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Sourceversion",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sourceId",
+        "sourceVersion",
+        "sourceReference",
+        "externalVersion",
+        "relativePath",
+        "copySha256"
+      ],
+      "title": "MaterialSourceEntry",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Server-approved metadata only; byte bounds apply to manifest and every copy.",
+  "properties": {
+    "environment": {
+      "maxLength": 32,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$",
+      "title": "Environment",
+      "type": "string"
+    },
+    "schemaVersion": {
+      "const": 1,
+      "title": "Schemaversion",
+      "type": "integer"
+    },
+    "sources": {
+      "items": {
+        "$ref": "#/$defs/MaterialSourceEntry"
+      },
+      "maxItems": 100,
+      "title": "Sources",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "environment",
+    "sources"
+  ],
+  "title": "MaterialSourceManifest",
+  "type": "object",
+  "x-maxCopyBytes": 65536,
+  "x-maxManifestBytes": 65536
+}
