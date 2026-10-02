@@ -89,11 +89,18 @@ from control_plane.app.modules.model_gateway.adapters.connections import (
     FileConnectionDirectory,
     ModelConnectionSettings,
 )
+from control_plane.app.modules.model_gateway.adapters.material_sources import (
+    FileModelMaterialSource,
+    ModelMaterialSourceSettings,
+)
 from control_plane.app.modules.model_gateway.api.check_routes import create_model_check_router
 from control_plane.app.modules.model_gateway.api.dossier_routes import create_model_dossier_router
 from control_plane.app.modules.model_gateway.api.routes import (
     ModelGatewayHttpRuntime,
     create_model_gateway_router,
+)
+from control_plane.app.modules.model_gateway.api.source_check_routes import (
+    create_model_source_check_router,
 )
 from control_plane.app.modules.organization import OrganizationDependencies
 from control_plane.app.modules.organization.adapters import (
@@ -292,6 +299,7 @@ def model_gateway_http_runtime() -> ModelGatewayHttpRuntime:
     return ModelGatewayHttpRuntime(
         engine=model_gateway_runtime_engine(),
         connections=FileConnectionDirectory(ModelConnectionSettings()),
+        material_sources=FileModelMaterialSource(ModelMaterialSourceSettings()),
         dependencies=CatalogDependencies(
             audit=SqlAlchemyTransactionalAuditAppender(),
             now=SystemClock().now,
@@ -722,6 +730,13 @@ def create_app(
         create_workspace_router(
             workspace_http_runtime,
             cast(Callable[[], SessionPrincipal], protected_principal),
+            authorization_capability_guard,
+        )
+    )
+    app.include_router(
+        create_model_source_check_router(
+            model_gateway_http_runtime,
+            protected_principal,
             authorization_capability_guard,
         )
     )

@@ -121,7 +121,7 @@ def read_bounded_file(root: Path, reference: str, *, max_bytes: int = 65536) -> 
             return bytes(raw)
     except FileReferenceUnavailable:
         raise
-    except (OSError, ValueError, AttributeError, NotImplementedError):
+    except (OSError, ValueError, AttributeError, RuntimeError, NotImplementedError):
         raise FileReferenceUnavailable("UNAVAILABLE") from None
 
 

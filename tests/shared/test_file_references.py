@@ -34,10 +34,11 @@ def test_outside_link_directory_fifo_and_oversize_are_rejected(tmp_path: Path) -
     root.mkdir()
     (tmp_path / "outside").write_bytes(b"outside-body")
     (root / "escape").symlink_to(tmp_path / "outside")
+    (root / "loop").symlink_to("loop")
     (root / "directory").mkdir()
     os.mkfifo(root / "fifo")
     (root / "oversize").write_bytes(b"12345")
-    for name in ("escape", "directory", "fifo", "oversize"):
+    for name in ("escape", "loop", "directory", "fifo", "oversize"):
         with pytest.raises(file_references.FileReferenceUnavailable) as error:
             read(root, name, 4)
         assert str(tmp_path) not in str(error.value)

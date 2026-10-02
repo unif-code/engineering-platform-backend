@@ -37,6 +37,10 @@ from control_plane.app.modules.model_gateway.domain.dossiers import (
     ValidationDossier,
     ValidationDossierProjection,
 )
+from control_plane.app.modules.model_gateway.domain.source_checks import (
+    MaterialSourceCheck,
+    MaterialSourceCheckProjection,
+)
 from control_plane.app.shared.api.camel import CamelModel
 
 
@@ -316,4 +320,56 @@ class ValidationDossierReceiptDto(CamelModel):
 
 class ValidationDossierListDto(CamelModel):
     items: list[ValidationDossierReceiptDto]
+    next_cursor: str | None
+
+
+class CreateMaterialSourceCheckRequestDto(CamelModel):
+    """Select exactly one immutable dossier material. No path, URL, hash or result input."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=False)
+    material_index: int = Field(strict=True, ge=0, le=31)
+
+
+class MaterialSourceCheckSnapshotDto(MaterialSourceCheck, CamelModel):
+    """Historical comparison of actual bytes against approved-copy and declared digests.
+
+    MATCHED is not source authority, semantic truth, complete Model verification or activation.
+    Original dossier provenance remains DECLARED. Missing measurements remain null, never zero.
+    snapshotHash identifies this check; dossierSnapshotHash identifies its immutable parent.
+    """
+
+
+class MaterialSourceCheckDetailDto(MaterialSourceCheckProjection, CamelModel):
+    """Live source remeasurement determines currentness, without changing the historical result.
+
+    Certain binding/content changes remain STALE even if other source checks are unavailable.
+    Expiration is independent; missing expiration is not permanent validity.
+    """
+
+    snapshot: MaterialSourceCheckSnapshotDto
+
+
+class MaterialSourceCheckReceiptDto(CamelModel):
+    """Historical registration receipt only. GET detail for result/currentness.
+
+    No candidate ETag.
+    """
+
+    id: str
+    deployment_id: str
+    candidate_revision: int
+    dossier_id: str
+    dossier_snapshot_hash: str
+    material_index: int
+    snapshot_hash: str
+    created_by: str
+    created_at: datetime
+
+    @classmethod
+    def from_check(cls, value: MaterialSourceCheck) -> "MaterialSourceCheckReceiptDto":
+        return cls.model_validate(value.model_dump(include=set(cls.model_fields)))
+
+
+class MaterialSourceCheckListDto(CamelModel):
+    items: list[MaterialSourceCheckReceiptDto]
     next_cursor: str | None

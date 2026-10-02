@@ -123,6 +123,24 @@ queries 只保存各调用的规范化去重数量与摘要，原文不保存；
 实际使用仍需部署侧确定区域/Workspace、批准模型、专用材料及费用预算。
 一次基础响应通过不证明完整能力、价格、配额或数据处理等级。
 
+### Model Gateway 材料来源副本
+
+材料档案保存的引用及声明摘要保持 `DECLARED`。来源副本核对由 API 同步完成一次有界本地读取，
+不使用 Provider worker、不访问引用 URL、不返回文件正文，也不形成有效 Model Policy。
+
+环境通过 `MODEL_GATEWAY_MATERIAL_SOURCES_PATH` 提供批准清单，通过
+`MODEL_GATEWAY_MATERIAL_SOURCES_ROOT` 提供专用非敏感只读副本根；清单 environment 必须匹配
+`MODEL_GATEWAY_ENVIRONMENT`。默认不配置只阻断副本核对，已有模型目录、检查和档案继续可用。
+清单由 `model-material-sources.schema.json` 约束，与 OpenAPI 一同通过现有导出器生成及校验。
+每项明确提供 sourceId、sourceVersion、sourceReference、externalVersion（含显式 null）、
+relativePath 和 copySha256；规范化引用与外部版本必须唯一，不选择最新版本或前缀匹配。
+清单和单份副本均最多 65536 bytes，清单最多 100 项；Secret 读取限额保持不变。
+
+只有完整原始字节的实测摘要符合清单 copySha256 后，才比较档案声明摘要。MATCHED 仅表示该副本
+与声明一致，MISMATCH 表示批准副本与声明不同；缺声明、未批准、空/超限/不稳定读取等为 BLOCKED。
+核对记录只追加，详情每次实际重测来源以识别同版本、同大小/mtime 的内容替换。当前性、材料期限
+与历史核对结果独立；目录版本、文件存在或摘要相等都不证明来源权威、语义真实性或模型可激活。
+
 ### Source Control worker
 
 API 默认提供 V0.6 Artifact、Acceptance 与 Formal Delivery 路由。worker 与 Connector 共用生产运行时，
