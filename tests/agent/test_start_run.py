@@ -625,16 +625,19 @@ def test_existing_inactive_definition_is_rejected_and_hidden_from_listing(
     ("details", "message"),
     [
         (
-            _requirement_details(workspace_id="workspace-other", assignments=(_assignment(),)),
+            _requirement_details(
+                workspace_id="10000000-0000-0000-0000-000000009998", assignments=(_assignment(),)
+            ),
             "workspace",
         ),
         (
-            _requirement_details(work_item_id="work-item-other", assignments=(_assignment(),)),
+            _requirement_details(work_item_id="10000000-0000-0000-0000-000000009998"),
             "missing or ambiguous",
         ),
         (
             _requirement_details(
-                work_item_requirement_id="requirement-other", assignments=(_assignment(),)
+                work_item_requirement_id="10000000-0000-0000-0000-000000009998",
+                assignments=(_assignment(),),
             ),
             "does not belong",
         ),

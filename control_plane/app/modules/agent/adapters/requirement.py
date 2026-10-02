@@ -1,6 +1,12 @@
+from datetime import datetime
+from uuid import UUID
+
 from sqlalchemy import Connection
 
-from control_plane.app.modules.agent.application.errors import InvalidRequirementExecutionContext
+from control_plane.app.modules.agent.application.errors import (
+    AgentBusinessContextReason,
+    InvalidRequirementExecutionContext,
+)
 from control_plane.app.modules.agent.ports.runtime import (
     RequirementExecutionContext,
     RequirementExecutionRequest,
@@ -21,33 +27,65 @@ class RequirementFacadeExecutionContext:
             requirement_id=request.requirement_id,
             dependencies=self._dependencies,
         )
-        requirement = details.requirement
-        if requirement.workspace_id != request.workspace_id:
-            raise InvalidRequirementExecutionContext(
-                "Requirement workspace does not match Agent workspace"
+        try:
+            requirement_id = str(UUID(details.requirement.id))
+            workspace_id = str(UUID(details.requirement.workspace_id))
+            if requirement_id != request.requirement_id:
+                raise ValueError("Requirement target changed")
+            if workspace_id != request.workspace_id:
+                raise InvalidRequirementExecutionContext(
+                    "Requirement workspace does not match Agent workspace",
+                    reason=AgentBusinessContextReason.WORKSPACE_CHANGED,
+                )
+            work_item_ids = []
+            for item in details.work_items:
+                work_item_ids.append(str(UUID(item.id)))
+                if str(UUID(item.requirement_id)) != requirement_id:
+                    raise InvalidRequirementExecutionContext(
+                        "Requirement WorkItem does not belong to Requirement",
+                        reason=AgentBusinessContextReason.OWNER_DATA_INVALID,
+                    )
+            assignments = []
+            for assignment in details.work_item_assignments:
+                assignment_id = str(UUID(assignment.id))
+                work_item_id = str(UUID(assignment.work_item_id))
+                if work_item_id not in work_item_ids or (
+                    assignment.superseded_at is not None
+                    and not isinstance(assignment.superseded_at, datetime)
+                ):
+                    raise ValueError("Assignment membership is inconsistent")
+                if work_item_id == request.work_item_id and assignment.superseded_at is None:
+                    assignments.append(assignment_id)
+            matches = work_item_ids.count(request.work_item_id)
+            if matches != 1:
+                raise InvalidRequirementExecutionContext(
+                    "Requirement WorkItem context is missing or ambiguous",
+                    reason=(
+                        AgentBusinessContextReason.WORK_ITEM_NOT_IN_REQUIREMENT
+                        if matches == 0
+                        else AgentBusinessContextReason.OWNER_DATA_AMBIGUOUS
+                    ),
+                )
+            if len(assignments) != 1:
+                raise InvalidRequirementExecutionContext(
+                    "Requirement WorkItem has no current Agent assignment",
+                    reason=(
+                        AgentBusinessContextReason.ASSIGNMENT_MISSING
+                        if not assignments
+                        else AgentBusinessContextReason.OWNER_DATA_AMBIGUOUS
+                    ),
+                )
+            return RequirementExecutionContext(
+                workspace_id=workspace_id,
+                requirement_id=requirement_id,
+                work_item_id=request.work_item_id,
+                assignment_id=assignments[0],
+                goal_ref=f"requirement:{requirement_id}:work-item:{request.work_item_id}",
             )
-        work_items = [item for item in details.work_items if item.id == request.work_item_id]
-        if len(work_items) != 1:
+        except InvalidRequirementExecutionContext:
+            raise
+        except (ValueError, TypeError, AttributeError):
             raise InvalidRequirementExecutionContext(
-                "Requirement WorkItem context is missing or ambiguous"
-            )
-        if work_items[0].requirement_id != requirement.id:
-            raise InvalidRequirementExecutionContext(
-                "Requirement WorkItem does not belong to Requirement"
-            )
-        assignments = [
-            assignment
-            for assignment in details.work_item_assignments
-            if assignment.work_item_id == request.work_item_id and assignment.superseded_at is None
-        ]
-        if len(assignments) != 1:
-            raise InvalidRequirementExecutionContext(
-                "Requirement WorkItem has no current Agent assignment"
-            )
-        return RequirementExecutionContext(
-            workspace_id=requirement.workspace_id,
-            requirement_id=requirement.id,
-            work_item_id=work_items[0].id,
-            assignment_id=assignments[0].id,
-            goal_ref=f"requirement:{requirement.id}:work-item:{work_items[0].id}",
-        )
+                "Requirement owner data is invalid",
+                reason=AgentBusinessContextReason.OWNER_DATA_INVALID,
+            ) from None

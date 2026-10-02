@@ -32,9 +32,13 @@ from control_plane.app.modules.agent.application.events import (
 )
 from control_plane.app.modules.agent.application.idempotency import AgentReplayUnavailable
 from control_plane.app.modules.agent.application.queries import (
+    AgentRunBusinessContextStatus,
     AgentRunPage,
     AgentRunView,
     CanonicalEventPage,
+)
+from control_plane.app.modules.agent.application.queries import (
+    get_business_context_status as _get_business_context_status,
 )
 from control_plane.app.modules.agent.application.queries import (
     get_run as _get_run,
@@ -121,6 +125,13 @@ def get_run_metadata(db: Any, *, run_id: str, dependencies: AgentDependencies) -
     return _get_run_metadata(run_id, dependencies=dependencies)
 
 
+def get_business_context_status(
+    db: Any, *, run: AgentRun, dependencies: AgentDependencies
+) -> AgentRunBusinessContextStatus:
+    del db
+    return _get_business_context_status(run, dependencies=dependencies)
+
+
 def list_runs(
     db: Any,
     *,
@@ -170,6 +181,7 @@ __all__ = [
     "cancel_attempt",
     "get_run",
     "get_run_metadata",
+    "get_business_context_status",
     "list_runs",
     "list_definitions",
     "list_events",

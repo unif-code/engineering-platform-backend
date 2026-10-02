@@ -2,21 +2,36 @@ import base64
 import binascii
 import json
 from datetime import UTC, datetime
+from enum import StrEnum
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import AwareDatetime, BaseModel, ConfigDict, model_validator
 
 from control_plane.app.modules.agent.application.dependencies import AgentDependencies
+from control_plane.app.modules.agent.application.errors import (
+    AgentBusinessContextReason,
+    InvalidRequirementExecutionContext,
+)
 from control_plane.app.modules.agent.domain import (
     AgentAttempt,
     AgentRun,
+    AgentRunBusinessContext,
     AgentRunListItem,
     CanonicalEventInput,
     EventCursorAnchorMissing,
     ExecutionBinding,
     RunState,
 )
+from control_plane.app.modules.agent.domain.types import PlatformUUID
 from control_plane.app.modules.agent.ports import AgentUnitOfWork
+from control_plane.app.modules.agent.ports.runtime import (
+    RequirementExecutionContext,
+    RequirementExecutionRequest,
+)
+from control_plane.app.modules.requirement import (
+    RequirementDependencyUnavailable,
+    RequirementNotFound,
+)
 
 
 class AgentRunView(BaseModel):
@@ -38,6 +53,112 @@ class AgentRunPage(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     items: tuple[AgentRunListItem, ...]
     next_cursor: str | None
+
+
+class AgentBusinessContextCurrentness(StrEnum):
+    CURRENT = "CURRENT"
+    STALE = "STALE"
+    UNVERIFIABLE = "UNVERIFIABLE"
+
+
+class AgentRunBusinessContextStatus(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    run_id: PlatformUUID
+    workspace_id: PlatformUUID
+    checked_at: AwareDatetime
+    currentness: AgentBusinessContextCurrentness
+    reasons: tuple[AgentBusinessContextReason, ...]
+
+    @model_validator(mode="after")
+    def current_requires_no_reasons(self) -> "AgentRunBusinessContextStatus":
+        if (self.currentness is AgentBusinessContextCurrentness.CURRENT) != (not self.reasons):
+            raise ValueError("Only CURRENT has no reasons")
+        return self
+
+
+def get_business_context_status(
+    run: AgentRun, *, dependencies: AgentDependencies
+) -> AgentRunBusinessContextStatus:
+    def observed(
+        currentness: AgentBusinessContextCurrentness,
+        reason: AgentBusinessContextReason | None = None,
+    ) -> AgentRunBusinessContextStatus:
+        return AgentRunBusinessContextStatus(
+            run_id=run.id,
+            workspace_id=run.workspace_id,
+            checked_at=dependencies.clock(),
+            currentness=currentness,
+            reasons=() if reason is None else (reason,),
+        )
+
+    source = run.business_context
+    if source is None:
+        return observed(
+            AgentBusinessContextCurrentness.UNVERIFIABLE,
+            AgentBusinessContextReason.BUSINESS_CONTEXT_NOT_RECORDED,
+        )
+    try:
+        current = dependencies.requirement_context.resolve(
+            RequirementExecutionRequest(
+                workspace_id=run.workspace_id,
+                requirement_id=source.requirement_id,
+                work_item_id=source.work_item_id,
+            )
+        )
+    except RequirementNotFound:
+        return observed(
+            AgentBusinessContextCurrentness.STALE, AgentBusinessContextReason.REQUIREMENT_NOT_FOUND
+        )
+    except InvalidRequirementExecutionContext as error:
+        reason = error.reason
+        if reason in (
+            AgentBusinessContextReason.WORKSPACE_CHANGED,
+            AgentBusinessContextReason.WORK_ITEM_NOT_IN_REQUIREMENT,
+            AgentBusinessContextReason.ASSIGNMENT_MISSING,
+        ):
+            return observed(AgentBusinessContextCurrentness.STALE, reason)
+        return observed(
+            AgentBusinessContextCurrentness.UNVERIFIABLE,
+            AgentBusinessContextReason.OWNER_DATA_AMBIGUOUS
+            if reason is AgentBusinessContextReason.OWNER_DATA_AMBIGUOUS
+            else AgentBusinessContextReason.OWNER_DATA_INVALID,
+        )
+    except RequirementDependencyUnavailable:
+        return observed(
+            AgentBusinessContextCurrentness.UNVERIFIABLE,
+            AgentBusinessContextReason.OWNER_UNAVAILABLE,
+        )
+    try:
+        current = RequirementExecutionContext.model_validate(current.model_dump(mode="python"))
+        workspace_id = str(UUID(current.workspace_id))
+        identities = AgentRunBusinessContext(
+            requirement_id=current.requirement_id,
+            work_item_id=current.work_item_id,
+            assignment_id=current.assignment_id,
+        )
+    except (ValueError, TypeError, AttributeError):
+        return observed(
+            AgentBusinessContextCurrentness.UNVERIFIABLE,
+            AgentBusinessContextReason.OWNER_DATA_INVALID,
+        )
+    if (
+        identities.requirement_id != source.requirement_id
+        or identities.work_item_id != source.work_item_id
+    ):
+        return observed(
+            AgentBusinessContextCurrentness.UNVERIFIABLE,
+            AgentBusinessContextReason.OWNER_DATA_INVALID,
+        )
+    if workspace_id != run.workspace_id:
+        return observed(
+            AgentBusinessContextCurrentness.STALE, AgentBusinessContextReason.WORKSPACE_CHANGED
+        )
+    if identities.assignment_id != source.assignment_id:
+        return observed(
+            AgentBusinessContextCurrentness.STALE, AgentBusinessContextReason.ASSIGNMENT_CHANGED
+        )
+    return observed(AgentBusinessContextCurrentness.CURRENT)
 
 
 class InvalidRunCursor(ValueError):
