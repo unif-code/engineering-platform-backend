@@ -93,9 +93,18 @@ def _entity(value: Deployment, status: int) -> IdempotentResponse:
 
 def _denial(error: CatalogError) -> IdempotentResponse:
     status = 409
-    if error.code in {"MODEL_DEPLOYMENT_NOT_FOUND", "MODEL_CONNECTION_CHECK_NOT_FOUND"}:
+    if error.code in {
+        "MODEL_DEPLOYMENT_NOT_FOUND",
+        "MODEL_CONNECTION_CHECK_NOT_FOUND",
+        "MODEL_VALIDATION_DOSSIER_NOT_FOUND",
+        "MODEL_DOSSIER_CHECK_NOT_FOUND",
+    }:
         status = 404
-    elif error.code in {"INVALID_MODEL_DEPLOYMENT_CURSOR", "INVALID_MODEL_CONNECTION_CHECK_CURSOR"}:
+    elif error.code in {
+        "INVALID_MODEL_DEPLOYMENT_CURSOR",
+        "INVALID_MODEL_CONNECTION_CHECK_CURSOR",
+        "INVALID_MODEL_DOSSIER_CURSOR",
+    }:
         status = 422
     return IdempotentResponse(
         status_code=status,

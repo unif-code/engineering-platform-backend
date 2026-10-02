@@ -90,6 +90,7 @@ from control_plane.app.modules.model_gateway.adapters.connections import (
     ModelConnectionSettings,
 )
 from control_plane.app.modules.model_gateway.api.check_routes import create_model_check_router
+from control_plane.app.modules.model_gateway.api.dossier_routes import create_model_dossier_router
 from control_plane.app.modules.model_gateway.api.routes import (
     ModelGatewayHttpRuntime,
     create_model_gateway_router,
@@ -721,6 +722,13 @@ def create_app(
         create_workspace_router(
             workspace_http_runtime,
             cast(Callable[[], SessionPrincipal], protected_principal),
+            authorization_capability_guard,
+        )
+    )
+    app.include_router(
+        create_model_dossier_router(
+            model_gateway_http_runtime,
+            protected_principal,
             authorization_capability_guard,
         )
     )

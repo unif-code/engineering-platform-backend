@@ -25,6 +25,18 @@ from control_plane.app.modules.model_gateway.domain.checks import (
     ThinkingObservation,
 )
 from control_plane.app.modules.model_gateway.domain.connections import CheckKind
+from control_plane.app.modules.model_gateway.domain.dossiers import (
+    CheckEvidenceReference,
+    CheckResultSummary,
+    CreateValidationDossier,
+    DeclaredMaterial,
+    DossierCheckCoverage,
+    MaterialCoverage,
+    MaterialExpiration,
+    MaterialReference,
+    ValidationDossier,
+    ValidationDossierProjection,
+)
 from control_plane.app.shared.api.camel import CamelModel
 
 
@@ -220,4 +232,88 @@ class ConnectionCheckDto(CamelModel):
 
 class ConnectionCheckListDto(CamelModel):
     items: list[ConnectionCheckDto]
+    next_cursor: str | None
+
+
+class DossierMaterialRequestDto(MaterialReference, CamelModel):
+    """Declared metadata only; references are never fetched or verified."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=False)
+
+
+class CreateValidationDossierRequestDto(CreateValidationDossier, CamelModel):
+    """At least one material/check. Maximum raw HTTP body: 65536 bytes.
+
+    Caller hashes are declarations. Only exact same-revision terminal checks are accepted.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=False)
+    materials: tuple[DossierMaterialRequestDto, ...] = Field(default=(), max_length=32)
+
+
+class DeclaredDossierMaterialDto(DeclaredMaterial, CamelModel):
+    """Caller-declared reference/hash. No source fetch, signature or truth verification."""
+
+
+class DossierCheckResultDto(CheckResultSummary, CamelModel):
+    """Original terminal outcome only; observation detail belongs to the referenced check."""
+
+    usage: ConnectionCheckUsageDto | None
+
+
+class DossierCheckReferenceDto(CheckEvidenceReference, CamelModel):
+    result_summary: DossierCheckResultDto
+
+
+class ValidationDossierSnapshotDto(ValidationDossier, CamelModel):
+    """Immutable registration. snapshotHash identifies this dossier, not source authenticity."""
+
+    materials: tuple[DeclaredDossierMaterialDto, ...] = Field(max_length=32)
+    checks: tuple[DossierCheckReferenceDto, ...] = Field(max_length=5)
+
+
+class DossierMaterialExpirationDto(MaterialExpiration, CamelModel):
+    """NOT_DECLARED means expiry was not supplied, never permanent validity."""
+
+
+class DossierMaterialCoverageDto(MaterialCoverage, CamelModel):
+    """DECLARED remains pending source verification; EXPIRED means all entries expired."""
+
+
+class DossierCheckCoverageDto(DossierCheckCoverage, CamelModel):
+    """Currentness of the explicitly bound check, not capability verification."""
+
+
+class ValidationDossierDetailDto(ValidationDossierProjection, CamelModel):
+    """Dynamic projection over immutable registration; CURRENT is not verified or routable.
+
+    Expiration and dependency changes update the opaque ETag, never snapshotHash.
+    """
+
+    snapshot: ValidationDossierSnapshotDto
+    material_statuses: tuple[DossierMaterialExpirationDto, ...] = Field(max_length=32)
+    material_coverage: tuple[DossierMaterialCoverageDto, ...] = Field(min_length=8, max_length=8)
+    check_coverage: tuple[DossierCheckCoverageDto, ...] = Field(min_length=5, max_length=5)
+
+
+class ValidationDossierReceiptDto(CamelModel):
+    """Historical registration receipt. Read detail for current projections.
+
+    No candidate write ETag.
+    """
+
+    id: str
+    deployment_id: str
+    candidate_revision: int
+    snapshot_hash: str
+    created_by: str
+    created_at: datetime
+
+    @classmethod
+    def from_dossier(cls, value: ValidationDossier) -> "ValidationDossierReceiptDto":
+        return cls.model_validate(value.model_dump(include=set(cls.model_fields)))
+
+
+class ValidationDossierListDto(CamelModel):
+    items: list[ValidationDossierReceiptDto]
     next_cursor: str | None

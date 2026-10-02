@@ -21,11 +21,16 @@ __all__ = [
 ]
 
 from control_plane.app.modules.model_gateway.application.checks import ModelConnectionChecks
+from control_plane.app.modules.model_gateway.application.dossiers import ModelValidationDossiers
 from control_plane.app.modules.model_gateway.application.worker import (
     ModelCheckWorkerDependencies,
     process_connection_check,
     recover_expired_checks,
     run_model_check_batch,
+)
+from control_plane.app.modules.model_gateway.domain.dossiers import (
+    CreateValidationDossier,
+    ValidationDossier,
 )
 
 __all__ += [
@@ -35,3 +40,5 @@ __all__ += [
     "process_connection_check",
     "recover_expired_checks",
 ]
+
+__all__ += ["ModelValidationDossiers", "CreateValidationDossier", "ValidationDossier"]

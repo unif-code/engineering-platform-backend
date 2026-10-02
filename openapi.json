@@ -2104,6 +2104,37 @@
         "title": "CreateSddArtifactResponseDto",
         "type": "object"
       },
+      "CreateValidationDossierRequestDto": {
+        "additionalProperties": false,
+        "description": "At least one material/check. Maximum raw HTTP body: 65536 bytes.\n\nCaller hashes are declarations. Only exact same-revision terminal checks are accepted.",
+        "properties": {
+          "checkIds": {
+            "default": [],
+            "items": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            },
+            "maxItems": 5,
+            "title": "Checkids",
+            "type": "array",
+            "uniqueItems": true
+          },
+          "materials": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DossierMaterialRequestDto"
+            },
+            "maxItems": 32,
+            "title": "Materials",
+            "type": "array"
+          }
+        },
+        "title": "CreateValidationDossierRequestDto",
+        "type": "object",
+        "x-maxBodyBytes": 65536
+      },
       "CreateWorkspaceRequestDto": {
         "properties": {
           "name": {
@@ -2274,6 +2305,90 @@
         ],
         "title": "DeclaredCapability",
         "type": "string"
+      },
+      "DeclaredDossierMaterialDto": {
+        "additionalProperties": false,
+        "description": "Caller-declared reference/hash. No source fetch, signature or truth verification.",
+        "properties": {
+          "category": {
+            "$ref": "#/components/schemas/MaterialCategory"
+          },
+          "declaredContentSha256": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Declaredcontentsha256"
+          },
+          "expiresAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiresat"
+          },
+          "externalVersion": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Externalversion"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "provenance": {
+            "const": "DECLARED",
+            "default": "DECLARED",
+            "title": "Provenance",
+            "type": "string"
+          },
+          "sourceReference": {
+            "maxLength": 2048,
+            "minLength": 5,
+            "title": "Sourcereference",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "title",
+          "sourceReference"
+        ],
+        "title": "DeclaredDossierMaterialDto",
+        "type": "object"
       },
       "DeliveryDecisionRequestDto": {
         "additionalProperties": false,
@@ -2777,6 +2892,352 @@
         ],
         "title": "DeploymentState",
         "type": "string"
+      },
+      "DossierCheckCoverageDto": {
+        "additionalProperties": false,
+        "description": "Currentness of the explicitly bound check, not capability verification.",
+        "properties": {
+          "checkId": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "maxLength": 36,
+                "minLength": 36,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checkid"
+          },
+          "checkKind": {
+            "$ref": "#/components/schemas/CheckKind"
+          },
+          "currentness": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/InputCurrentness"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "currentnessReasons": {
+            "items": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/CurrentnessReason"
+                },
+                {
+                  "enum": [
+                    "CHECK_UNAVAILABLE",
+                    "CHECK_SNAPSHOT_MISMATCH"
+                  ],
+                  "type": "string"
+                }
+              ]
+            },
+            "title": "Currentnessreasons",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "NOT_PROVIDED",
+              "PROVIDED"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "checkKind",
+          "status",
+          "checkId",
+          "currentness",
+          "currentnessReasons"
+        ],
+        "title": "DossierCheckCoverageDto",
+        "type": "object"
+      },
+      "DossierCheckReferenceDto": {
+        "additionalProperties": false,
+        "properties": {
+          "checkId": {
+            "format": "uuid",
+            "maxLength": 36,
+            "minLength": 36,
+            "title": "Checkid",
+            "type": "string"
+          },
+          "checkKind": {
+            "$ref": "#/components/schemas/CheckKind"
+          },
+          "checkRevision": {
+            "minimum": 1.0,
+            "title": "Checkrevision",
+            "type": "integer"
+          },
+          "inputDigest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Inputdigest",
+            "type": "string"
+          },
+          "resultHash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Resulthash",
+            "type": "string"
+          },
+          "resultSummary": {
+            "$ref": "#/components/schemas/DossierCheckResultDto"
+          }
+        },
+        "required": [
+          "checkId",
+          "checkRevision",
+          "checkKind",
+          "inputDigest",
+          "resultSummary",
+          "resultHash"
+        ],
+        "title": "DossierCheckReferenceDto",
+        "type": "object"
+      },
+      "DossierCheckResultDto": {
+        "additionalProperties": false,
+        "description": "Original terminal outcome only; observation detail belongs to the referenced check.",
+        "properties": {
+          "elapsedMs": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Elapsedms"
+          },
+          "finishedAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finishedat"
+          },
+          "providerRequestId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Providerrequestid"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CheckReason"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reportedModelId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reportedmodelid"
+          },
+          "state": {
+            "enum": [
+              "SUCCEEDED",
+              "FAILED",
+              "BLOCKED",
+              "UNKNOWN"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConnectionCheckUsageDto"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "state",
+          "reason",
+          "finishedAt",
+          "reportedModelId",
+          "providerRequestId",
+          "elapsedMs",
+          "usage"
+        ],
+        "title": "DossierCheckResultDto",
+        "type": "object"
+      },
+      "DossierMaterialCoverageDto": {
+        "additionalProperties": false,
+        "description": "DECLARED remains pending source verification; EXPIRED means all entries expired.",
+        "properties": {
+          "category": {
+            "$ref": "#/components/schemas/MaterialCategory"
+          },
+          "expiredCount": {
+            "maximum": 32.0,
+            "minimum": 0.0,
+            "title": "Expiredcount",
+            "type": "integer"
+          },
+          "registeredCount": {
+            "maximum": 32.0,
+            "minimum": 0.0,
+            "title": "Registeredcount",
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "MISSING",
+              "DECLARED",
+              "EXPIRED"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "status",
+          "registeredCount",
+          "expiredCount"
+        ],
+        "title": "DossierMaterialCoverageDto",
+        "type": "object"
+      },
+      "DossierMaterialExpirationDto": {
+        "additionalProperties": false,
+        "description": "NOT_DECLARED means expiry was not supplied, never permanent validity.",
+        "properties": {
+          "expiration": {
+            "enum": [
+              "NOT_DECLARED",
+              "NOT_EXPIRED",
+              "EXPIRED"
+            ],
+            "title": "Expiration",
+            "type": "string"
+          },
+          "materialIndex": {
+            "maximum": 31.0,
+            "minimum": 0.0,
+            "title": "Materialindex",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "materialIndex",
+          "expiration"
+        ],
+        "title": "DossierMaterialExpirationDto",
+        "type": "object"
+      },
+      "DossierMaterialRequestDto": {
+        "additionalProperties": false,
+        "description": "Declared metadata only; references are never fetched or verified.",
+        "properties": {
+          "category": {
+            "$ref": "#/components/schemas/MaterialCategory"
+          },
+          "declaredContentSha256": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Declaredcontentsha256"
+          },
+          "expiresAt": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expiresat"
+          },
+          "externalVersion": {
+            "anyOf": [
+              {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Externalversion"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "sourceReference": {
+            "maxLength": 2048,
+            "minLength": 5,
+            "title": "Sourcereference",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "category",
+          "title",
+          "sourceReference"
+        ],
+        "title": "DossierMaterialRequestDto",
+        "type": "object"
       },
       "DraftResponseDto": {
         "properties": {
@@ -3915,6 +4376,20 @@
         ],
         "title": "ManagerNodeDto",
         "type": "object"
+      },
+      "MaterialCategory": {
+        "enum": [
+          "MODEL_IDENTITY",
+          "CAPABILITY_SPEC",
+          "CONTEXT_LIMITS",
+          "PARAMETER_SCHEMA",
+          "PRICING",
+          "QUOTA",
+          "DATA_PROCESSING",
+          "HEALTH"
+        ],
+        "title": "MaterialCategory",
+        "type": "string"
       },
       "ModelDeploymentDto": {
         "additionalProperties": false,
@@ -6285,6 +6760,203 @@
         "title": "ValidateDraftRequestDto",
         "type": "object"
       },
+      "ValidationDossierDetailDto": {
+        "additionalProperties": false,
+        "description": "Dynamic projection over immutable registration; CURRENT is not verified or routable.\n\nExpiration and dependency changes update the opaque ETag, never snapshotHash.",
+        "properties": {
+          "checkCoverage": {
+            "items": {
+              "$ref": "#/components/schemas/DossierCheckCoverageDto"
+            },
+            "maxItems": 5,
+            "minItems": 5,
+            "title": "Checkcoverage",
+            "type": "array"
+          },
+          "currentness": {
+            "$ref": "#/components/schemas/InputCurrentness"
+          },
+          "currentnessReasons": {
+            "items": {
+              "enum": [
+                "CANDIDATE_CHANGED",
+                "CANDIDATE_ARCHIVED",
+                "CHECK_STALE",
+                "CHECK_UNVERIFIABLE"
+              ],
+              "type": "string"
+            },
+            "title": "Currentnessreasons",
+            "type": "array"
+          },
+          "materialCoverage": {
+            "items": {
+              "$ref": "#/components/schemas/DossierMaterialCoverageDto"
+            },
+            "maxItems": 8,
+            "minItems": 8,
+            "title": "Materialcoverage",
+            "type": "array"
+          },
+          "materialStatuses": {
+            "items": {
+              "$ref": "#/components/schemas/DossierMaterialExpirationDto"
+            },
+            "maxItems": 32,
+            "title": "Materialstatuses",
+            "type": "array"
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/ValidationDossierSnapshotDto"
+          }
+        },
+        "required": [
+          "snapshot",
+          "currentness",
+          "currentnessReasons",
+          "materialStatuses",
+          "materialCoverage",
+          "checkCoverage"
+        ],
+        "title": "ValidationDossierDetailDto",
+        "type": "object"
+      },
+      "ValidationDossierListDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationDossierReceiptDto"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nextcursor"
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ],
+        "title": "ValidationDossierListDto",
+        "type": "object"
+      },
+      "ValidationDossierReceiptDto": {
+        "description": "Historical registration receipt. Read detail for current projections.\n\nNo candidate write ETag.",
+        "properties": {
+          "candidateRevision": {
+            "title": "Candidaterevision",
+            "type": "integer"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "createdBy": {
+            "title": "Createdby",
+            "type": "string"
+          },
+          "deploymentId": {
+            "title": "Deploymentid",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "snapshotHash": {
+            "title": "Snapshothash",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "deploymentId",
+          "candidateRevision",
+          "snapshotHash",
+          "createdBy",
+          "createdAt"
+        ],
+        "title": "ValidationDossierReceiptDto",
+        "type": "object"
+      },
+      "ValidationDossierSnapshotDto": {
+        "additionalProperties": false,
+        "description": "Immutable registration. snapshotHash identifies this dossier, not source authenticity.",
+        "properties": {
+          "candidateRevision": {
+            "minimum": 1.0,
+            "title": "Candidaterevision",
+            "type": "integer"
+          },
+          "checks": {
+            "items": {
+              "$ref": "#/components/schemas/DossierCheckReferenceDto"
+            },
+            "maxItems": 5,
+            "title": "Checks",
+            "type": "array"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "title": "Createdat",
+            "type": "string"
+          },
+          "createdBy": {
+            "minLength": 1,
+            "title": "Createdby",
+            "type": "string"
+          },
+          "deploymentId": {
+            "format": "uuid",
+            "maxLength": 36,
+            "minLength": 36,
+            "title": "Deploymentid",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "maxLength": 36,
+            "minLength": 36,
+            "title": "Id",
+            "type": "string"
+          },
+          "materials": {
+            "items": {
+              "$ref": "#/components/schemas/DeclaredDossierMaterialDto"
+            },
+            "maxItems": 32,
+            "title": "Materials",
+            "type": "array"
+          },
+          "snapshotHash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Snapshothash",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "deploymentId",
+          "candidateRevision",
+          "createdBy",
+          "createdAt",
+          "materials",
+          "checks",
+          "snapshotHash"
+        ],
+        "title": "ValidationDossierSnapshotDto",
+        "type": "object"
+      },
       "ValidationIssueDto": {
         "properties": {
           "code": {
@@ -6826,7 +7498,7 @@
   "info": {
     "description": "内部研发平台 Control Plane API。\n\n全局约定：JSON 一律 camelCase；ID 一律 string；错误统一 application/problem+json（RFC 9457）；\n分页 cursor 型 {items, nextCursor}；写并发 If-Match/ETag；变更命令 Idempotency-Key——\n后三者自 V0.2 首个真实接口起强制执行。",
     "title": "engineering-platform-control-plane",
-    "version": "1.2.0"
+    "version": "1.3.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -9312,6 +9984,444 @@
         "summary": "Get Check",
         "tags": [
           "model-connection-checks"
+        ]
+      }
+    },
+    "/api/v1/admin/model-deployments/{deploymentId}/validation-dossiers": {
+      "get": {
+        "operationId": "model_validation_dossiers_list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deploymentId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Deploymentid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 2048,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Pagesize",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationDossierListDto"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Dossier request exceeds 65536 bytes"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
+          }
+        },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
+        "summary": "List Dossiers",
+        "tags": [
+          "model-validation-dossiers"
+        ]
+      },
+      "post": {
+        "operationId": "model_validation_dossiers_create",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deploymentId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Deploymentid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Strong entity tag in the form \"v<positive-version>\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "description": "Strong entity tag in the form \"v<positive-version>\"",
+              "examples": [
+                "\"v1\""
+              ],
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateValidationDossierRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationDossierReceiptDto"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Dossier request exceeds 65536 bytes"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
+          }
+        },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
+        "summary": "Create Dossier",
+        "tags": [
+          "model-validation-dossiers"
+        ]
+      }
+    },
+    "/api/v1/admin/model-deployments/{deploymentId}/validation-dossiers/{dossierId}": {
+      "get": {
+        "operationId": "model_validation_dossiers_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "deploymentId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Deploymentid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "dossierId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Dossierid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationDossierDetailDto"
+                }
+              }
+            },
+            "description": "Successful Response",
+            "headers": {
+              "ETag": {
+                "description": "Opaque detail ETag includes currentness/expiration; not snapshotHash or candidate If-Match.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Dossier request exceeds 65536 bytes"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
+          }
+        },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
+        "summary": "Get Dossier",
+        "tags": [
+          "model-validation-dossiers"
         ]
       }
     },
