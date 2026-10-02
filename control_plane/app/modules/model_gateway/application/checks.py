@@ -18,9 +18,11 @@ from control_plane.app.modules.model_gateway.domain.checks import (
     InputCurrentness,
 )
 from control_plane.app.modules.model_gateway.domain.connections import (
-    ADAPTER_VERSION,
+    ADAPTER_VERSIONS,
     PROBE_VERSIONS,
+    SEARCH_REGIONS,
     CheckKind,
+    ConnectionDefinition,
 )
 from control_plane.app.modules.model_gateway.ports.checks import (
     CheckRepository,
@@ -75,7 +77,7 @@ def currentness(
     if deployment.state is DeploymentState.ARCHIVED:
         reasons.append(CurrentnessReason.CANDIDATE_ARCHIVED)
     if (
-        check.input.adapter_version != ADAPTER_VERSION
+        check.input.adapter_version != ADAPTER_VERSIONS[check.check_kind]
         or check.input.probe_version != PROBE_VERSIONS[check.check_kind]
     ):
         reasons.append(CurrentnessReason.PROBE_CHANGED)
@@ -85,7 +87,7 @@ def currentness(
             reasons.append(CurrentnessReason.MATERIAL_VERSION_CHANGED)
         if (
             check.input.environment != environment
-            or check.input.connection_fingerprint != connection.fingerprint
+            or check.input.connection_fingerprint != connection.fingerprint_for(check.check_kind)
         ):
             reasons.append(CurrentnessReason.CONNECTION_CHANGED)
     except CheckBlocked:
@@ -102,6 +104,21 @@ def currentness(
     elif reasons:
         state = InputCurrentness.UNVERIFIABLE
     return state, reasons
+
+
+def validate_connection_admission(
+    deployment: Deployment, connection: ConnectionDefinition, kind: CheckKind
+) -> None:
+    if (
+        connection.provider_kind != deployment.provider_kind
+        or deployment.provider_model_id not in connection.allowed_model_ids
+    ):
+        raise CheckBlocked(CheckReason.MODEL_NOT_ALLOWED)
+    if kind is CheckKind.SEARCH_SOURCES:
+        if connection.region not in SEARCH_REGIONS:
+            raise CheckBlocked(CheckReason.SEARCH_REGION_NOT_ALLOWED)
+        if deployment.provider_model_id not in connection.responses_search_model_ids:
+            raise CheckBlocked(CheckReason.SEARCH_MODEL_NOT_ALLOWED)
 
 
 class ModelConnectionChecks:
@@ -140,11 +157,7 @@ class ModelConnectionChecks:
         reason = None
         try:
             environment, connection = self.directory.resolve(deployment.connection_ref)
-            if (
-                connection.provider_kind != deployment.provider_kind
-                or deployment.provider_model_id not in connection.allowed_model_ids
-            ):
-                reason = CheckReason.MODEL_NOT_ALLOWED
+            validate_connection_admission(deployment, connection, check_kind)
         except CheckBlocked as error:
             reason = error.reason
         now = self.dependencies.now()

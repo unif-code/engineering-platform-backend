@@ -5,7 +5,11 @@ from datetime import timedelta
 from sqlalchemy import Connection, Engine
 
 from control_plane.app.modules.model_gateway.application import CatalogDependencies
-from control_plane.app.modules.model_gateway.application.checks import check_audit, currentness
+from control_plane.app.modules.model_gateway.application.checks import (
+    check_audit,
+    currentness,
+    validate_connection_admission,
+)
 from control_plane.app.modules.model_gateway.domain import DeploymentState
 from control_plane.app.modules.model_gateway.domain.checks import (
     CheckBlocked,
@@ -108,11 +112,7 @@ def _validate_input(
     if deployment is None or deployment.state is DeploymentState.ARCHIVED:
         raise CheckBlocked(CheckReason.CANDIDATE_ARCHIVED)
     environment, connection = deps.directory.resolve(deployment.connection_ref)
-    if (
-        deployment.provider_model_id not in connection.allowed_model_ids
-        or deployment.provider_kind != connection.provider_kind
-    ):
-        raise CheckBlocked(CheckReason.MODEL_NOT_ALLOWED)
+    validate_connection_admission(deployment, connection, check.check_kind)
     current_input = CheckInputSnapshot.capture(
         deployment, connection, environment, check.check_kind
     )

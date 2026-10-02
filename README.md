@@ -89,7 +89,7 @@ uv run python -m control_plane.tools.model_gateway_worker --limit 20
 固定探针使用 64 个最大 completion tokens、20 秒总 HTTP/清理时限、64 KiB 响应上限，
 每连接最多一个 RUNNING。Provider 超时或 worker 丢失结果收敛 UNKNOWN，不自动重发；
 新检查需管理员明确发起，先前请求可能已经执行并计费。
-检查 POST 必须显式提交 `checkKind`：`BASIC_TEXT`、`STREAM_TEXT`、`STREAM_STOP` 或 `THINKING`。
+检查 POST 必须显式提交 `checkKind`：`BASIC_TEXT`、`STREAM_TEXT`、`STREAM_STOP`、`THINKING` 或 `SEARCH_SOURCES`。
 流式请求带 `include_usage`，按 SSE 事件处理；单事件上限 16 KiB，最多 256 个 data 事件。
 `STREAM_TEXT` 需要非空文本、正常 finish 和 `[DONE]`；`STREAM_STOP` 在首个合法非空文本
 增量后关闭本地响应及客户端。后者只证明本地停止接收，Provider 取消与停止计费均未确认。
@@ -102,6 +102,20 @@ THINKING 只核对本次专用 reasoning_content 信号和完整答案，不评�
 20 秒总时限及现有响应/事件限制。完整响应缺少非空白专用信号返回 THINKING_SIGNAL_MISSING，
 仅表示本次未观察到；不会自动扩大预算或重发。只保存 reasoning 的观察标志、增量数和字节数，
 不保存推理或答案正文；这些计数不是 token、费用或能力认证。
+
+SEARCH_SOURCES 仅在北京/新加坡、且模型属于连接清单 `responsesSearchModelIds` 时执行。
+该字段默认空并须为 `allowedModelIds` 子集；单改搜索准入只影响搜索输入指纹，旧四类不变。
+它使用同批准主机的 `/compatible-mode/v1/responses`，固定公开输入、store=false、stream=false、
+仅 web_search、tool_choice=required、reasoning.effort=none、max_output_tokens=64，显式关闭 session cache。
+无 previous_response_id/conversation、其他工具或 max_tool_calls；不支持参数时失败，不 fallback。
+
+搜索证据只来自 completed 的 web_search_call.action.sources 和完整答案，不从答案提取 URL。
+本地最多接受 8 个搜索调用、每调用 8 个查询（每条最多 512 字符）、每调用 16 条来源且总计 32 条，
+URL 最长 2048 字符；重复脱敏 URL 按调用去重，超限直接拒绝。引用去掉 query/fragment，仅校验
+HTTPS、主机/地址类别与凭据形态，不作来源 DNS/页面获取；不证明页面内容、精确版本或逐句 citation。
+queries 只保存各调用的规范化去重数量与摘要，原文不保存；未返回的查询或 Provider 搜索次数为 null。
+一次 HTTP 可包含多轮 Provider 搜索；本地上限、关闭和 store=false 均不证明远端次数/费用硬上限、
+停止搜索/计费或全数据零留存。Responses 未返回合格来源时记录 SEARCH_SOURCE_SIGNAL_MISSING。
 
 检查 ETag 是含当前性的 opaque 表示标识，不能用于候选 If-Match。
 清单及探针变化会实时改变查询当前性，检查自身 revision 只表示持久检查状态的版本。

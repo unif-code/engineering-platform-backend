@@ -160,3 +160,54 @@ def test_thinking_request_is_fixed_and_other_probes_keep_their_original_requests
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+
+
+def test_search_source_contract_has_typed_evidence_and_no_arbitrary_provider_input() -> None:
+    from control_plane.app.bootstrap.app import create_app
+
+    schemas = create_app().openapi()["components"]["schemas"]
+    assert "SEARCH_SOURCES" in schemas["CheckKind"]["enum"]
+    assert "SEARCH_SOURCE_SIGNAL_MISSING" in schemas["CheckReason"]["enum"]
+    evidence = schemas["SearchSourceObservationDto"]
+    assert evidence["additionalProperties"] is False
+    assert {"completedSearchCallCount", "sourceSignalObserved", "sources", "queries"} <= evidence[
+        "properties"
+    ].keys()
+    assert (
+        not {"query", "input", "output", "text", "answer", "reasoning"}
+        & evidence["properties"].keys()
+    )
+    assert set(schemas["CreateConnectionCheckRequestDto"]["properties"]) == {"checkKind"}
+
+
+def test_responses_admission_preserves_original_fingerprints_and_is_a_model_subset() -> None:
+    from control_plane.app.modules.model_gateway.domain.connections import CheckKind, digest
+    from tests.model_gateway.test_probe import CONNECTION
+
+    assert "SEARCH_SOURCES" in CheckKind.__members__
+    original = ConnectionDefinition.model_validate(CONNECTION)
+    empty = ConnectionDefinition.model_validate(CONNECTION | {"responsesSearchModelIds": []})
+    enabled = ConnectionDefinition.model_validate(
+        CONNECTION | {"responsesSearchModelIds": ["synthetic-model"]}
+    )
+    # This is the original production algorithm, over the original non-secret fields only.
+    baseline = digest(original.model_dump(mode="json", exclude={"responses_search_model_ids"}))
+    for kind in (
+        CheckKind.BASIC_TEXT,
+        CheckKind.STREAM_TEXT,
+        CheckKind.STREAM_STOP,
+        CheckKind.THINKING,
+    ):
+        assert (
+            original.fingerprint_for(kind)
+            == empty.fingerprint_for(kind)
+            == enabled.fingerprint_for(kind)
+            == baseline
+        )
+    assert enabled.fingerprint_for(CheckKind("SEARCH_SOURCES")) != empty.fingerprint_for(
+        CheckKind("SEARCH_SOURCES")
+    )
+    with pytest.raises(ValidationError):
+        ConnectionDefinition.model_validate(
+            CONNECTION | {"responsesSearchModelIds": ["unapproved"]}
+        )

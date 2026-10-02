@@ -14,6 +14,10 @@ from threading import Thread
 import httpx
 from pydantic import TypeAdapter, ValidationError
 
+from control_plane.app.modules.model_gateway.adapters.search_sources import (
+    parse_search_response,
+    search_failure,
+)
 from control_plane.app.modules.model_gateway.adapters.stream import (
     StreamProbe,
     StreamProtocolError,
@@ -26,6 +30,7 @@ from control_plane.app.modules.model_gateway.domain.checks import (
     CheckState,
     ProbeOutcome,
     ProbeUsage,
+    SearchSourceObservation,
     ThinkingObservation,
     provider_request_id,
 )
@@ -35,11 +40,16 @@ from control_plane.app.modules.model_gateway.domain.connections import (
     CheckKind,
     ConnectionDefinition,
     probe_body,
+    probe_path,
 )
 from control_plane.app.modules.model_gateway.ports.checks import (
     ModelSecretPort,
     ProviderSecretMaterial,
 )
+
+
+class ProbeCleanupError(OSError):
+    """Local response cleanup could not be confirmed."""
 
 
 @dataclass(frozen=True)
@@ -186,10 +196,14 @@ class HttpxModelProbe:
 
     def send(self, prepared: PreparedProbe, model_id: str, check_kind: CheckKind) -> ProbeOutcome:
         start = time.monotonic()
-        stream = None if check_kind is CheckKind.BASIC_TEXT else StreamProbe(check_kind, model_id)
+        stream = (
+            None
+            if check_kind in (CheckKind.BASIC_TEXT, CheckKind.SEARCH_SOURCES)
+            else StreamProbe(check_kind, model_id)
+        )
         try:
             outcome = asyncio.run(self._send(prepared, model_id, check_kind, stream))
-        except Exception:
+        except Exception as error:
             if stream is not None:
                 outcome = stream.outcome(
                     CheckState.UNKNOWN,
@@ -199,7 +213,11 @@ class HttpxModelProbe:
                 )
             else:
                 outcome = ProbeOutcome(
-                    state=CheckState.UNKNOWN, reason=CheckReason.REQUEST_OUTCOME_UNKNOWN
+                    state=CheckState.UNKNOWN,
+                    reason=CheckReason.RESPONSE_CLOSE_FAILED
+                    if check_kind is CheckKind.SEARCH_SOURCES
+                    and isinstance(error, ProbeCleanupError)
+                    else CheckReason.REQUEST_OUTCOME_UNKNOWN,
                 )
         if (
             outcome.state is CheckState.SUCCEEDED
@@ -217,7 +235,11 @@ class HttpxModelProbe:
         return outcome.model_copy(update={"elapsed_ms": int((time.monotonic() - start) * 1000)})
 
     async def _body(
-        self, response: httpx.Response, model_id: str, stream: StreamProbe | None
+        self,
+        response: httpx.Response,
+        model_id: str,
+        stream: StreamProbe | None,
+        check_kind: CheckKind,
     ) -> ProbeOutcome:
         if 300 <= response.status_code < 400:
             return ProbeOutcome(state=CheckState.FAILED, reason=CheckReason.REDIRECT_REJECTED)
@@ -248,9 +270,18 @@ class HttpxModelProbe:
             except StreamProtocolError as error:
                 return stream.outcome(CheckState.FAILED, error.reason)
         chunks = bytearray()
-        async for chunk in response.aiter_raw(chunk_size=4096):
+        raw_chunks = response.aiter_raw(chunk_size=4096)
+        if check_kind is CheckKind.SEARCH_SOURCES:
+            if not isinstance(response.stream, httpx.AsyncByteStream):
+                raise RuntimeError("async response stream required")
+            # Keep EOF cleanup in _send's bounded finally. aiter_raw marks the response
+            # closed before awaiting stream.aclose, obscuring an EOF cleanup failure.
+            raw_chunks = response.stream.__aiter__()
+        async for chunk in raw_chunks:
             chunks.extend(chunk[: MAX_RESPONSE_BYTES + 1 - len(chunks)])
             if len(chunks) > MAX_RESPONSE_BYTES:
+                if check_kind is CheckKind.SEARCH_SOURCES:
+                    return search_failure(CheckReason.RESPONSE_TOO_LARGE, len(chunks))
                 return ProbeOutcome(
                     state=CheckState.FAILED,
                     reason=CheckReason.RESPONSE_TOO_LARGE,
@@ -261,6 +292,8 @@ class HttpxModelProbe:
                         normal_completion_observed=False,
                     ),
                 )
+        if check_kind is CheckKind.SEARCH_SOURCES:
+            return parse_search_response(bytes(chunks), model_id)
         result = parse_response(bytes(chunks), model_id)
         success = result.state is CheckState.SUCCEEDED
         return result.model_copy(
@@ -282,9 +315,9 @@ class HttpxModelProbe:
         stream: StreamProbe | None,
     ) -> ProbeOutcome:
         # Pin the validated public IP; retain the approved hostname for Host and TLS verification.
-        target = httpx.URL(
-            f"https://{prepared.hostname}/compatible-mode/v1/chat/completions"
-        ).copy_with(host=prepared.address)
+        target = httpx.URL(f"https://{prepared.hostname}{probe_path(check_kind)}").copy_with(
+            host=prepared.address
+        )
         transport = self.transport or httpx.AsyncHTTPTransport(
             verify=ssl.create_default_context(),
             retries=0,
@@ -311,11 +344,16 @@ class HttpxModelProbe:
                         "Authorization": f"Bearer {prepared.material.value.get_secret_value()}",
                         "Accept": "application/json" if stream is None else "text/event-stream",
                         "Accept-Encoding": "identity",
+                        **(
+                            {"x-dashscope-session-cache": "disable"}
+                            if check_kind is CheckKind.SEARCH_SOURCES
+                            else {}
+                        ),
                     },
                     extensions={"sni_hostname": prepared.hostname},
                 )
                 response = await client.send(request, stream=True)
-                outcome = await self._body(response, model_id, stream)
+                outcome = await self._body(response, model_id, stream, check_kind)
                 if stream is not None:
                     stream.receiving_complete = True
         finally:
@@ -332,7 +370,15 @@ class HttpxModelProbe:
                 stream.local_closed = response is not None and not close_failed
                 stream.close_failed = close_failed
             if close_failed:
-                raise OSError("local response cleanup unconfirmed") from None
+                raise ProbeCleanupError("local response cleanup unconfirmed") from None
         if stream is not None:
             outcome = outcome.model_copy(update={"observation": stream.observation()})
+        if isinstance(outcome.observation, SearchSourceObservation):
+            outcome = outcome.model_copy(
+                update={
+                    "observation": outcome.observation.model_copy(
+                        update={"local_response_closed": True}
+                    )
+                }
+            )
         return outcome

@@ -11,13 +11,18 @@ from control_plane.app.modules.model_gateway.domain import (
     ProviderModelId,
 )
 from control_plane.app.modules.model_gateway.domain.connections import (
-    ADAPTER_VERSION,
+    ADAPTER_VERSIONS,
+    MAX_SEARCH_CALLS,
+    MAX_SEARCH_QUERIES,
+    MAX_SEARCH_SOURCES,
+    MAX_SOURCE_URL_LENGTH,
     PROBE_VERSIONS,
     CheckKind,
     ConnectionDefinition,
     VersionLabel,
     digest,
     probe_body,
+    probe_path,
 )
 
 
@@ -61,6 +66,14 @@ class CheckReason(StrEnum):
     STREAM_INTERRUPTED = "STREAM_INTERRUPTED"
     STREAM_CLOSE_FAILED = "STREAM_CLOSE_FAILED"
     THINKING_SIGNAL_MISSING = "THINKING_SIGNAL_MISSING"
+    SEARCH_SOURCE_SIGNAL_MISSING = "SEARCH_SOURCE_SIGNAL_MISSING"
+    SEARCH_MODEL_NOT_ALLOWED = "SEARCH_MODEL_NOT_ALLOWED"
+    SEARCH_REGION_NOT_ALLOWED = "SEARCH_REGION_NOT_ALLOWED"
+    INVALID_SEARCH_RESPONSE = "INVALID_SEARCH_RESPONSE"
+    SEARCH_EVIDENCE_LIMIT = "SEARCH_EVIDENCE_LIMIT"
+    UNSAFE_SEARCH_SOURCE = "UNSAFE_SEARCH_SOURCE"
+    UNEXPECTED_TOOL_OUTPUT = "UNEXPECTED_TOOL_OUTPUT"
+    RESPONSE_CLOSE_FAILED = "RESPONSE_CLOSE_FAILED"
 
 
 class InputCurrentness(StrEnum):
@@ -116,21 +129,16 @@ class CheckInputSnapshot(BaseModel):
             "region": connection.region if connection else None,
             "connection_version": connection.version if connection else None,
             "material_version": connection.material_version if connection else None,
-            "connection_fingerprint": connection.fingerprint if connection else None,
-            "adapter_version": ADAPTER_VERSION,
+            "connection_fingerprint": connection.fingerprint_for(check_kind)
+            if connection
+            else None,
+            "adapter_version": ADAPTER_VERSIONS[check_kind],
             "probe_version": PROBE_VERSIONS[check_kind],
         }
-        return cls.model_validate(
-            values
-            | {
-                "input_digest": digest(
-                    {
-                        "input": values,
-                        "probe": probe_body(deployment.provider_model_id, check_kind),
-                    }
-                )
-            }
-        )
+        payload = {"input": values, "probe": probe_body(deployment.provider_model_id, check_kind)}
+        if check_kind is CheckKind.SEARCH_SOURCES:
+            payload["transport"] = {"path": probe_path(check_kind), "sessionCache": "disable"}
+        return cls.model_validate(values | {"input_digest": digest(payload)})
 
 
 UsageCount = Annotated[int, Field(strict=True, ge=0, le=2147483647)]
@@ -175,8 +183,38 @@ class ThinkingObservation(StreamObservationFields):
     reasoning_bytes: int = Field(ge=0, le=65536)
 
 
+class SearchSourceReference(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    call_id: str = Field(min_length=1, max_length=128)
+    sanitized_url: str = Field(min_length=8, max_length=MAX_SOURCE_URL_LENGTH, pattern=r"^https://")
+
+
+class SearchQueryObservation(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    call_id: str = Field(min_length=1, max_length=128)
+    count: int | None = Field(ge=0, le=MAX_SEARCH_QUERIES)
+    digest: str | None = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class SearchSourceObservation(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    kind: Literal[CheckKind.SEARCH_SOURCES]
+    protocol: Literal["BAILIAN_RESPONSES_V1"] = "BAILIAN_RESPONSES_V1"
+    consumed_bytes: int = Field(ge=0, le=65537)
+    completed_search_call_count: int = Field(ge=0, le=MAX_SEARCH_CALLS)
+    source_signal_observed: bool
+    provider_search_call_count: UsageCount | None = None
+    text_observed: bool
+    normal_completion_observed: bool
+    local_response_closed: bool
+    provider_cancellation: Literal["UNCONFIRMED"] = "UNCONFIRMED"
+    sources: tuple[SearchSourceReference, ...] = Field(max_length=MAX_SEARCH_SOURCES)
+    queries: tuple[SearchQueryObservation, ...] = Field(max_length=MAX_SEARCH_CALLS)
+
+
 ProbeObservation = Annotated[
-    BasicTextObservation | StreamObservation | ThinkingObservation, Field(discriminator="kind")
+    BasicTextObservation | StreamObservation | ThinkingObservation | SearchSourceObservation,
+    Field(discriminator="kind"),
 ]
 
 

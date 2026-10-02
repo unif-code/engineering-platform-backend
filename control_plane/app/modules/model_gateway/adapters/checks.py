@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from typing import Any
 
@@ -5,6 +6,7 @@ from sqlalchemy import text
 
 from control_plane.app.modules.model_gateway.adapters import SqlAlchemyDeploymentRepository
 from control_plane.app.modules.model_gateway.domain.checks import ConnectionCheck
+from control_plane.app.modules.model_gateway.domain.connections import CheckKind
 
 
 class SqlAlchemyCheckRepository(SqlAlchemyDeploymentRepository):
@@ -118,7 +120,11 @@ class SqlAlchemyCheckRepository(SqlAlchemyDeploymentRepository):
                 observed_completion_marker=:observed_completion_marker,observed_local_closed=:observed_local_closed,
                 provider_cancellation=:provider_cancellation,
                 observed_reasoning=:observed_reasoning,observed_reasoning_deltas=:observed_reasoning_deltas,
-                observed_reasoning_bytes=:observed_reasoning_bytes
+                observed_reasoning_bytes=:observed_reasoning_bytes,
+                observed_search_calls=:observed_search_calls,observed_source_signal=:observed_source_signal,
+                provider_search_call_count=:provider_search_call_count,
+                search_sources=CAST(:search_sources AS JSONB),
+                search_queries=CAST(:search_queries AS JSONB)
             WHERE id=:id AND revision=:expected_revision AND state IN ('QUEUED','RUNNING')
                 AND (:state <> 'RUNNING' OR EXISTS (
                     SELECT 1 FROM model_gateway.deployment d
@@ -143,23 +149,37 @@ _OBSERVATION_FIELDS = {
     "observed_reasoning": "reasoning_observed",
     "observed_reasoning_deltas": "reasoning_delta_count",
     "observed_reasoning_bytes": "reasoning_bytes",
+    "observed_search_calls": "completed_search_call_count",
+    "observed_source_signal": "source_signal_observed",
+    "provider_search_call_count": "provider_search_call_count",
+    "search_sources": "sources",
+    "search_queries": "queries",
 }
 
 
 def _parameters(value: ConnectionCheck) -> dict[str, Any]:
     observation = {} if value.observation is None else value.observation.model_dump()
-    return value.model_dump(exclude={"observation"}) | {
+    if value.check_kind is CheckKind.SEARCH_SOURCES and value.observation is not None:
+        observation["local_stream_closed"] = observation.pop("local_response_closed")
+    parameters = value.model_dump(exclude={"observation"}) | {
         "input": value.input.model_dump_json(),
         "connection_ref": value.input.connection_ref,
         "usage": value.usage.model_dump_json() if value.usage else None,
         **{column: observation.get(field) for column, field in _OBSERVATION_FIELDS.items()},
     }
 
+    for column in ("search_sources", "search_queries"):
+        if parameters[column] is not None:
+            parameters[column] = json.dumps(parameters[column], separators=(",", ":"))
+    return parameters
+
 
 def _check(row: Any) -> ConnectionCheck:
     values = dict(row)
     values.pop("connection_ref")
     observation = {field: values.pop(column) for column, field in _OBSERVATION_FIELDS.items()}
+    if values["check_kind"] == "SEARCH_SOURCES":
+        observation["local_response_closed"] = observation.pop("local_stream_closed")
     values["observation"] = (
         {
             "kind": values["check_kind"],

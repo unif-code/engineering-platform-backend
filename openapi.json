@@ -1272,7 +1272,8 @@
           "BASIC_TEXT",
           "STREAM_TEXT",
           "STREAM_STOP",
-          "THINKING"
+          "THINKING",
+          "SEARCH_SOURCES"
         ],
         "title": "CheckKind",
         "type": "string"
@@ -1308,7 +1309,15 @@
           "STREAM_EVENT_LIMIT",
           "STREAM_INTERRUPTED",
           "STREAM_CLOSE_FAILED",
-          "THINKING_SIGNAL_MISSING"
+          "THINKING_SIGNAL_MISSING",
+          "SEARCH_SOURCE_SIGNAL_MISSING",
+          "SEARCH_MODEL_NOT_ALLOWED",
+          "SEARCH_REGION_NOT_ALLOWED",
+          "INVALID_SEARCH_RESPONSE",
+          "SEARCH_EVIDENCE_LIMIT",
+          "UNSAFE_SEARCH_SOURCE",
+          "UNEXPECTED_TOOL_OUTPUT",
+          "RESPONSE_CLOSE_FAILED"
         ],
         "title": "CheckReason",
         "type": "string"
@@ -1382,7 +1391,7 @@
         "type": "object"
       },
       "ConnectionCheckDto": {
-        "description": "SUCCEEDED has a kind-specific, limited meaning.\n\nBASIC_TEXT proves one complete basic text response. STREAM_TEXT proves valid text\nincrements, normal completion and the final completion marker. STREAM_STOP proves\ntext was observed and the local response stream/client were closed; Provider-side\ncancellation and stopped billing remain unconfirmed. THINKING proves nonblank dedicated\nreasoning, a complete answer and normal stream completion with local cleanup; it does not\nassess reasoning quality. THINKING_SIGNAL_MISSING means only that this complete response\ncontained no dedicated reasoning signal, not that the model lacks thinking support.\nNo kind activates or fully verifies a candidate.\n\nUNKNOWN may have executed and incurred Provider charges; never automatically resubmit.\ncurrentness is recomputed from the current candidate and non-secret connection/probe versions.",
+        "description": "SUCCEEDED has a kind-specific, limited meaning.\n\nBASIC_TEXT proves one complete basic text response. STREAM_TEXT proves valid text\nincrements, normal completion and the final completion marker. STREAM_STOP proves\ntext was observed and the local response stream/client were closed; Provider-side\ncancellation and stopped billing remain unconfirmed. THINKING proves nonblank dedicated\nreasoning, a complete answer and normal stream completion with local cleanup; it does not\nassess reasoning quality. THINKING_SIGNAL_MISSING means only that this complete response\ncontained no dedicated reasoning signal, not that the model lacks thinking support.\nSEARCH_SOURCES proves completed native search calls, structured sanitized source references\nand a complete answer with local cleanup. It does not prove source accuracy, answer-to-source\ncitation binding, remote search termination or billing limits. No kind activates a candidate.\n\nUNKNOWN may have executed and incurred Provider charges; never automatically resubmit.\ncurrentness is recomputed from the current candidate and non-secret connection/probe versions.",
         "properties": {
           "attempt": {
             "title": "Attempt",
@@ -1453,6 +1462,7 @@
                 "discriminator": {
                   "mapping": {
                     "BASIC_TEXT": "#/components/schemas/BasicTextObservationDto",
+                    "SEARCH_SOURCES": "#/components/schemas/SearchSourceObservationDto",
                     "STREAM_STOP": "#/components/schemas/StreamObservationDto",
                     "STREAM_TEXT": "#/components/schemas/StreamObservationDto",
                     "THINKING": "#/components/schemas/ThinkingObservationDto"
@@ -1468,6 +1478,9 @@
                   },
                   {
                     "$ref": "#/components/schemas/ThinkingObservationDto"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SearchSourceObservationDto"
                   }
                 ]
               },
@@ -5549,6 +5562,168 @@
         "title": "SddBaselineResponseDto",
         "type": "object"
       },
+      "SearchQueryObservationDto": {
+        "additionalProperties": false,
+        "description": "Count and digest of distinct normalized Provider queries.\n\nOriginal query text is absent; null metadata means the query was not returned.",
+        "properties": {
+          "callId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Callid",
+            "type": "string"
+          },
+          "count": {
+            "anyOf": [
+              {
+                "maximum": 8.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Count"
+          },
+          "digest": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Digest"
+          }
+        },
+        "required": [
+          "callId",
+          "count",
+          "digest"
+        ],
+        "title": "SearchQueryObservationDto",
+        "type": "object"
+      },
+      "SearchSourceObservationDto": {
+        "additionalProperties": false,
+        "description": "Only Provider-reported source signals, not verified pages, answer citations or quality.\n\nOne HTTP attempt may contain multiple Provider searches; counts/limits are not billing caps.\nstore=false covers response-session storage only, not a general zero-retention guarantee.",
+        "properties": {
+          "completedSearchCallCount": {
+            "maximum": 8.0,
+            "minimum": 0.0,
+            "title": "Completedsearchcallcount",
+            "type": "integer"
+          },
+          "consumedBytes": {
+            "maximum": 65537.0,
+            "minimum": 0.0,
+            "title": "Consumedbytes",
+            "type": "integer"
+          },
+          "kind": {
+            "const": "SEARCH_SOURCES",
+            "title": "Kind",
+            "type": "string"
+          },
+          "localResponseClosed": {
+            "title": "Localresponseclosed",
+            "type": "boolean"
+          },
+          "normalCompletionObserved": {
+            "title": "Normalcompletionobserved",
+            "type": "boolean"
+          },
+          "protocol": {
+            "const": "BAILIAN_RESPONSES_V1",
+            "default": "BAILIAN_RESPONSES_V1",
+            "title": "Protocol",
+            "type": "string"
+          },
+          "providerCancellation": {
+            "const": "UNCONFIRMED",
+            "default": "UNCONFIRMED",
+            "title": "Providercancellation",
+            "type": "string"
+          },
+          "providerSearchCallCount": {
+            "anyOf": [
+              {
+                "maximum": 2147483647.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Providersearchcallcount"
+          },
+          "queries": {
+            "items": {
+              "$ref": "#/components/schemas/SearchQueryObservationDto"
+            },
+            "maxItems": 8,
+            "title": "Queries",
+            "type": "array"
+          },
+          "sourceSignalObserved": {
+            "title": "Sourcesignalobserved",
+            "type": "boolean"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/SearchSourceReferenceDto"
+            },
+            "maxItems": 32,
+            "title": "Sources",
+            "type": "array"
+          },
+          "textObserved": {
+            "title": "Textobserved",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "consumedBytes",
+          "completedSearchCallCount",
+          "sourceSignalObserved",
+          "textObserved",
+          "normalCompletionObserved",
+          "localResponseClosed",
+          "sources",
+          "queries"
+        ],
+        "title": "SearchSourceObservationDto",
+        "type": "object"
+      },
+      "SearchSourceReferenceDto": {
+        "additionalProperties": false,
+        "description": "Sanitized HTTPS reference reported by this search call.\n\nQuery/fragment removed; never fetched and not a precise page snapshot.",
+        "properties": {
+          "callId": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Callid",
+            "type": "string"
+          },
+          "sanitizedUrl": {
+            "maxLength": 2048,
+            "minLength": 8,
+            "pattern": "^https://",
+            "title": "Sanitizedurl",
+            "type": "string"
+          }
+        },
+        "required": [
+          "callId",
+          "sanitizedUrl"
+        ],
+        "title": "SearchSourceReferenceDto",
+        "type": "object"
+      },
       "SelectIntegrationBaselineRequestDto": {
         "additionalProperties": false,
         "properties": {
@@ -6651,7 +6826,7 @@
   "info": {
     "description": "内部研发平台 Control Plane API。\n\n全局约定：JSON 一律 camelCase；ID 一律 string；错误统一 application/problem+json（RFC 9457）；\n分页 cursor 型 {items, nextCursor}；写并发 If-Match/ETag；变更命令 Idempotency-Key——\n后三者自 V0.2 首个真实接口起强制执行。",
     "title": "engineering-platform-control-plane",
-    "version": "1.1.0"
+    "version": "1.2.0"
   },
   "openapi": "3.1.0",
   "paths": {

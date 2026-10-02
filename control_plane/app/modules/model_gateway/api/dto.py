@@ -18,6 +18,9 @@ from control_plane.app.modules.model_gateway.domain.checks import (
     CurrentnessReason,
     InputCurrentness,
     ProbeUsage,
+    SearchQueryObservation,
+    SearchSourceObservation,
+    SearchSourceReference,
     StreamObservation,
     ThinkingObservation,
 )
@@ -122,8 +125,36 @@ class ThinkingObservationDto(ThinkingObservation, CamelModel):
     """
 
 
+class SearchSourceReferenceDto(SearchSourceReference, CamelModel):
+    """Sanitized HTTPS reference reported by this search call.
+
+    Query/fragment removed; never fetched and not a precise page snapshot.
+    """
+
+
+class SearchQueryObservationDto(SearchQueryObservation, CamelModel):
+    """Count and digest of distinct normalized Provider queries.
+
+    Original query text is absent; null metadata means the query was not returned.
+    """
+
+
+class SearchSourceObservationDto(SearchSourceObservation, CamelModel):
+    """Only Provider-reported source signals, not verified pages, answer citations or quality.
+
+    One HTTP attempt may contain multiple Provider searches; counts/limits are not billing caps.
+    store=false covers response-session storage only, not a general zero-retention guarantee.
+    """
+
+    sources: tuple[SearchSourceReferenceDto, ...] = Field(max_length=32)
+    queries: tuple[SearchQueryObservationDto, ...] = Field(max_length=8)
+
+
 CheckObservationDto = Annotated[
-    BasicTextObservationDto | StreamObservationDto | ThinkingObservationDto,
+    BasicTextObservationDto
+    | StreamObservationDto
+    | ThinkingObservationDto
+    | SearchSourceObservationDto,
     Field(discriminator="kind"),
 ]
 
@@ -138,7 +169,9 @@ class ConnectionCheckDto(CamelModel):
     reasoning, a complete answer and normal stream completion with local cleanup; it does not
     assess reasoning quality. THINKING_SIGNAL_MISSING means only that this complete response
     contained no dedicated reasoning signal, not that the model lacks thinking support.
-    No kind activates or fully verifies a candidate.
+    SEARCH_SOURCES proves completed native search calls, structured sanitized source references
+    and a complete answer with local cleanup. It does not prove source accuracy, answer-to-source
+    citation binding, remote search termination or billing limits. No kind activates a candidate.
 
     UNKNOWN may have executed and incurred Provider charges; never automatically resubmit.
     currentness is recomputed from the current candidate and non-secret connection/probe versions.

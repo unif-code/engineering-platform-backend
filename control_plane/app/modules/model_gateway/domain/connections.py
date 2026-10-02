@@ -30,6 +30,7 @@ class CheckKind(StrEnum):
     STREAM_TEXT = "STREAM_TEXT"
     STREAM_STOP = "STREAM_STOP"
     THINKING = "THINKING"
+    SEARCH_SOURCES = "SEARCH_SOURCES"
 
 
 PROBE_VERSIONS = {
@@ -37,10 +38,20 @@ PROBE_VERSIONS = {
     CheckKind.STREAM_TEXT: "stream-text-v1",
     CheckKind.STREAM_STOP: "stream-stop-v1",
     CheckKind.THINKING: "thinking-v1",
+    CheckKind.SEARCH_SOURCES: "search-sources-v1",
 }
 MAX_STREAM_EVENT_BYTES = 16384
 MAX_STREAM_EVENTS = 256
-ADAPTER_VERSION = "bailian-compatible-v1"
+ADAPTER_VERSIONS = {kind: "bailian-compatible-v1" for kind in CheckKind} | {
+    CheckKind.SEARCH_SOURCES: "bailian-responses-v1",
+}
+SEARCH_REGIONS = frozenset({"cn-beijing", "ap-southeast-1"})
+MAX_SEARCH_CALLS = 8
+MAX_SEARCH_SOURCES = 32
+MAX_SOURCES_PER_CALL = 16
+MAX_SEARCH_QUERIES = 8
+MAX_SEARCH_QUERY_LENGTH = 512
+MAX_SOURCE_URL_LENGTH = 2048
 PROBE_TEXT = "Reply with OK."
 MAX_COMPLETION_TOKENS = 64
 MAX_RESPONSE_BYTES = 65536
@@ -63,13 +74,25 @@ class ConnectionDefinition(BaseModel):
         min_length=12, max_length=266, pattern=r"^secret-ref:[A-Za-z0-9][A-Za-z0-9._/-]*$"
     )
 
+    responses_search_model_ids: tuple[ProviderModelId, ...] = Field(default=(), max_length=100)
+
+    @model_validator(mode="after")
+    def search_models_are_approved(self) -> Self:
+        if not set(self.responses_search_model_ids) <= set(self.allowed_model_ids):
+            raise ValueError("Responses search models must be approved connection models")
+        if len(set(self.responses_search_model_ids)) != len(self.responses_search_model_ids):
+            raise ValueError("Responses search model IDs must be unique")
+        return self
+
     @property
     def hostname(self) -> str:
         return f"{self.workspace_id}.{self.region}.maas.aliyuncs.com"
 
-    @property
-    def fingerprint(self) -> str:
-        return digest(self.model_dump(mode="json"))
+    def fingerprint_for(self, check_kind: CheckKind) -> str:
+        values = self.model_dump(mode="json", exclude={"responses_search_model_ids"})
+        if check_kind is CheckKind.SEARCH_SOURCES:
+            values["responses_search_model_ids"] = sorted(self.responses_search_model_ids)
+        return digest(values)
 
 
 class ConnectionManifest(BaseModel):
@@ -92,7 +115,29 @@ def digest(value: object) -> str:
     ).hexdigest()
 
 
+def probe_path(check_kind: CheckKind) -> str:
+    if check_kind is CheckKind.SEARCH_SOURCES:
+        return "/compatible-mode/v1/responses"
+    return "/compatible-mode/v1/chat/completions"
+
+
+def search_probe_body(model_id: str) -> dict[str, object]:
+    return {
+        "model": model_id,
+        "input": "Search the web for the official Alibaba Cloud Model Studio documentation "
+        "and reply with its official URL in one short sentence.",
+        "store": False,
+        "stream": False,
+        "tools": [{"type": "web_search"}],
+        "tool_choice": "required",
+        "reasoning": {"effort": "none"},
+        "max_output_tokens": MAX_COMPLETION_TOKENS,
+    }
+
+
 def probe_body(model_id: str, check_kind: CheckKind) -> dict[str, object]:
+    if check_kind is CheckKind.SEARCH_SOURCES:
+        return search_probe_body(model_id)
     body: dict[str, object] = {
         "model": model_id,
         "messages": [{"role": "user", "content": PROBE_TEXT}],
