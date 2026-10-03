@@ -356,6 +356,7 @@ def test_resume_owner_lock_survives_agent_commit_or_rollback_boundary(
     subject = prepare_real_resume(journey)
     before = agent_evidence(journey)
     agent_ready, release_agent, assignment_ready = Event(), Event(), Event()
+    owner_active = Event()
     owner_pids: list[int] = []
     assignment_pids: list[int] = []
     connections: list[Any] = []
@@ -364,7 +365,18 @@ def test_resume_owner_lock_survives_agent_commit_or_rollback_boundary(
         connections.append(db)
         owner_pids.append(db.execute(text("SELECT pg_backend_pid()")).scalar_one())
         db.rollback()
-        return subject.runtime.requirement_context_factory(db)
+        delegate = subject.runtime.requirement_context_factory(db)
+
+        @contextmanager
+        def protect(request: Any) -> Iterator[Any]:
+            with delegate.protect(request) as current:
+                owner_active.set()
+                try:
+                    yield current
+                finally:
+                    owner_active.clear()
+
+        return SimpleNamespace(resolve=delegate.resolve, protect=protect)
 
     def transaction(operation: Any) -> Any:
         with journey.database.engines["agent"].begin() as db:
@@ -383,12 +395,14 @@ def test_resume_owner_lock_survives_agent_commit_or_rollback_boundary(
                 )
             try:
                 result = operation(uow)
-                if failure == "before-commit":
+                if failure == "before-commit" and owner_active.is_set():
                     raise SQLAlchemyError("synthetic transaction failure")
                 return result
             finally:
-                agent_ready.set()
-                assert release_agent.wait(10), "test did not release Agent transaction"
+                # The same runner first serves the authorization read without owner protection.
+                if owner_active.is_set():
+                    agent_ready.set()
+                    assert release_agent.wait(10), "test did not release Agent transaction"
 
     def change_assignment() -> Any:
         with journey.database.engines["requirement"].begin() as db:
