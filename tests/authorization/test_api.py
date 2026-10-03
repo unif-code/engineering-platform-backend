@@ -188,6 +188,7 @@ def test_super_admin_me_and_navigation_are_exact_v02_projection(
         "admin.users",
         "admin.grants",
         "admin.policies",
+        "agent-definitions",
     ]
     assert [item["routeKey"] for item in navigation.json()] == expected_route_keys
     assert {item["capability"] for item in me.json()["capabilities"]} == set(
