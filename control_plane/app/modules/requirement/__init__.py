@@ -34,6 +34,9 @@ from control_plane.app.modules.requirement.application import (
 )
 from control_plane.app.modules.requirement.application import add_work_item as _add_work_item
 from control_plane.app.modules.requirement.application import (
+    assert_work_item_assignee_eligible as _assert_work_item_assignee_eligible,
+)
+from control_plane.app.modules.requirement.application import (
     assign_work_item as _assign_work_item,
 )
 from control_plane.app.modules.requirement.application import (
@@ -976,6 +979,24 @@ def get_requirement_for_update(
     )
 
 
+def assert_work_item_assignee_eligible(
+    db: Connection,
+    *,
+    requirement_id: str,
+    work_item_id: str,
+    expected_assignment_id: str,
+    dependencies: RequirementDependencies,
+) -> None:
+    """Check the selected assignee without changing Requirement or assignment facts."""
+    _assert_work_item_assignee_eligible(
+        dependencies.repository_factory(db),
+        requirement_id=requirement_id,
+        work_item_id=work_item_id,
+        expected_assignment_id=expected_assignment_id,
+        assignment_guard=dependencies.assignment_guard,
+    )
+
+
 def get_requirement_delivery_snapshot(
     db: Connection,
     *,
@@ -1293,6 +1314,7 @@ def decide_baseline(
 
 
 __all__ = [
+    "assert_work_item_assignee_eligible",
     "DeliveryGateReassignmentResult",
     "reassign_delivery_gate",
     "RequirementPolicyRuntime",

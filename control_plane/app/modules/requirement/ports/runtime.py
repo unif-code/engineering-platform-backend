@@ -35,6 +35,15 @@ class RouteSnapshotPort(Protocol):
 
 
 class AssignmentGuardPort(Protocol):
+    def can_assign(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        repository_id: str,
+        required_capabilities: tuple[str, ...],
+    ) -> bool: ...
+
     def can_auto_assign(
         self,
         *,

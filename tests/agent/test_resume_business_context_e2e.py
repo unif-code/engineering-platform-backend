@@ -25,6 +25,7 @@ from control_plane.app.modules.agent.api import AgentHttpRuntime, routes
 from control_plane.app.modules.agent.application.errors import InvalidRequirementExecutionContext
 from control_plane.app.modules.requirement import (
     RequirementNotFound,
+    WorkItemAssigneeIneligible,
     acknowledge_repository_binding_request,
     assign_work_item,
     claim_repository_binding_requests,
@@ -149,7 +150,11 @@ def test_http_owner_authorization_error_remains_authorization_failure(
 
 @pytest.mark.parametrize(
     ("error", "status"),
-    [(RequirementNotFound("missing"), 409), (InvalidRequirementExecutionContext("unknown"), 503)],
+    [
+        (RequirementNotFound("missing"), 409),
+        (InvalidRequirementExecutionContext("unknown"), 503),
+        (WorkItemAssigneeIneligible("private-assignee"), 409),
+    ],
 )
 def test_http_owner_refusal_does_not_reuse_start_mapping(
     resume_api: Any, error: Exception, status: int
@@ -254,8 +259,10 @@ def test_default_session_resume_replay_survives_reassignment_outage_and_expiry(
         delegate = subject.runtime.requirement_context_factory(db)
 
         @contextmanager
-        def protect(request: Any) -> Iterator[Any]:
-            with delegate.protect(request) as current:
+        def protect(request: Any, *, expected_assignment_id: str) -> Iterator[Any]:
+            with delegate.protect(
+                request, expected_assignment_id=expected_assignment_id
+            ) as current:
                 yield current
             if close_fails:
                 raise SQLAlchemyError("synthetic owner cleanup failure after Agent commit")
@@ -368,8 +375,10 @@ def test_resume_owner_lock_survives_agent_commit_or_rollback_boundary(
         delegate = subject.runtime.requirement_context_factory(db)
 
         @contextmanager
-        def protect(request: Any) -> Iterator[Any]:
-            with delegate.protect(request) as current:
+        def protect(request: Any, *, expected_assignment_id: str) -> Iterator[Any]:
+            with delegate.protect(
+                request, expected_assignment_id=expected_assignment_id
+            ) as current:
                 owner_active.set()
                 try:
                     yield current

@@ -79,7 +79,7 @@ class StaticRouteSnapshots:
 class StaticAssignmentGuard:
     allowed: bool
 
-    def can_auto_assign(
+    def can_assign(
         self,
         *,
         actor_id: str,
@@ -90,13 +90,15 @@ class StaticAssignmentGuard:
         del actor_id, workspace_id, repository_id, required_capabilities
         return self.allowed
 
+    can_auto_assign = can_assign
+
 
 @dataclass(frozen=True, slots=True)
 class BlockingAssignmentGuard:
     entered: Event
     release: Event
 
-    def can_auto_assign(
+    def can_assign(
         self,
         *,
         actor_id: str,
@@ -108,6 +110,8 @@ class BlockingAssignmentGuard:
         self.entered.set()
         assert self.release.wait(timeout=5)
         return True
+
+    can_auto_assign = can_assign
 
 
 class FailingAudit:

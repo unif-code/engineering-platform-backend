@@ -20,13 +20,16 @@ from control_plane.app.modules.requirement.domain import (
     InvalidRequirementCursor,
     RepositoryBindingContext,
     RequirementDeliverySnapshotDto,
+    RequirementDependencyUnavailable,
     RequirementDetailsDto,
     RequirementNotFound,
     RequirementPage,
     RequirementType,
+    WorkItemAssigneeIneligible,
     WorkItemNotFound,
 )
 from control_plane.app.modules.requirement.ports import RequirementRepository
+from control_plane.app.modules.requirement.ports.runtime import AssignmentGuardPort
 
 
 def _encode_cursor(created_at: datetime, requirement_id: str) -> str:
@@ -85,6 +88,60 @@ def get_requirement(
         ),
         current_decision=None if decision is None else decision_dto(decision),
     )
+
+
+def assert_work_item_assignee_eligible(
+    repository: RequirementRepository,
+    *,
+    requirement_id: str,
+    work_item_id: str,
+    expected_assignment_id: str,
+    assignment_guard: AssignmentGuardPort,
+) -> None:
+    """Recheck the selected owner using current facts under the caller's parent lock."""
+    requirement = repository.requirement_by_id(requirement_id)
+    work_item = repository.work_item_by_id(work_item_id)
+    assignment = repository.current_work_item_assignment(work_item_id)
+    try:
+        if (
+            requirement is None
+            or work_item is None
+            or assignment is None
+            or str(requirement["id"]) != requirement_id
+            or str(work_item["id"]) != work_item_id
+            or str(work_item["requirement_id"]) != requirement_id
+            or str(assignment["id"]) != expected_assignment_id
+            or str(assignment["work_item_id"]) != work_item_id
+            or assignment["superseded_at"] is not None
+        ):
+            raise ValueError("inconsistent assignment target")
+        workspace_id = str(UUID(str(requirement["workspace_id"])))
+        owner_id, assignee_id = work_item["human_owner_id"], assignment["assignee_id"]
+        repository_id, capabilities = work_item["repository_id"], work_item["required_capabilities"]
+        if not isinstance(capabilities, (list, tuple)) or owner_id != assignee_id:
+            raise ValueError("inconsistent assignment owner")
+        if not all(
+            isinstance(value, str) and value and value.strip() == value
+            for value in (owner_id, assignee_id, repository_id, *capabilities)
+        ):
+            raise ValueError("invalid assignment reference")
+        explicit_guard = assignment_guard.can_assign
+        if not callable(explicit_guard):
+            raise ValueError("explicit assignment guard unavailable")
+    except (ValueError, TypeError, KeyError, AttributeError):
+        raise RequirementDependencyUnavailable(
+            "Current assignment eligibility is unverifiable"
+        ) from None
+    eligible = explicit_guard(
+        actor_id=assignee_id,
+        workspace_id=workspace_id,
+        repository_id=repository_id,
+        required_capabilities=tuple(capabilities),
+    )
+    if type(eligible) is not bool:
+        raise RequirementDependencyUnavailable("Explicit assignment eligibility is unverifiable")
+    if not eligible:
+        raise WorkItemAssigneeIneligible("Current WorkItem assignee is not eligible")
 
 
 def get_requirement_delivery_snapshot(

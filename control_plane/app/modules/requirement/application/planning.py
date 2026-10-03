@@ -298,12 +298,7 @@ def _assign_work_item_once(
     candidate_id = _normalized_text(human_owner_id, field="human owner ID")
     normalized_reason = _normalized_text(reason, field="assignment reason")
     try:
-        explicit_guard = getattr(
-            dependencies.assignment_guard,
-            "can_assign",
-            dependencies.assignment_guard.can_auto_assign,
-        )
-        eligible = explicit_guard(
+        eligible = dependencies.assignment_guard.can_assign(
             actor_id=candidate_id,
             workspace_id=str(requirement["workspace_id"]),
             repository_id=work_item["repository_id"],

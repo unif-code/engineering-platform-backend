@@ -117,7 +117,7 @@ class ConnectionBackedRequirementContext:
 
     @contextmanager
     def protect(
-        self, request: RequirementExecutionRequest
+        self, request: RequirementExecutionRequest, *, expected_assignment_id: str
     ) -> Iterator[RequirementExecutionContext]:
         with self.db.begin():
             yield self.resolve(request)

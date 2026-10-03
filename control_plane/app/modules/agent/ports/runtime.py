@@ -51,7 +51,7 @@ class RequirementExecutionContextPort(Protocol):
     def resolve(self, request: RequirementExecutionRequest) -> RequirementExecutionContext: ...
 
     def protect(
-        self, request: RequirementExecutionRequest
+        self, request: RequirementExecutionRequest, *, expected_assignment_id: str
     ) -> AbstractContextManager[RequirementExecutionContext]: ...
 
 

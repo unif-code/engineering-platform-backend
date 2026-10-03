@@ -1,4 +1,5 @@
 from control_plane.app.modules.requirement.domain import (
+    RequirementDependencyUnavailable,
     RequirementType,
     canonical_route_snapshot_hash,
 )
@@ -77,6 +78,16 @@ class V04RouteSnapshotCatalog:
 
 class FailClosedAutomaticAssignmentGuard:
     """Keep WorkItems unassigned until repository-scoped eligibility is integrated."""
+
+    def can_assign(
+        self,
+        *,
+        actor_id: str,
+        workspace_id: str,
+        repository_id: str,
+        required_capabilities: tuple[str, ...],
+    ) -> bool:
+        raise RequirementDependencyUnavailable("Explicit assignment eligibility is unavailable")
 
     def can_auto_assign(
         self,

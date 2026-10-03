@@ -63,7 +63,7 @@ class StaticRequirementContext:
     superseded: bool = False
 
     def protect(
-        self, command: RequirementExecutionRequest
+        self, command: RequirementExecutionRequest, *, expected_assignment_id: str
     ) -> nullcontext[RequirementExecutionContext]:
         return nullcontext(self.resolve(command))
 

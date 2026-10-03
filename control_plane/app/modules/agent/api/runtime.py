@@ -16,6 +16,7 @@ from control_plane.app.modules.agent.ports.runtime import (
 from control_plane.app.modules.requirement import (
     RequirementDependencyUnavailable,
     RequirementNotFound,
+    WorkItemAssigneeIneligible,
 )
 
 RequirementContextFactory = Callable[[Connection], RequirementExecutionContextPort]
@@ -38,7 +39,7 @@ class UnboundRequirementExecutionContext:
         raise RuntimeError("request-scoped Requirement context is unavailable")
 
     def protect(
-        self, _request: RequirementExecutionRequest
+        self, _request: RequirementExecutionRequest, *, expected_assignment_id: str
     ) -> AbstractContextManager[RequirementExecutionContext]:
         raise RequirementDependencyUnavailable(
             "request-scoped Requirement protection is unavailable"
@@ -54,16 +55,21 @@ class LazyRequirementExecutionContext(UnboundRequirementExecutionContext):
 
     @contextmanager
     def protect(
-        self, request: RequirementExecutionRequest
+        self, request: RequirementExecutionRequest, *, expected_assignment_id: str
     ) -> Iterator[RequirementExecutionContext]:
         with ExitStack() as resources:
             try:
                 db = resources.enter_context(self._engine.connect())
-                current = resources.enter_context(self._factory(db).protect(request))
+                current = resources.enter_context(
+                    self._factory(db).protect(
+                        request, expected_assignment_id=expected_assignment_id
+                    )
+                )
             except (
                 RequirementNotFound,
                 InvalidRequirementExecutionContext,
                 RequirementDependencyUnavailable,
+                WorkItemAssigneeIneligible,
             ):
                 raise
             except HTTPException as error:

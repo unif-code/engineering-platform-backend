@@ -86,8 +86,10 @@ class FakeSecrets:
 
 
 class DeniedAssignmentGuard:
-    def can_auto_assign(self, **_values: object) -> bool:
+    def can_assign(self, **_values: object) -> bool:
         return False
+
+    can_auto_assign = can_assign
 
 
 def _dependencies(

@@ -16,6 +16,7 @@ from control_plane.app.modules.agent.ports.runtime import (
 from control_plane.app.modules.requirement import (
     RequirementDependencies,
     RequirementDetailsDto,
+    assert_work_item_assignee_eligible,
     get_requirement,
     get_requirement_for_update,
 )
@@ -38,7 +39,7 @@ class RequirementFacadeExecutionContext:
 
     @contextmanager
     def protect(
-        self, request: RequirementExecutionRequest
+        self, request: RequirementExecutionRequest, *, expected_assignment_id: str
     ) -> Iterator[RequirementExecutionContext]:
         with self._db.begin():
             details = get_requirement_for_update(
@@ -46,7 +47,20 @@ class RequirementFacadeExecutionContext:
                 requirement_id=request.requirement_id,
                 dependencies=self._dependencies,
             )
-            yield self._context(request, details)
+            current = self._context(request, details)
+            if current.assignment_id != expected_assignment_id:
+                raise InvalidRequirementExecutionContext(
+                    "Current Assignment does not match the recorded source",
+                    reason=AgentBusinessContextReason.ASSIGNMENT_CHANGED,
+                )
+            assert_work_item_assignee_eligible(
+                self._db,
+                requirement_id=current.requirement_id,
+                work_item_id=current.work_item_id,
+                expected_assignment_id=expected_assignment_id,
+                dependencies=self._dependencies,
+            )
+            yield current
 
     def _context(
         self, request: RequirementExecutionRequest, details: RequirementDetailsDto

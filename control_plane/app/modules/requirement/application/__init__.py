@@ -71,6 +71,7 @@ from control_plane.app.modules.requirement.application.planning import (
     assign_work_item,
 )
 from control_plane.app.modules.requirement.application.queries import (
+    assert_work_item_assignee_eligible,
     get_repository_binding_context,
     get_requirement,
     get_requirement_delivery_snapshot,
@@ -78,6 +79,7 @@ from control_plane.app.modules.requirement.application.queries import (
 )
 
 __all__ = [
+    "assert_work_item_assignee_eligible",
     "RequirementDependencies",
     "IntegrationDeliveryMessageInvalid",
     "IntegrationDeliveryRequestMissing",

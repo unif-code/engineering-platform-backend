@@ -36,6 +36,7 @@ from control_plane.app.modules.agent.ports.runtime import (
 from control_plane.app.modules.requirement import (
     RequirementDependencyUnavailable,
     RequirementNotFound,
+    WorkItemAssigneeIneligible,
 )
 
 _CANCEL_OPERATION = "agent.attempt.cancel"
@@ -232,16 +233,18 @@ def _protect_resume_source(
                     workspace_id=run.workspace_id,
                     requirement_id=source.requirement_id,
                     work_item_id=source.work_item_id,
-                )
+                ),
+                expected_assignment_id=source.assignment_id,
             )
         )
-    except RequirementNotFound:
+    except (RequirementNotFound, WorkItemAssigneeIneligible):
         raise AttemptNotResumable(run.id) from None
     except InvalidRequirementExecutionContext as error:
         if error.reason in (
             AgentBusinessContextReason.WORKSPACE_CHANGED,
             AgentBusinessContextReason.WORK_ITEM_NOT_IN_REQUIREMENT,
             AgentBusinessContextReason.ASSIGNMENT_MISSING,
+            AgentBusinessContextReason.ASSIGNMENT_CHANGED,
         ):
             raise AttemptNotResumable(run.id) from None
         raise RequirementDependencyUnavailable("Resume business context is unverifiable") from None

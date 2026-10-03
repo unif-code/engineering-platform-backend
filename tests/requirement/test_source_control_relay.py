@@ -78,7 +78,7 @@ class StaticRouteSnapshots:
 
 
 class StaticAssignmentGuard:
-    def can_auto_assign(
+    def can_assign(
         self,
         *,
         actor_id: str,
@@ -88,6 +88,8 @@ class StaticAssignmentGuard:
     ) -> bool:
         del actor_id, workspace_id, repository_id, required_capabilities
         return True
+
+    can_auto_assign = can_assign
 
 
 class DurableDenialAudit:

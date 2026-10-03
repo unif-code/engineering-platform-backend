@@ -68,7 +68,9 @@ def resume_application(start_application: Any) -> SimpleNamespace:
     )
 
     @contextmanager
-    def protect(_request: Any) -> Iterator[RequirementExecutionContext]:
+    def protect(
+        _request: Any, *, expected_assignment_id: str
+    ) -> Iterator[RequirementExecutionContext]:
         timeline.append("owner-lock")
         try:
             yield harness.current
@@ -128,6 +130,9 @@ def test_owner_protection_spans_actual_commit_and_replay_never_reopens_it(
     assert result.attempt.runner_generation == ATTEMPT.runner_generation + 1
     assert result.attempt.state is AttemptState.QUEUED
     assert RUN.business_context is not None
+    assert h.port.protect.call_args.kwargs == {
+        "expected_assignment_id": RUN.business_context.assignment_id
+    }
     request = h.port.protect.call_args.args[0]
     assert request.model_dump() == {
         "workspace_id": RUN.workspace_id,
@@ -245,9 +250,9 @@ def test_owner_lock_wait_cannot_extend_the_waiting_deadline(
     h = resume_application
     acquire = h.port.protect.side_effect
 
-    def wait_for_owner(request: Any) -> Any:
+    def wait_for_owner(request: Any, *, expected_assignment_id: str) -> Any:
         h.now = h.waiting.waiting_deadline
-        return acquire(request)
+        return acquire(request, expected_assignment_id=expected_assignment_id)
 
     h.port.protect.side_effect = wait_for_owner
     with pytest.raises(AttemptWaitingExpired):
@@ -282,10 +287,11 @@ def test_protected_adapter_uses_public_parent_lock_until_context_exit(
     request = RequirementExecutionRequest(
         workspace_id=WORKSPACE_ID, requirement_id=REQUIREMENT_ID, work_item_id=WORK_ITEM_ID
     )
+    monkeypatch.setattr(requirement_adapter, "assert_work_item_assignee_eligible", Mock())
     original = adapter.resolve(request)
     connection.begin.assert_not_called()
     protected.assert_not_called()
-    with adapter.protect(request) as current:
+    with adapter.protect(request, expected_assignment_id=original.assignment_id) as current:
         assert current == original
         connection.begin.return_value.__enter__.assert_called_once()
         connection.begin.return_value.__exit__.assert_not_called()
