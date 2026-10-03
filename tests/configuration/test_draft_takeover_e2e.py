@@ -89,6 +89,9 @@ def actors(journey: Journey, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
             )
         clock = SimpleNamespace(value=datetime.now(UTC))
         monkeypatch.setattr(SystemClock, "now", lambda _self: clock.value)
+        monkeypatch.setattr(
+            "control_plane.app.shared.security.totp.time.time", lambda: clock.value.timestamp()
+        )
         state = SimpleNamespace(
             journey=journey,
             clock=clock,
