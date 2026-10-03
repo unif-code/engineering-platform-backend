@@ -3,7 +3,11 @@ import hashlib
 from pydantic import BaseModel, ConfigDict, Field
 
 from control_plane.app.modules.agent.application.dependencies import AgentDependencies
-from control_plane.app.modules.agent.domain import AgentAuditAppend, AgentDefinition
+from control_plane.app.modules.agent.domain import (
+    AgentAuditAppend,
+    AgentDefinition,
+    AgentQueryUnavailable,
+)
 from control_plane.app.modules.agent.domain.types import (
     PlatformName,
     PlatformReference,
@@ -78,10 +82,14 @@ def register_definition(
 
 def list_definitions(*, dependencies: AgentDependencies) -> tuple[AgentDefinition, ...]:
     def operation(uow: AgentUnitOfWork) -> tuple[AgentDefinition, ...]:
-        return tuple(
-            definition
-            for definition in uow.repository().list_definitions()
-            if dependencies.definition_availability.is_active(definition)
-        )
+        visible = []
+        for candidate in uow.repository().list_definitions():
+            definition = AgentDefinition.model_validate(candidate.model_dump(mode="python"))
+            available = dependencies.definition_availability.is_active(definition)
+            if available is True:
+                visible.append(definition)
+            elif available is not False:
+                raise AgentQueryUnavailable("Definition availability is unverifiable")
+        return tuple(visible)
 
     return dependencies.transaction_runner(operation)

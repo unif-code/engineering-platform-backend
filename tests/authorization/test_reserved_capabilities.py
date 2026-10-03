@@ -39,6 +39,7 @@ EXPECTED_SUPER_ADMIN_CAPABILITIES = {
     "platform.configuration.manage",
     "platform.super_admin.manage",
     "platform.model.read",
+    "agent.definition.read",
     "platform.model.manage",
 }
 

@@ -23,6 +23,7 @@ SUPER_ADMIN_PLATFORM_CAPABILITIES = frozenset(
         PLATFORM_CONFIGURATION_MANAGE,
         PLATFORM_SUPER_ADMIN_MANAGE,
         "platform.model.read",
+        "agent.definition.read",
         PLATFORM_MODEL_MANAGE,
     }
 )

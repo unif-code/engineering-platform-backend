@@ -268,7 +268,19 @@ def create_agent_router(
         "/api/v1/agent-definitions",
         operation_id="agent_definitions_list",
         response_model=AgentDefinitionListResponseDto,
-        responses=_RESPONSES,
+        responses={
+            **_RESPONSES,
+            200: {
+                "headers": {
+                    "Cache-Control": {
+                        "description": (
+                            "Definition declaration observation; no cached execution authority"
+                        ),
+                        "schema": {"type": "string", "const": "no-store"},
+                    }
+                }
+            },
+        },
     )
     def agent_definitions_list(
         principal: Annotated[Any, Depends(principal_provider)],
@@ -276,9 +288,14 @@ def create_agent_router(
         capability_guard(principal, AGENT_DEFINITION_READ_CAPABILITY, None)
         try:
             definitions = list_definitions(None, dependencies=runtime_provider().dependencies)
+            return JSONResponse(
+                json_content(AgentDefinitionListResponseDto.from_domain(definitions)),
+                headers={"Cache-Control": "no-store"},
+            )
         except Exception as error:
-            return _problem(error)
-        return AgentDefinitionListResponseDto.from_domain(definitions)
+            if isinstance(error, StarletteHTTPException) and error.status_code in (401, 403):
+                raise
+            return problem_response(503, "Agent service unavailable")
 
     @router.post(
         "/api/v1/agent-runs",
