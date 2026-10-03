@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from uuid import UUID
 
@@ -11,7 +13,12 @@ from control_plane.app.modules.agent.ports.runtime import (
     RequirementExecutionContext,
     RequirementExecutionRequest,
 )
-from control_plane.app.modules.requirement import RequirementDependencies, get_requirement
+from control_plane.app.modules.requirement import (
+    RequirementDependencies,
+    RequirementDetailsDto,
+    get_requirement,
+    get_requirement_for_update,
+)
 
 
 class RequirementFacadeExecutionContext:
@@ -27,6 +34,23 @@ class RequirementFacadeExecutionContext:
             requirement_id=request.requirement_id,
             dependencies=self._dependencies,
         )
+        return self._context(request, details)
+
+    @contextmanager
+    def protect(
+        self, request: RequirementExecutionRequest
+    ) -> Iterator[RequirementExecutionContext]:
+        with self._db.begin():
+            details = get_requirement_for_update(
+                self._db,
+                requirement_id=request.requirement_id,
+                dependencies=self._dependencies,
+            )
+            yield self._context(request, details)
+
+    def _context(
+        self, request: RequirementExecutionRequest, details: RequirementDetailsDto
+    ) -> RequirementExecutionContext:
         try:
             requirement_id = str(UUID(details.requirement.id))
             workspace_id = str(UUID(details.requirement.workspace_id))

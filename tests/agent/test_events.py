@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from threading import Barrier, Lock, Thread
@@ -61,6 +62,11 @@ class DeterministicIds:
 
 @dataclass(frozen=True, slots=True)
 class StaticRequirementContext:
+    def protect(
+        self, command: RequirementExecutionRequest
+    ) -> nullcontext[RequirementExecutionContext]:
+        return nullcontext(self.resolve(command))
+
     def resolve(self, command: RequirementExecutionRequest) -> RequirementExecutionContext:
         return RequirementExecutionContext(
             workspace_id=command.workspace_id,

@@ -58,8 +58,9 @@ def get_requirement(
     repository: RequirementRepository,
     *,
     requirement_id: str,
+    for_update: bool = False,
 ) -> RequirementDetailsDto:
-    row = repository.requirement_by_id(requirement_id)
+    row = repository.requirement_by_id(requirement_id, for_update=for_update)
     if row is None:
         raise RequirementNotFound(requirement_id)
     baseline = (

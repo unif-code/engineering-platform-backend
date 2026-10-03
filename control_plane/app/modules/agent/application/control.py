@@ -1,14 +1,22 @@
 import hashlib
+from contextlib import ExitStack
 from datetime import datetime
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from control_plane.app.modules.agent.application.dependencies import AgentDependencies
+from control_plane.app.modules.agent.application.errors import (
+    AgentBusinessContextReason,
+    InvalidRequirementExecutionContext,
+)
 from control_plane.app.modules.agent.application.idempotency import execute_agent_command
 from control_plane.app.modules.agent.application.queries import AgentRunNotFound
 from control_plane.app.modules.agent.domain import (
     AgentAttempt,
     AgentAuditAppend,
+    AgentRun,
+    AgentRunBusinessContext,
     AttemptMutation,
     AttemptNotResumable,
     AttemptState,
@@ -20,7 +28,15 @@ from control_plane.app.modules.agent.domain import (
 )
 from control_plane.app.modules.agent.domain.types import PlatformReference, PlatformUUID
 from control_plane.app.modules.agent.ports import AgentUnitOfWork
-from control_plane.app.modules.agent.ports.runtime import ResolvedActorReference
+from control_plane.app.modules.agent.ports.runtime import (
+    RequirementExecutionContext,
+    RequirementExecutionRequest,
+    ResolvedActorReference,
+)
+from control_plane.app.modules.requirement import (
+    RequirementDependencyUnavailable,
+    RequirementNotFound,
+)
 
 _CANCEL_OPERATION = "agent.attempt.cancel"
 _RESUME_OPERATION = "agent.attempt.resume"
@@ -203,6 +219,51 @@ def cancel_attempt(
     return dependencies.transaction_runner(operation)
 
 
+def _protect_resume_source(
+    run: AgentRun, *, dependencies: AgentDependencies, protection: ExitStack
+) -> None:
+    source = run.business_context
+    if source is None:
+        raise AttemptNotResumable(run.id)
+    try:
+        current = protection.enter_context(
+            dependencies.requirement_context.protect(
+                RequirementExecutionRequest(
+                    workspace_id=run.workspace_id,
+                    requirement_id=source.requirement_id,
+                    work_item_id=source.work_item_id,
+                )
+            )
+        )
+    except RequirementNotFound:
+        raise AttemptNotResumable(run.id) from None
+    except InvalidRequirementExecutionContext as error:
+        if error.reason in (
+            AgentBusinessContextReason.WORKSPACE_CHANGED,
+            AgentBusinessContextReason.WORK_ITEM_NOT_IN_REQUIREMENT,
+            AgentBusinessContextReason.ASSIGNMENT_MISSING,
+        ):
+            raise AttemptNotResumable(run.id) from None
+        raise RequirementDependencyUnavailable("Resume business context is unverifiable") from None
+    try:
+        current = RequirementExecutionContext.model_validate(current.model_dump(mode="python"))
+        workspace_id = str(UUID(current.workspace_id))
+        identities = AgentRunBusinessContext(
+            requirement_id=current.requirement_id,
+            work_item_id=current.work_item_id,
+            assignment_id=current.assignment_id,
+        )
+    except (ValueError, TypeError, AttributeError):
+        raise RequirementDependencyUnavailable("Resume business context is invalid") from None
+    if (
+        identities.requirement_id != source.requirement_id
+        or identities.work_item_id != source.work_item_id
+    ):
+        raise RequirementDependencyUnavailable("Resume business context target is invalid")
+    if workspace_id != run.workspace_id or identities.assignment_id != source.assignment_id:
+        raise AttemptNotResumable(run.id)
+
+
 def resume_attempt(
     command: ResumeAttemptCommand, *, dependencies: AgentDependencies
 ) -> AttemptControlResult:
@@ -217,7 +278,6 @@ def resume_attempt(
         attempt = repository.attempt_by_id(command.attempt_id, for_update=True)
         if attempt is None or attempt.run_id != run.id:
             raise AgentAttemptNotFound(command.attempt_id)
-        now = dependencies.clock()
 
         def mutate() -> AttemptControlResult:
             if attempt.revision != command.expected_revision:
@@ -226,6 +286,7 @@ def resume_attempt(
                 )
             if attempt.state is not AttemptState.WAITING_INPUT or attempt.checkpoint is None:
                 raise AttemptNotResumable(attempt.id)
+            now = dependencies.clock()
             if attempt.waiting_deadline is None or attempt.waiting_deadline <= now:
                 raise AttemptWaitingExpired(attempt.id)
             try:
@@ -238,6 +299,10 @@ def resume_attempt(
                 or binding.digest != attempt.binding_digest
             ):
                 raise BindingDigestMismatch(attempt.id)
+            _protect_resume_source(run, dependencies=dependencies, protection=protection)
+            now = dependencies.clock()
+            if attempt.waiting_deadline <= now:
+                raise AttemptWaitingExpired(attempt.id)
             resumed = resume_generation(
                 attempt,
                 fencing_token=f"fence:{attempt.id}:generation:{attempt.runner_generation + 1}",
@@ -288,4 +353,6 @@ def resume_attempt(
             command=mutate,
         )
 
-    return dependencies.transaction_runner(operation)
+    # Mutation returns before the transaction runner commits or rolls back.
+    with ExitStack() as protection:
+        return dependencies.transaction_runner(operation)

@@ -962,6 +962,20 @@ def get_requirement(
     )
 
 
+def get_requirement_for_update(
+    db: Connection,
+    *,
+    requirement_id: str,
+    dependencies: RequirementDependencies,
+) -> RequirementDetailsDto:
+    """Hold the parent write lock until the caller's transaction completes."""
+    return _get_requirement(
+        dependencies.repository_factory(db),
+        requirement_id=requirement_id,
+        for_update=True,
+    )
+
+
 def get_requirement_delivery_snapshot(
     db: Connection,
     *,
@@ -1403,6 +1417,7 @@ __all__ = [
     "decide_formal_review",
     "derive_work_item_state",
     "get_requirement",
+    "get_requirement_for_update",
     "get_requirement_delivery_snapshot",
     "get_sdd_artifact",
     "get_integration_delivery_context",

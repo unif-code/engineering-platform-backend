@@ -1,14 +1,21 @@
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, ExitStack, contextmanager
 from dataclasses import dataclass
 
 from sqlalchemy import Connection, Engine
+from starlette.exceptions import HTTPException
 
 from control_plane.app.modules.agent.application.dependencies import AgentDependencies
+from control_plane.app.modules.agent.application.errors import InvalidRequirementExecutionContext
 from control_plane.app.modules.agent.ports.runtime import (
     RequirementExecutionContext,
     RequirementExecutionContextPort,
     RequirementExecutionRequest,
     ResolvedActorReference,
+)
+from control_plane.app.modules.requirement import (
+    RequirementDependencyUnavailable,
+    RequirementNotFound,
 )
 
 RequirementContextFactory = Callable[[Connection], RequirementExecutionContextPort]
@@ -29,6 +36,47 @@ class UnboundRequirementExecutionContext:
 
     def resolve(self, _request: RequirementExecutionRequest) -> RequirementExecutionContext:
         raise RuntimeError("request-scoped Requirement context is unavailable")
+
+    def protect(
+        self, _request: RequirementExecutionRequest
+    ) -> AbstractContextManager[RequirementExecutionContext]:
+        raise RequirementDependencyUnavailable(
+            "request-scoped Requirement protection is unavailable"
+        )
+
+
+class LazyRequirementExecutionContext(UnboundRequirementExecutionContext):
+    """Open owner resources only when a new resume mutation requests protection."""
+
+    def __init__(self, engine: Engine, factory: RequirementContextFactory) -> None:
+        self._engine = engine
+        self._factory = factory
+
+    @contextmanager
+    def protect(
+        self, request: RequirementExecutionRequest
+    ) -> Iterator[RequirementExecutionContext]:
+        with ExitStack() as resources:
+            try:
+                db = resources.enter_context(self._engine.connect())
+                current = resources.enter_context(self._factory(db).protect(request))
+            except (
+                RequirementNotFound,
+                InvalidRequirementExecutionContext,
+                RequirementDependencyUnavailable,
+            ):
+                raise
+            except HTTPException as error:
+                if error.status_code in (401, 403):
+                    raise
+                raise RequirementDependencyUnavailable(
+                    "Requirement protection is unavailable"
+                ) from None
+            except Exception:
+                raise RequirementDependencyUnavailable(
+                    "Requirement protection is unavailable"
+                ) from None
+            yield current
 
 
 class CurrentPrincipalActorResolver:

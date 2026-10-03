@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
@@ -25,7 +26,10 @@ from control_plane.app.modules.agent.adapters import (
 from control_plane.app.modules.agent.adapters.dev_temporal import DevTemporalAdapter
 from control_plane.app.modules.agent.api import AgentHttpRuntime, create_agent_router
 from control_plane.app.modules.agent.api.routes import _problem
-from control_plane.app.modules.agent.api.runtime import CurrentPrincipalActorResolver
+from control_plane.app.modules.agent.api.runtime import (
+    CurrentPrincipalActorResolver,
+    UnboundRequirementExecutionContext,
+)
 from control_plane.app.modules.agent.application.control import AttemptRevisionConflict
 from control_plane.app.modules.agent.application.dependencies import AgentDependencies
 from control_plane.app.modules.agent.application.errors import InvalidRequirementExecutionContext
@@ -111,6 +115,13 @@ class ConnectionBackedRequirementContext:
     def __init__(self, db: Connection) -> None:
         self.db = db
 
+    @contextmanager
+    def protect(
+        self, request: RequirementExecutionRequest
+    ) -> Iterator[RequirementExecutionContext]:
+        with self.db.begin():
+            yield self.resolve(request)
+
     def resolve(self, request: RequirementExecutionRequest) -> RequirementExecutionContext:
         assert self.db.execute(text("SELECT 1")).scalar_one() == 1
         return RequirementExecutionContext(
@@ -164,7 +175,7 @@ class CountingRuntimeProvider:
 
 
 def _dependencies(database: IsolatedAgentDatabase, clock: MutableClock) -> AgentDependencies:
-    class UnboundRequirementContext:
+    class UnboundRequirementContext(UnboundRequirementExecutionContext):
         def resolve(self, _request: RequirementExecutionRequest) -> RequirementExecutionContext:
             raise AssertionError("HTTP start must bind a request-scoped Requirement context")
 
@@ -1052,7 +1063,7 @@ def test_requirement_failures_are_typed_sanitized_and_rollback_agent_facts(
 ) -> None:
     connections: list[Connection] = []
 
-    class FailingContext:
+    class FailingContext(UnboundRequirementExecutionContext):
         def resolve(self, _request: RequirementExecutionRequest) -> RequirementExecutionContext:
             raise error
 

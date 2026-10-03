@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from datetime import datetime
 from typing import Literal, Protocol
 
@@ -48,6 +49,10 @@ class ExecutionBindingRequest(BaseModel):
 
 class RequirementExecutionContextPort(Protocol):
     def resolve(self, request: RequirementExecutionRequest) -> RequirementExecutionContext: ...
+
+    def protect(
+        self, request: RequirementExecutionRequest
+    ) -> AbstractContextManager[RequirementExecutionContext]: ...
 
 
 class ExecutionBindingPolicyPort(Protocol):

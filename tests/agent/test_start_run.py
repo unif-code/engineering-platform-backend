@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from threading import Barrier, Thread
@@ -60,6 +61,11 @@ class StaticRequirementContext:
     workspace_id: str = WORKSPACE_ID
     assignment_id: str | None = ASSIGNMENT_ID
     superseded: bool = False
+
+    def protect(
+        self, command: RequirementExecutionRequest
+    ) -> nullcontext[RequirementExecutionContext]:
+        return nullcontext(self.resolve(command))
 
     def resolve(self, command: RequirementExecutionRequest) -> RequirementExecutionContext:
         if command.workspace_id != self.workspace_id:

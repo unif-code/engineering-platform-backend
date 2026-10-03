@@ -35,6 +35,7 @@ from control_plane.app.modules.agent.api.dto import (
 from control_plane.app.modules.agent.api.runtime import (
     AgentHttpRuntime,
     CurrentPrincipalActorResolver,
+    LazyRequirementExecutionContext,
 )
 from control_plane.app.modules.agent.application.control import (
     AgentAttemptNotFound,
@@ -448,6 +449,12 @@ def create_agent_router(
             return _problem(error)
         capability_guard(principal, AGENT_RUN_CONTROL_CAPABILITY, view.run.workspace_id)
         dependencies, actor = _request_dependencies(runtime, principal)
+        if operation == "resume":
+            dependencies = dependencies.with_requirement_context(
+                LazyRequirementExecutionContext(
+                    runtime.requirement_engine, runtime.requirement_context_factory
+                )
+            )
         correlation_id = current_request_id() or runtime.dependencies.new_id()
         try:
             result = (
