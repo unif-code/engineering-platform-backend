@@ -1,9 +1,10 @@
 from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock
 from uuid import UUID
 
 import pytest
@@ -290,6 +291,16 @@ def _start_source_run(journey: Journey) -> tuple[dict[str, Any], Any]:
     )
 
 
+@contextmanager
+def _status_client(journey: Journey, runtime: AgentHttpRuntime) -> Iterator[TestClient]:
+    with TestClient(
+        bootstrap.create_app(agent_runtime_provider=lambda: runtime),
+        base_url="https://testserver",
+    ) as client:
+        client.cookies.update(journey.member.cookies)
+        yield client
+
+
 @pytest.mark.integration
 def test_default_session_association_changes_after_real_reassignment_without_agent_writes(
     journey: Journey,
@@ -305,9 +316,9 @@ def test_default_session_association_changes_after_real_reassignment_without_age
         return runtime.requirement_context_factory(db)
 
     guarded = replace(runtime, requirement_context_factory=owner_factory)
-    with patch.object(bootstrap, "agent_http_runtime", return_value=guarded):
+    with _status_client(journey, guarded) as client:
         before = _evidence(journey)
-        current = journey.member.get(path)
+        current = client.get(path)
         assert current.status_code == 200, current.text
         assert current.json()["currentness"] == "CURRENT" and current.json()["reasons"] == []
         assert (
@@ -346,15 +357,13 @@ def test_default_session_association_changes_after_real_reassignment_without_age
         ).json()
         assert changed["assignment"]["id"] != original["businessContext"]["assignmentId"]
         before = _evidence(journey)
-        stale = journey.member.get(path)
+        stale = client.get(path)
         assert stale.status_code == 200 and stale.json()["currentness"] == "STALE"
         assert stale.json()["reasons"] == ["ASSIGNMENT_CHANGED"]
         assert changed["assignment"]["id"] not in stale.text
         assert len(connections) == 2 and all(connection.closed for connection in connections)
-        assert journey.member.get(f"/api/v1/agent-runs/{original['id']}").json()["run"] == original
-        replay = _write(
-            journey.member, "/api/v1/agent-runs", body, status=202, key="association-start"
-        )
+        assert client.get(f"/api/v1/agent-runs/{original['id']}").json()["run"] == original
+        replay = _write(client, "/api/v1/agent-runs", body, status=202, key="association-start")
         assert (
             replay.content == started.content and replay.headers["etag"] == started.headers["etag"]
         )
@@ -378,25 +387,23 @@ def test_default_session_denials_and_unrecorded_snapshot_never_call_owner(journe
     owner = Mock(side_effect=AssertionError("owner must not be called"))
     before = _evidence(journey)
     path = f"/api/v1/agent-runs/{started.json()['run']['id']}/business-context-status"
-    with patch.object(
-        bootstrap,
-        "agent_http_runtime",
-        return_value=replace(runtime, requirement_context_factory=owner),
-    ):
-        assert journey.leader.get(path).status_code == 403
+    with _status_client(journey, replace(runtime, requirement_context_factory=owner)) as client:
+        client.cookies.clear()
+        client.cookies.update(journey.leader.cookies)
+        assert client.get(path).status_code == 403
+        client.cookies.clear()
+        client.cookies.update(journey.member.cookies)
         assert (
-            journey.member.get(
-                f"/api/v1/agent-runs/{foreign.id}/business-context-status"
-            ).status_code
+            client.get(f"/api/v1/agent-runs/{foreign.id}/business-context-status").status_code
             == 403
         )
-        absent = journey.member.get(f"/api/v1/agent-runs/{legacy.id}/business-context-status")
+        absent = client.get(f"/api/v1/agent-runs/{legacy.id}/business-context-status")
         assert absent.status_code == 200 and absent.json()["reasons"] == [
             "BUSINESS_CONTEXT_NOT_RECORDED"
         ]
         assert _evidence(journey) == before
         _revoke(journey, journey.member_id, "agent.run.read")
-        assert journey.member.get(path).status_code == 403
+        assert client.get(path).status_code == 403
     owner.assert_not_called()
 
 
@@ -430,12 +437,10 @@ def test_default_session_owner_failure_is_a_read_only_bounded_projection(
     port = Mock()
     port.resolve.side_effect = error
     before = _evidence(journey)
-    with patch.object(
-        bootstrap,
-        "agent_http_runtime",
-        return_value=replace(runtime, requirement_context_factory=lambda _db: port),
-    ):
-        response = journey.member.get(
+    with _status_client(
+        journey, replace(runtime, requirement_context_factory=lambda _db: port)
+    ) as client:
+        response = client.get(
             f"/api/v1/agent-runs/{started.json()['run']['id']}/business-context-status"
         )
     assert response.status_code == 200
