@@ -201,6 +201,30 @@ class SqlAlchemyGatePolicyRepository:
         )
         return None if row is None else self._draft(row)
 
+    def takeover_draft(
+        self, draft_id: str, *, expected_revision: int, owner_id: str, now: datetime
+    ) -> Draft | None:
+        row = (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.gate_policy_draft SET owner_id=:owner_id, "
+                    "revision=revision+1,last_meaningful_activity_at=:now, "
+                    "validation_evidence=NULL,preview_evidence=NULL "
+                    "WHERE id=:id AND revision=:expected_revision AND status='DRAFT' "
+                    "AND owner_id<>:owner_id RETURNING *"
+                ),
+                {
+                    "id": draft_id,
+                    "expected_revision": expected_revision,
+                    "owner_id": owner_id,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return None if row is None else self._draft(row)
+
     def update_draft(
         self,
         draft_id: str,

@@ -27,6 +27,9 @@ class PolicyLifecycle:
     def update_draft(self, **values: Any) -> Draft:
         return drafts.update_draft(self.db, self.owner, dependencies=self.dependencies, **values)
 
+    def takeover_draft(self, **values: Any) -> Draft:
+        return drafts.takeover_draft(self.db, self.owner, dependencies=self.dependencies, **values)
+
     def validate_draft(self, **values: Any) -> DraftValidation:
         return drafts.validate_draft(self.db, self.owner, dependencies=self.dependencies, **values)
 

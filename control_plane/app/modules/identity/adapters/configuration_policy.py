@@ -376,6 +376,34 @@ class SqlAlchemyIdentityPolicyOwnerRepository:
         )
         return True
 
+    def takeover_draft(
+        self, draft_id: str, *, expected_revision: int, owner_id: str, now: datetime
+    ) -> OwnedPolicyDraft | None:
+        row = (
+            self.db.execute(
+                text(
+                    "UPDATE identity.draft SET owner_id=:owner_id, revision=revision+1, "
+                    "last_meaningful_activity_at=:now, validation_evidence=NULL, "
+                    "validation_content_hash=NULL, validation_schema_revision=NULL, "
+                    "validation_base_version=NULL, validation_dependency_versions=NULL, "
+                    "preview_evidence=NULL, preview_content_hash=NULL, "
+                    "preview_schema_revision=NULL, preview_base_version=NULL, "
+                    "preview_dependency_versions=NULL "
+                    "WHERE id=:id AND revision=:expected_revision AND status='DRAFT' "
+                    "AND owner_id<>:owner_id RETURNING *"
+                ),
+                {
+                    "id": draft_id,
+                    "expected_revision": expected_revision,
+                    "owner_id": owner_id,
+                    "now": now,
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return None if row is None else self._draft(row)
+
     def update_draft(
         self,
         draft_id: str,

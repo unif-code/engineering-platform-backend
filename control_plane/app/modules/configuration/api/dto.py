@@ -65,6 +65,11 @@ class PublishDraftRequestDto(CamelModel):
     totp_code: str = Field(min_length=6, max_length=8, pattern=r"^[0-9]+$")
 
 
+class TakeoverDraftRequestDto(CamelModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(min_length=1, max_length=1000)
+
+
 class RollbackPolicyRequestDto(CamelModel):
     scope: str = Field(default="PLATFORM", min_length=1)
     to_version: int = Field(ge=1)

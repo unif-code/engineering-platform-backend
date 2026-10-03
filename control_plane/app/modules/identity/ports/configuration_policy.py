@@ -62,6 +62,10 @@ class IdentityPolicyOwnerRepository(Protocol):
         self, draft_id: str, *, for_update: bool = False
     ) -> OwnedPolicyDraft | None: ...
 
+    def takeover_draft(
+        self, draft_id: str, *, expected_revision: int, owner_id: str, now: datetime
+    ) -> OwnedPolicyDraft | None: ...
+
     def update_draft(
         self,
         draft_id: str,

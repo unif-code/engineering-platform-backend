@@ -34,6 +34,7 @@ from control_plane.app.modules.configuration.api.dto import (
     PublishDraftRequestDto,
     PublishedVersionDto,
     RollbackPolicyRequestDto,
+    TakeoverDraftRequestDto,
     ValidateDraftRequestDto,
 )
 from control_plane.app.modules.identity import (
@@ -320,7 +321,16 @@ def create_configuration_router(
         "/policies/{namespace}/drafts/{draft_id}",
         operation_id="draft_read",
         response_model=DraftResponseDto,
-        responses=_WRITE_RESPONSES,
+        responses={
+            **_WRITE_RESPONSES,
+            200: {
+                **_WRITE_RESPONSES[200],
+                "headers": {
+                    **_ETAG_HEADER,
+                    "Cache-Control": {"schema": {"type": "string", "const": "no-store"}},
+                },
+            },
+        },
     )
     def draft_read(
         namespace: str, draft_id: str, principal: Annotated[Any, Depends(principal_provider)]
@@ -332,11 +342,9 @@ def create_configuration_router(
                 draft = lifecycle.owner.draft(draft_id)
                 if draft is None or draft.namespace != namespace:
                     return problem_response(404, "Draft not found")
-                if draft.owner_id != _account_id(principal):
-                    return problem_response(403, "Draft owner required")
                 return JSONResponse(
                     DraftResponseDto.from_domain(draft).model_dump(mode="json", by_alias=True),
-                    headers={"ETag": entity_tag(draft.revision)},
+                    headers={"ETag": entity_tag(draft.revision), "Cache-Control": "no-store"},
                 )
         except PolicySnapshotUnavailable:
             return problem_response(503, "Effective policy unavailable")
@@ -405,6 +413,58 @@ def create_configuration_router(
             actor_id=actor_id,
             namespace=namespace,
             operation="draft_create",
+            method="POST",
+            path=request.url.path,
+            key=preflight.idempotency_key,
+            body=body_data,
+            command=command,
+        )
+
+    @router.post(
+        "/policies/{namespace}/drafts/{draft_id}/takeover",
+        operation_id="draft_takeover",
+        response_model=DraftResponseDto,
+        responses=_WRITE_RESPONSES,
+        dependencies=[Depends(_assert_versioned_preflight), Depends(_versioned_preflight)],
+    )
+    def draft_takeover(
+        namespace: Annotated[str, Path(min_length=1)],
+        draft_id: Annotated[str, Path(min_length=1)],
+        body: TakeoverDraftRequestDto,
+        request: Request,
+        principal: Annotated[Any, Depends(principal_provider)],
+        preflight: Annotated[_VersionedPreflight, Depends(_versioned_preflight)],
+    ) -> Response:
+        capability_guard(principal, PLATFORM_CONFIGURATION_MANAGE, None)
+        runtime = runtime_provider()
+        actor_id = _account_id(principal)
+        body_data: dict[str, object] = {
+            **body.model_dump(mode="json", by_alias=True),
+            "expectedRevision": preflight.expected_revision,
+        }
+
+        def command(lifecycle: PolicyLifecycle) -> IdempotentResponse:
+            try:
+                draft = lifecycle.takeover_draft(
+                    namespace=namespace,
+                    draft_id=draft_id,
+                    actor_id=actor_id,
+                    expected_revision=preflight.expected_revision,
+                    reason=body.reason,
+                )
+            except ConfigurationError as error:
+                return _problem(error)
+            return IdempotentResponse(
+                status_code=200,
+                body=DraftResponseDto.from_domain(draft).model_dump(mode="json", by_alias=True),
+                headers={"ETag": entity_tag(draft.revision)},
+            )
+
+        return _execute(
+            runtime,
+            actor_id=actor_id,
+            namespace=namespace,
+            operation="draft_takeover",
             method="POST",
             path=request.url.path,
             key=preflight.idempotency_key,

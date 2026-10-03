@@ -36,6 +36,7 @@ from control_plane.app.modules.identity import (
     preview_policy_candidate,
     save_policy_draft_preview,
     save_policy_draft_validation,
+    takeover_policy_draft,
     update_policy_draft,
     validate_policy_candidate,
 )
@@ -165,6 +166,14 @@ class IdentityPolicyOwner:
 
     def draft(self, draft_id: str, *, for_update: bool = False) -> Draft | None:
         owned = policy_draft(self.db, draft_id, for_update=for_update)
+        return None if owned is None else self._draft(owned)
+
+    def takeover_draft(
+        self, draft_id: str, *, expected_revision: int, owner_id: str, now: datetime
+    ) -> Draft | None:
+        owned = takeover_policy_draft(
+            self.db, draft_id, expected_revision=expected_revision, owner_id=owner_id, now=now
+        )
         return None if owned is None else self._draft(owned)
 
     def update_draft(

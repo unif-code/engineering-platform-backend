@@ -101,6 +101,9 @@ from control_plane.app.modules.identity.application.configuration_policy import 
     save_policy_draft_validation as _save_policy_draft_validation,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
+    takeover_policy_draft as _takeover_policy_draft,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
     update_policy_draft as _update_policy_draft,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
@@ -269,6 +272,10 @@ def policy_draft(
         draft_id,
         for_update=for_update,
     )
+
+
+def takeover_policy_draft(db: Connection, draft_id: str, **values: Any) -> OwnedPolicyDraft | None:
+    return _takeover_policy_draft(SqlAlchemyIdentityPolicyOwnerRepository(db), draft_id, **values)
 
 
 def update_policy_draft(
@@ -987,6 +994,7 @@ __all__ = [
     "save_policy_draft_validation",
     "active_policy_archive_settings",
     "update_policy_draft",
+    "takeover_policy_draft",
     "validate_policy_candidate",
     "confirm_totp",
     "current_identity_change_source",

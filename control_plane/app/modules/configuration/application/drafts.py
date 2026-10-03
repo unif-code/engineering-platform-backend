@@ -73,12 +73,12 @@ def _require_editable(
     draft = owner.draft(draft_id, for_update=True)
     if draft is None or draft.namespace != namespace:
         raise DraftNotFound(draft_id)
+    if draft.revision != expected_revision:
+        raise StaleDraftRevision(draft_id)
     if draft.owner_id != actor_id:
         raise DraftOwnerRequired(draft_id)
     if draft.status == "ARCHIVED":
         raise DraftArchived(draft_id)
-    if draft.revision != expected_revision:
-        raise StaleDraftRevision(draft_id)
     active = owner.active_snapshot(namespace)
     if draft.base_version != active.version:
         raise StaleDraftBase(draft_id)
@@ -237,6 +237,49 @@ def update_draft(
         reason=(
             f"namespace={namespace}; previousRevision={expected_revision}; "
             f"revision={updated.revision}; contentHash={updated.content_hash}"
+        ),
+    )
+    return updated
+
+
+def takeover_draft(
+    db: Connection,
+    owner: PolicyOwnerPort,
+    *,
+    namespace: str,
+    draft_id: str,
+    actor_id: str,
+    expected_revision: int,
+    reason: str,
+    dependencies: ConfigurationDependencies,
+) -> Draft:
+    draft = owner.draft(draft_id, for_update=True)
+    if draft is None or draft.namespace != namespace:
+        raise DraftNotFound(draft_id)
+    if draft.revision != expected_revision:
+        raise StaleDraftRevision(draft_id)
+    if draft.status != "DRAFT":
+        raise DraftArchived(draft_id)
+    if draft.owner_id == actor_id:
+        raise ConfigurationError("Draft is already owned by the current actor")
+    updated = owner.takeover_draft(
+        draft_id,
+        expected_revision=expected_revision,
+        owner_id=actor_id,
+        now=dependencies.clock.now(),
+    )
+    if updated is None:
+        raise StaleDraftRevision(draft_id)
+    _audit(
+        db,
+        dependencies=dependencies,
+        actor_id=actor_id,
+        action="configuration.draft.taken_over",
+        draft_id=draft.id,
+        result="SUCCESS",
+        reason=(
+            f"namespace={namespace}; previousOwner={draft.owner_id}; owner={actor_id}; "
+            f"previousRevision={draft.revision}; revision={updated.revision}; reason={reason}"
         ),
     )
     return updated

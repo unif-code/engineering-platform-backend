@@ -79,6 +79,19 @@ def policy_draft(
     return repository.draft_by_id(draft_id, for_update=for_update)
 
 
+def takeover_policy_draft(
+    repository: IdentityPolicyOwnerRepository,
+    draft_id: str,
+    *,
+    expected_revision: int,
+    owner_id: str,
+    now: datetime,
+) -> OwnedPolicyDraft | None:
+    return repository.takeover_draft(
+        draft_id, expected_revision=expected_revision, owner_id=owner_id, now=now
+    )
+
+
 def update_policy_draft(
     repository: IdentityPolicyOwnerRepository,
     draft_id: str,

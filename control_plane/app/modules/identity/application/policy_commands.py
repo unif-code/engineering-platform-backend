@@ -157,6 +157,12 @@ def publish_policy_command(
                 title="Draft not found",
                 reason_code="DRAFT_NOT_FOUND",
             )
+        if draft.revision != expected_revision:
+            raise _PolicyCommandDenied(
+                status_code=409,
+                title="Stale draft revision",
+                reason_code="STALE_REVISION",
+            )
         if draft.owner_id != actor_id:
             raise _PolicyCommandDenied(
                 status_code=403,
@@ -168,12 +174,6 @@ def publish_policy_command(
                 status_code=409,
                 title="Draft archived",
                 reason_code="DRAFT_ARCHIVED",
-            )
-        if draft.revision != expected_revision:
-            raise _PolicyCommandDenied(
-                status_code=409,
-                title="Stale draft revision",
-                reason_code="STALE_REVISION",
             )
         if draft.base_version != active.version:
             raise _PolicyCommandDenied(

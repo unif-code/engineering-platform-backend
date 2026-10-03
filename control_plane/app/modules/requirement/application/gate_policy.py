@@ -39,12 +39,12 @@ def _checked_draft(
     draft = repository.draft(draft_id, for_update=True)
     if draft is None or draft.namespace != NAMESPACE:
         raise DraftNotFound("Draft not found")
+    if draft.revision != revision:
+        raise StaleDraftRevision("Draft revision changed")
     if draft.owner_id != actor_id:
         raise DraftOwnerRequired("Draft owner required")
     if draft.status != "DRAFT":
         raise DraftArchived("Draft archived")
-    if draft.revision != revision:
-        raise StaleDraftRevision("Draft revision changed")
     if draft.base_version != active.version or draft.stale:
         raise SourceStale("Policy source changed")
     try:

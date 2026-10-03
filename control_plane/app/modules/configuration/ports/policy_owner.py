@@ -50,6 +50,10 @@ class PolicyOwnerPort(IdempotencyRepository, Protocol):
 
     def draft(self, draft_id: str, *, for_update: bool = False) -> Draft | None: ...
 
+    def takeover_draft(
+        self, draft_id: str, *, expected_revision: int, owner_id: str, now: datetime
+    ) -> Draft | None: ...
+
     def update_draft(
         self,
         draft_id: str,
