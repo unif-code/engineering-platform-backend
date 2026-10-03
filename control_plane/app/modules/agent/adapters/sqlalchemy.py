@@ -452,6 +452,22 @@ class SqlAlchemyAgentRepository:
         )
         return self._event(row) if row is not None else None
 
+    def event_by_position(
+        self, attempt_id: str, *, generation: int, sequence: int
+    ) -> CanonicalEventInput | None:
+        row = (
+            self.db.execute(
+                text(
+                    "SELECT * FROM agent.canonical_event WHERE attempt_id=CAST(:attempt_id AS UUID) "
+                    "AND runner_generation=:generation AND sequence=:sequence"
+                ),
+                {"attempt_id": attempt_id, "generation": generation, "sequence": sequence},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return self._event(row) if row is not None else None
+
     def events_page_by_run_id(
         self,
         run_id: str,

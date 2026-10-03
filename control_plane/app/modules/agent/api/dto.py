@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Annotated, Any, cast
 from uuid import UUID
 
-from pydantic import ConfigDict, Field
+from pydantic import AwareDatetime, ConfigDict, Field, field_validator
 
 from control_plane.app.modules.agent.application.control import AttemptControlResult
 from control_plane.app.modules.agent.application.errors import AgentBusinessContextReason
@@ -11,6 +11,7 @@ from control_plane.app.modules.agent.application.queries import (
     AgentRunBusinessContextStatus,
     AgentRunPage,
     AgentRunView,
+    AgentWaitingInput,
     CanonicalEventPage,
 )
 from control_plane.app.modules.agent.application.runs import StartRunResult
@@ -25,7 +26,9 @@ from control_plane.app.modules.agent.domain import (
     ExecutionBinding,
     ExecutionBindingSource,
     RunState,
+    WaitingInputQuestion,
 )
+from control_plane.app.modules.agent.domain.types import PlatformSummary
 from control_plane.app.shared.api.camel import CamelModel
 
 PublicReference = Annotated[str, Field(min_length=1, max_length=2048)]
@@ -242,10 +245,40 @@ class StartAgentRunResponseDto(StrictResponseCamelModel):
         )
 
 
+class AgentWaitingInputQuestionResponseDto(StrictResponseCamelModel):
+    prompt: PlatformSummary = Field(min_length=1, strict=True)
+
+    @field_validator("prompt")
+    @classmethod
+    def validate_prompt(cls, value: str) -> str:
+        return WaitingInputQuestion(prompt=value).prompt
+
+
+class AgentWaitingInputResponseDto(StrictResponseCamelModel):
+    event_id: UUID
+    attempt_id: UUID
+    generation: int = Field(ge=1, strict=True)
+    checkpoint_id: UUID
+    waiting_deadline: AwareDatetime
+    question: AgentWaitingInputQuestionResponseDto
+
+    @classmethod
+    def from_domain(cls, value: AgentWaitingInput) -> "AgentWaitingInputResponseDto":
+        return cls(
+            event_id=UUID(value.event_id),
+            attempt_id=UUID(value.attempt_id),
+            generation=value.generation,
+            checkpoint_id=UUID(value.checkpoint_id),
+            waiting_deadline=value.waiting_deadline,
+            question=AgentWaitingInputQuestionResponseDto(prompt=value.question.prompt),
+        )
+
+
 class AgentRunDetailsResponseDto(StrictResponseCamelModel):
     run: AgentRunResponseDto
     attempts: list[AgentAttemptResponseDto]
     bindings: list[ExecutionBindingSummaryResponseDto]
+    waiting_input: AgentWaitingInputResponseDto | None
 
     @classmethod
     def from_domain(cls, view: AgentRunView) -> "AgentRunDetailsResponseDto":
@@ -255,6 +288,11 @@ class AgentRunDetailsResponseDto(StrictResponseCamelModel):
             bindings=[
                 ExecutionBindingSummaryResponseDto.from_domain(item) for item in view.bindings
             ],
+            waiting_input=(
+                None
+                if view.waiting_input is None
+                else AgentWaitingInputResponseDto.from_domain(view.waiting_input)
+            ),
         )
 
 

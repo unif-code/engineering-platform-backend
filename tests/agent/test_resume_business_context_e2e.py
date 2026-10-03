@@ -54,7 +54,7 @@ def resume_api(
     resume_application: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> Iterator[Any]:
     h = resume_application
-    monkeypatch.setattr(routes, "get_run", Mock(return_value=SimpleNamespace(run=RUN)))
+    monkeypatch.setattr(routes, "get_run_metadata", Mock(return_value=RUN))
     owner = MagicMock()
     factory = Mock(return_value=h.port)
     runtime = AgentHttpRuntime(

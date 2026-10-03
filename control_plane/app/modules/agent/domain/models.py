@@ -279,6 +279,14 @@ class RunMutation(FrozenPlatformModel):
     now: datetime
 
 
+class WaitingInputQuestion(FrozenPlatformModel):
+    prompt: PlatformSummary = Field(min_length=1, strict=True)
+
+    def model_post_init(self, __context: Any) -> None:
+        if not self.prompt.strip():
+            raise ValueError("question prompt must not be blank")
+
+
 class CanonicalEventInput(FrozenPlatformModel):
     id: PlatformUUID
     event_type: PlatformName
@@ -308,12 +316,18 @@ class CanonicalEventInput(FrozenPlatformModel):
             ):
                 raise ValueError("ATTEMPT_QUEUED requires a canonical binding digest")
         elif self.event_type == "WAITING_INPUT":
-            if set(self.data) != {"checkpoint", "waitingDeadline"}:
-                raise ValueError("WAITING_INPUT requires only checkpoint and waitingDeadline")
+            if set(self.data) not in (
+                {"checkpoint", "waitingDeadline"},
+                {"checkpoint", "waitingDeadline", "question"},
+            ):
+                raise ValueError("WAITING_INPUT requires checkpoint, waitingDeadline and question")
             CheckpointInput.model_validate(self.data["checkpoint"])
             deadline = self.data["waitingDeadline"]
             if not isinstance(deadline, str) or datetime.fromisoformat(deadline).tzinfo is None:
                 raise ValueError("waitingDeadline must include an offset")
+            # Persisted predecessor events omit question; new acceptance requires it separately.
+            if "question" in self.data:
+                WaitingInputQuestion.model_validate(self.data["question"])
         elif self.event_type in {
             "ATTEMPT_PROVISIONING",
             "ATTEMPT_RUNNING",

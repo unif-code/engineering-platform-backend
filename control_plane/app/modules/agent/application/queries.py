@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from control_plane.app.modules.agent.application.dependencies import AgentDependencies
 from control_plane.app.modules.agent.application.errors import (
@@ -14,16 +14,20 @@ from control_plane.app.modules.agent.application.errors import (
 )
 from control_plane.app.modules.agent.domain import (
     AgentAttempt,
+    AgentQueryUnavailable,
     AgentRun,
     AgentRunBusinessContext,
     AgentRunListItem,
+    AttemptState,
     CanonicalEventInput,
+    CheckpointInput,
     EventCursorAnchorMissing,
     ExecutionBinding,
     RunState,
+    WaitingInputQuestion,
 )
 from control_plane.app.modules.agent.domain.types import PlatformUUID
-from control_plane.app.modules.agent.ports import AgentUnitOfWork
+from control_plane.app.modules.agent.ports import AgentRepository, AgentUnitOfWork
 from control_plane.app.modules.agent.ports.runtime import (
     RequirementExecutionContext,
     RequirementExecutionRequest,
@@ -34,12 +38,24 @@ from control_plane.app.modules.requirement import (
 )
 
 
+class AgentWaitingInput(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    event_id: PlatformUUID
+    attempt_id: PlatformUUID
+    generation: int = Field(ge=1, strict=True)
+    checkpoint_id: PlatformUUID
+    waiting_deadline: AwareDatetime
+    question: WaitingInputQuestion
+
+
 class AgentRunView(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     run: AgentRun
     attempts: tuple[AgentAttempt, ...]
     bindings: tuple[ExecutionBinding, ...]
+    waiting_input: AgentWaitingInput | None
 
 
 class CanonicalEventPage(BaseModel):
@@ -242,6 +258,45 @@ def list_runs(
     return dependencies.transaction_runner(operation)
 
 
+def _waiting_input(
+    repository: AgentRepository, run: AgentRun, attempt: AgentAttempt
+) -> AgentWaitingInput | None:
+    if attempt.run_id != run.id:
+        raise AgentQueryUnavailable("Latest Attempt does not belong to Run")
+    if attempt.state is not AttemptState.WAITING_INPUT:
+        return None
+    try:
+        event = repository.event_by_position(
+            attempt.id, generation=attempt.runner_generation, sequence=attempt.event_sequence
+        )
+        if event is None:
+            raise ValueError("missing waiting event")
+        event = CanonicalEventInput.model_validate(event.model_dump(mode="python"))
+        if (
+            event.event_type != "WAITING_INPUT"
+            or event.attempt_id != attempt.id
+            or event.generation != attempt.runner_generation
+            or event.sequence != attempt.event_sequence
+            or CheckpointInput.model_validate(event.data["checkpoint"]) != attempt.checkpoint
+            or datetime.fromisoformat(str(event.data["waitingDeadline"]))
+            != attempt.waiting_deadline
+        ):
+            raise ValueError("waiting event contradicts current Attempt snapshot")
+        if "question" not in event.data:
+            return None
+        assert attempt.checkpoint is not None and attempt.waiting_deadline is not None
+        return AgentWaitingInput(
+            event_id=event.id,
+            attempt_id=attempt.id,
+            generation=attempt.runner_generation,
+            checkpoint_id=attempt.checkpoint.id,
+            waiting_deadline=attempt.waiting_deadline,
+            question=WaitingInputQuestion.model_validate(event.data["question"]),
+        )
+    except (ValueError, TypeError, AttributeError, KeyError):
+        raise AgentQueryUnavailable("Current waiting input evidence is unavailable") from None
+
+
 def get_run(run_id: str, *, dependencies: AgentDependencies) -> AgentRunView:
     def operation(uow: AgentUnitOfWork) -> AgentRunView:
         repository = uow.repository()
@@ -249,12 +304,22 @@ def get_run(run_id: str, *, dependencies: AgentDependencies) -> AgentRunView:
         if run is None:
             raise AgentRunNotFound(run_id)
         attempts = repository.attempts_by_run_id(run.id)
+        current = next(
+            (attempt for attempt in attempts if attempt.id == run.latest_attempt_id), None
+        )
+        if current is None:
+            raise AgentQueryUnavailable("Latest Attempt is unavailable")
         bindings = tuple(
             binding
             for attempt in attempts
             if (binding := repository.binding_by_attempt_id(attempt.id)) is not None
         )
-        return AgentRunView(run=run, attempts=attempts, bindings=bindings)
+        return AgentRunView(
+            run=run,
+            attempts=attempts,
+            bindings=bindings,
+            waiting_input=_waiting_input(repository, run, current),
+        )
 
     return dependencies.transaction_runner(operation)
 

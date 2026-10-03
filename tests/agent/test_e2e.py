@@ -129,6 +129,7 @@ class AgentE2E:
                     "classification": "INTERNAL",
                 },
                 "waitingDeadline": (datetime.now(UTC) + timedelta(hours=1)).isoformat(),
+                "question": {"prompt": "请确认本次受控 Workflow 输入。"},
             }
         return CanonicalEventInput(
             id=str(uuid4()),

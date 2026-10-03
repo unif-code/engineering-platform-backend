@@ -181,6 +181,7 @@ def waiting_event(
                 "classification": "INTERNAL",
             },
             "waitingDeadline": (NOW + timedelta(hours=1)).isoformat(),
+            "question": {"prompt": "请确认受控测试的输入。"},
         },
     )
 

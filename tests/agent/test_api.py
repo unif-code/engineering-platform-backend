@@ -332,6 +332,7 @@ def _advance_to_waiting(agent: AgentApiHarness, attempt_id: str) -> int:
                     "classification": "INTERNAL",
                 },
                 "waitingDeadline": (agent.clock.value + timedelta(minutes=15)).isoformat(),
+                "question": {"prompt": "请确认本次 API 测试输入。"},
             },
         ),
         dependencies=agent.runtime.dependencies,
@@ -367,7 +368,7 @@ def test_agent_routes_return_strict_public_camel_case_contract(
     run_id = started["run"]["id"]
     details = agent_api.client.get(f"/api/v1/agent-runs/{run_id}")
     assert details.status_code == 200
-    assert set(details.json()) == {"run", "attempts", "bindings"}
+    assert set(details.json()) == {"run", "attempts", "bindings", "waitingInput"}
     assert details.headers["etag"] == f'"v{details.json()["attempts"][-1]["revision"]}"'
 
     events = agent_api.client.get(f"/api/v1/agent-runs/{run_id}/events")

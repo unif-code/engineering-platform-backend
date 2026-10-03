@@ -388,10 +388,14 @@ def create_agent_router(
     ) -> Response | AgentRunDetailsResponseDto:
         try:
             runtime = runtime_provider()
+            run = get_run_metadata(None, run_id=str(run_id), dependencies=runtime.dependencies)
+        except Exception as error:
+            return _problem(error)
+        capability_guard(principal, AGENT_RUN_READ_CAPABILITY, run.workspace_id)
+        try:
             view = get_run(None, run_id=str(run_id), dependencies=runtime.dependencies)
         except Exception as error:
             return _problem(error)
-        capability_guard(principal, AGENT_RUN_READ_CAPABILITY, view.run.workspace_id)
         current_attempt = next(
             (item for item in view.attempts if item.id == view.run.latest_attempt_id),
             None,
@@ -444,10 +448,10 @@ def create_agent_router(
     ) -> Response:
         try:
             runtime = runtime_provider()
-            view = get_run(None, run_id=str(run_id), dependencies=runtime.dependencies)
+            run = get_run_metadata(None, run_id=str(run_id), dependencies=runtime.dependencies)
         except Exception as error:
             return _problem(error)
-        capability_guard(principal, AGENT_RUN_CONTROL_CAPABILITY, view.run.workspace_id)
+        capability_guard(principal, AGENT_RUN_CONTROL_CAPABILITY, run.workspace_id)
         dependencies, actor = _request_dependencies(runtime, principal)
         if operation == "resume":
             dependencies = dependencies.with_requirement_context(

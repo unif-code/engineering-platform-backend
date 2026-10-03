@@ -150,6 +150,8 @@ def accept_workflow_event(
                 attempt=receipt.attempt,
                 checkpoint=receipt.checkpoint,
             )
+        if event.event_type == "WAITING_INPUT" and "question" not in event.data:
+            raise ValueError("new WAITING_INPUT event requires question")
         if event.attempt_id != attempt.id:
             raise ValueError("canonical event references an unknown Attempt")
         now = dependencies.clock()

@@ -339,7 +339,11 @@ def test_platform_json_evidence_is_deeply_immutable_and_json_serializable() -> N
         trace_id="trace-1",
         span_id="span-1",
         summary="running",
-        data={"checkpoint": CHECKPOINT.model_dump(), "waitingDeadline": NOW.isoformat()},
+        data={
+            "checkpoint": CHECKPOINT.model_dump(),
+            "waitingDeadline": NOW.isoformat(),
+            "question": {"prompt": "原问题不可变"},
+        },
     )
 
     with pytest.raises(TypeError):
