@@ -306,7 +306,7 @@ def test_current_authorization_adapter_uses_public_fresh_session_decision_and_fa
     monkeypatch.setattr(auth_adapter, "authorize", authorize)
     adapter = auth_adapter.CurrentDraftAuthorization(engine, dependencies, decisions)
     if status == 503:
-        with pytest.raises(PolicySnapshotUnavailable, match="Current rebase authorization"):
+        with pytest.raises(PolicySnapshotUnavailable, match="Current draft authorization"):
             adapter.check(raw_session="private-original-session", actor_id="actor")
     elif status is not None:
         with pytest.raises(DraftAuthorizationDenied) as denied:
