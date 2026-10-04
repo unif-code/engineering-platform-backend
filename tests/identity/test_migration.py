@@ -198,6 +198,7 @@ def test_identity_tables_exist(identity_owner_engine: Engine) -> None:
     assert tables == IDENTITY_TABLES | IDENTITY_CONFIGURATION_TABLES | {
         "policy_reauth_consumption",
         "draft_rebase",
+        "draft_clone",
     }
 
 
@@ -279,9 +280,9 @@ def test_current_alembic_heads_are_installed(identity_owner_engine: Engine) -> N
     assert installed == {
         "0007_model_material_sources",
         "0003_agent_run_recovery",
-        "0010_req_draft_rebase",
+        "0011_req_draft_clone",
         "0010_audit_model_worker_grant",
-        "0012_identity_draft_rebase",
+        "0013_identity_draft_clone",
         "0013_auth_agent_definitions",
         "0004_run_business_context",
         "0011_sc_delivery_join",

@@ -58,8 +58,8 @@ from control_plane.app.modules.configuration import (
     PolicyRuntimeRegistry,
 )
 from control_plane.app.modules.configuration.adapters import IdentityEffectivePolicy
-from control_plane.app.modules.configuration.adapters.rebase_authorization import (
-    CurrentRebaseAuthorization,
+from control_plane.app.modules.configuration.adapters.draft_authorization import (
+    CurrentDraftAuthorization,
 )
 from control_plane.app.modules.configuration.api import (
     ConfigurationHttpRuntime,
@@ -435,7 +435,7 @@ def configuration_http_runtime() -> ConfigurationHttpRuntime:
         ),
         dependencies=dependencies,
         secret_manager=secrets,
-        rebase_authorization=CurrentRebaseAuthorization(
+        draft_authorization=CurrentDraftAuthorization(
             auth.engine, auth.dependencies, auth.decision_dependencies
         ),
     )

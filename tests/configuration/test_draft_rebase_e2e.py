@@ -337,7 +337,7 @@ def test_history_and_original_receipt_survive_new_current_second_rebase_takeover
         "historical replay cannot run commit-time authorization"
     )
     before = all_facts(state)
-    with injected_client(state.a, replace(runtime, rebase_authorization=blocked)) as client:
+    with injected_client(state.a, replace(runtime, draft_authorization=blocked)) as client:
         replay = _write(
             client,
             target.path + "/rebase",
@@ -657,13 +657,13 @@ def test_real_rebase_fault_rolls_back_target_history_audit_and_sealed_result(
         runtime.owners,
         **({"identity": wrapped} if namespace == "identity" else {"requirement_gate": wrapped}),
     )
-    authorizer = runtime.rebase_authorization
+    authorizer = runtime.draft_authorization
     if fault == "authorization":
         authorizer = Mock()
         authorizer.check.side_effect = RuntimeError("synthetic authorization outage")
     before = all_facts(state)
     with injected_client(
-        state.a, replace(runtime, owners=owners, rebase_authorization=authorizer)
+        state.a, replace(runtime, owners=owners, draft_authorization=authorizer)
     ) as client:
         _write(
             client,

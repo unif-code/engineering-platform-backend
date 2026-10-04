@@ -101,6 +101,9 @@ from control_plane.app.modules.identity.application.configuration_policy import 
     rebase_policy_draft as _rebase_policy_draft,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
+    record_policy_clone as _record_policy_clone,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
     record_policy_rebase as _record_policy_rebase,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
@@ -306,6 +309,10 @@ def rebase_policy_draft(db: Connection, draft_id: str, **values: Any) -> OwnedPo
 
 def record_policy_rebase(db: Connection, **values: Any) -> None:
     _record_policy_rebase(SqlAlchemyIdentityPolicyOwnerRepository(db), **values)
+
+
+def record_policy_clone(db: Connection, **values: Any) -> None:
+    _record_policy_clone(SqlAlchemyIdentityPolicyOwnerRepository(db), **values)
 
 
 def save_policy_draft_validation(
@@ -1031,6 +1038,7 @@ __all__ = [
     "takeover_policy_draft",
     "rebase_policy_draft",
     "record_policy_rebase",
+    "record_policy_clone",
     "validate_policy_candidate",
     "normalize_policy_candidate",
     "confirm_totp",

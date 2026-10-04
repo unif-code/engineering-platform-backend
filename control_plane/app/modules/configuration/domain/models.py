@@ -53,6 +53,28 @@ class Draft(BaseModel):
     preview_evidence: dict[str, Any] | None = None
 
 
+class DraftCloneSource(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    draft_id: str
+    revision: int
+    owner_id: str
+    status: Literal["DRAFT", "ARCHIVED"]
+    base_version: int
+    schema_revision: int
+    content_hash: str
+    rollback_from_version: int | None
+    cloned_from_archived_draft_id: str | None
+
+
+class DraftClone(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    source: DraftCloneSource
+    current_version_at_clone: int
+    draft: Draft
+
+
 class DraftBaseComparisonItem(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -144,9 +166,9 @@ class ConfigurationError(RuntimeError):
     """Base class for safe configuration lifecycle conflicts."""
 
 
-class RebaseAuthorizationDenied(ConfigurationError):
+class DraftAuthorizationDenied(ConfigurationError):
     def __init__(self, status_code: Literal[401, 403]) -> None:
-        super().__init__("Current rebase authorization denied")
+        super().__init__("Current draft authorization denied")
         self.status_code = status_code
 
 

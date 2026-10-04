@@ -15,10 +15,10 @@ from control_plane.app.modules.authorization import (
     Scope,
 )
 from control_plane.app.modules.configuration import (
+    DraftAuthorizationDenied,
     PolicySnapshotUnavailable,
-    RebaseAuthorizationDenied,
 )
-from control_plane.app.modules.configuration.adapters import rebase_authorization as auth_adapter
+from control_plane.app.modules.configuration.adapters import draft_authorization as auth_adapter
 from control_plane.app.modules.configuration.api.routes import (
     ConfigurationHttpRuntime,
     create_configuration_router,
@@ -120,7 +120,7 @@ def test_rebase_replay_skips_locks_normalization_history_and_commit_authorizatio
     h.owner.draft.return_value = h.owner.draft.return_value.model_copy(
         update={"owner_id": "third-admin", "revision": 20, "status": "ARCHIVED", "base_version": 5}
     )
-    h.runtime = replace(h.runtime, rebase_authorization=None)
+    h.runtime = replace(h.runtime, draft_authorization=None)
     locked = h.owner.locked_active_snapshot.call_count
     normalized = h.owner.normalize_candidate.call_count
     replay = post(h)
@@ -156,7 +156,7 @@ def test_rebase_initial_authorization_and_commit_denial_are_distinct(
     h.authorization.check.side_effect = (
         PolicySnapshotUnavailable("unavailable")
         if status == 503
-        else RebaseAuthorizationDenied(401 if status == 401 else 403)
+        else DraftAuthorizationDenied(401 if status == 401 else 403)
     )
     response = post(h)
     assert response.status_code == status, response.text
@@ -199,7 +199,7 @@ def test_rebase_preflight_and_missing_default_current_check_fail_closed(http_reb
     assert post(h, etag='W/"v7"').status_code == 422
     assert post(h, key="short").status_code == 422
     h.owners.resolve.assert_not_called()
-    h.runtime = replace(h.runtime, rebase_authorization=None)
+    h.runtime = replace(h.runtime, draft_authorization=None)
     assert post(h).status_code == 503
     h.owner.rebase_draft.assert_not_called()
     h.owner.record_rebase.assert_not_called()
@@ -304,12 +304,12 @@ def test_current_authorization_adapter_uses_public_fresh_session_decision_and_fa
         status = 503
     monkeypatch.setattr(auth_adapter, "principal_version", versions)
     monkeypatch.setattr(auth_adapter, "authorize", authorize)
-    adapter = auth_adapter.CurrentRebaseAuthorization(engine, dependencies, decisions)
+    adapter = auth_adapter.CurrentDraftAuthorization(engine, dependencies, decisions)
     if status == 503:
         with pytest.raises(PolicySnapshotUnavailable, match="Current rebase authorization"):
             adapter.check(raw_session="private-original-session", actor_id="actor")
     elif status is not None:
-        with pytest.raises(RebaseAuthorizationDenied) as denied:
+        with pytest.raises(DraftAuthorizationDenied) as denied:
             adapter.check(raw_session="private-original-session", actor_id="actor")
         assert denied.value.status_code == status
     else:

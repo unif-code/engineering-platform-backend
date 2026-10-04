@@ -199,7 +199,7 @@ class SqlAlchemyGatePolicyRepository:
                     "st_meaningful_activity_at,schema_revision,content_hash,rollback_from_versi"
                     "on) "
                     "VALUES (:id,:namespace,:scope,CAST(:content AS "
-                    "JSONB),:base_version,:owner_id,1,'DRAFT',false,:now,:schema_revision,:cont"
+                    "JSONB),:base_version,:owner_id,1,'DRAFT',:stale,:now,:schema_revision,:cont"
                     "ent_hash,:rollback_from_version) "
                     "RETURNING *"
                 ),
@@ -207,6 +207,7 @@ class SqlAlchemyGatePolicyRepository:
                     **values,
                     "content": json.dumps(values["content"]),
                     "rollback_from_version": values.get("rollback_from_version"),
+                    "stale": values.get("stale", False),
                 },
             )
             .mappings()
@@ -280,6 +281,31 @@ class SqlAlchemyGatePolicyRepository:
             .one_or_none()
         )
         return None if row is None else self._draft(row)
+
+    def record_clone(self, **values: Any) -> None:
+        self.db.execute(
+            text("""
+                INSERT INTO requirement.gate_policy_clone (
+                    id,draft_id,namespace,scope,schema_revision,actor_id,recorded_at,
+                    source_draft_id,source_revision,source_owner_id,source_status,
+                    base_version,current_version,base_snapshot_hash,current_snapshot_hash,
+                    source_content,source_content_hash,content_hash,
+                    rollback_from_version,cloned_from_archived_draft_id
+                ) VALUES (
+                    :id,:draft_id,:namespace,:scope,:schema_revision,:actor_id,:recorded_at,
+                    :source_draft_id,:source_revision,:source_owner_id,:source_status,
+                    :base_version,:current_version,:base_snapshot_hash,:current_snapshot_hash,
+                    CAST(:source_content AS JSONB),:source_content_hash,:content_hash,
+                    :rollback_from_version,:cloned_from_archived_draft_id
+                )
+            """),
+            {
+                **values,
+                "source_content": json.dumps(
+                    values["source_content"], ensure_ascii=False, separators=(",", ":")
+                ),
+            },
+        )
 
     def record_rebase(self, **values: Any) -> None:
         self.db.execute(

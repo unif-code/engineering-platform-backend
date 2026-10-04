@@ -10,6 +10,7 @@ from control_plane.app.modules.configuration import (
     ConfigurationDependencies,
     ConfigurationError,
     DraftArchived,
+    DraftAuthorizationDenied,
     DraftNotFound,
     DraftOwnerRequired,
     InvalidPolicyValue,
@@ -18,14 +19,15 @@ from control_plane.app.modules.configuration import (
     PolicySnapshotUnavailable,
     PolicyVerificationFailed,
     PolicyVersionNotFound,
-    RebaseAuthorizationDenied,
     SourceStale,
     StaleDraftBase,
     StaleDraftRevision,
 )
 from control_plane.app.modules.configuration.api.dto import (
     ApplyDraftRebaseRequestDto,
+    CloneDraftRequestDto,
     DraftBaseComparisonResponseDto,
+    DraftCloneResponseDto,
     DraftResponseDto,
     DraftValidationResponseDto,
     DraftValuesRequestDto,
@@ -40,8 +42,8 @@ from control_plane.app.modules.configuration.api.dto import (
     TakeoverDraftRequestDto,
     ValidateDraftRequestDto,
 )
-from control_plane.app.modules.configuration.ports.rebase_authorization import (
-    RebaseAuthorizationPort,
+from control_plane.app.modules.configuration.ports.draft_authorization import (
+    DraftAuthorizationPort,
 )
 from control_plane.app.modules.identity import (
     OwnedPolicySnapshotUnavailable,
@@ -95,7 +97,7 @@ class ConfigurationHttpRuntime:
     owners: PolicyRuntimeRegistry
     dependencies: ConfigurationDependencies
     secret_manager: SecretManagerPort
-    rebase_authorization: RebaseAuthorizationPort | None = None
+    draft_authorization: DraftAuthorizationPort | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,7 +169,7 @@ def _account_id(principal: Any) -> str:
 
 def _problem(error: ConfigurationError) -> IdempotentResponse:
     status: int
-    if isinstance(error, RebaseAuthorizationDenied):
+    if isinstance(error, DraftAuthorizationDenied):
         status, title = (
             error.status_code,
             "Unauthorized" if error.status_code == 401 else "Forbidden",
@@ -557,7 +559,7 @@ def create_configuration_router(
                     expected_revision=preflight.expected_revision,
                     request=body_data,
                     raw_session=request.cookies.get("ep_session", ""),
-                    authorization=runtime.rebase_authorization,
+                    authorization=runtime.draft_authorization,
                 )
             except ConfigurationError as error:
                 return _problem(error)
@@ -576,6 +578,61 @@ def create_configuration_router(
             path=request.url.path,
             key=preflight.idempotency_key,
             body={**body_data, "expectedRevision": preflight.expected_revision},
+            command=command,
+        )
+
+    @router.post(
+        "/policies/{namespace}/drafts/{draft_id}/clone",
+        operation_id="draft_clone",
+        status_code=201,
+        response_model=DraftCloneResponseDto,
+        responses=_CREATE_RESPONSES,
+        dependencies=[Depends(_assert_versioned_preflight), Depends(_versioned_preflight)],
+    )
+    def draft_clone(
+        namespace: Annotated[str, Path(min_length=1)],
+        draft_id: Annotated[str, Path(min_length=1)],
+        body: CloneDraftRequestDto,
+        request: Request,
+        principal: Annotated[Any, Depends(principal_provider)],
+        preflight: Annotated[_VersionedPreflight, Depends(_versioned_preflight)],
+    ) -> Response:
+        capability_guard(principal, PLATFORM_CONFIGURATION_MANAGE, None)
+        runtime = runtime_provider()
+        actor_id = _account_id(principal)
+
+        def command(lifecycle: PolicyLifecycle) -> IdempotentResponse:
+            try:
+                result = lifecycle.clone_draft(
+                    namespace=namespace,
+                    draft_id=draft_id,
+                    actor_id=actor_id,
+                    expected_revision=preflight.expected_revision,
+                    raw_session=request.cookies.get("ep_session", ""),
+                    authorization=runtime.draft_authorization,
+                )
+            except ConfigurationError as error:
+                return _problem(error)
+            return IdempotentResponse(
+                status_code=201,
+                body=DraftCloneResponseDto.from_domain(result).model_dump(
+                    mode="json", by_alias=True
+                ),
+                headers={"ETag": entity_tag(result.draft.revision)},
+            )
+
+        return _execute(
+            runtime,
+            actor_id=actor_id,
+            namespace=namespace,
+            operation="draft_clone",
+            method="POST",
+            path=request.url.path,
+            key=preflight.idempotency_key,
+            body={
+                **body.model_dump(mode="json", by_alias=True),
+                "expectedRevision": preflight.expected_revision,
+            },
             command=command,
         )
 

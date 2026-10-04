@@ -39,6 +39,7 @@ from control_plane.app.modules.identity import (
     policy_version_snapshot,
     preview_policy_candidate,
     rebase_policy_draft,
+    record_policy_clone,
     record_policy_rebase,
     save_policy_draft_preview,
     save_policy_draft_validation,
@@ -188,6 +189,9 @@ class IdentityPolicyOwner:
 
     def create_draft(self, **values: Any) -> Draft:
         return self._draft(create_policy_draft(self.db, **values))
+
+    def record_clone(self, **values: Any) -> None:
+        record_policy_clone(self.db, **values)
 
     def draft(self, draft_id: str, *, for_update: bool = False) -> Draft | None:
         owned = policy_draft(self.db, draft_id, for_update=for_update)

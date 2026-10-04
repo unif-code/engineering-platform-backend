@@ -7,6 +7,7 @@ from control_plane.app.modules.configuration.domain import (
     Draft,
     DraftBaseChange,
     DraftBaseComparison,
+    DraftClone,
     DraftValidation,
     PolicyKey,
     PolicySnapshot,
@@ -129,6 +130,36 @@ class DraftResponseDto(CamelModel):
 
     @classmethod
     def from_domain(cls, value: Draft) -> "DraftResponseDto":
+        return cls.model_validate(value.model_dump())
+
+
+class CloneDraftRequestDto(CamelModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class DraftCloneSourceDto(CamelModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    draft_id: str = Field(min_length=1)
+    revision: int = Field(ge=1)
+    owner_id: str = Field(min_length=1)
+    status: Literal["DRAFT", "ARCHIVED"]
+    base_version: int = Field(ge=1)
+    schema_revision: int = Field(ge=1)
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    rollback_from_version: int | None = Field(ge=1)
+    cloned_from_archived_draft_id: str | None = Field(min_length=1)
+
+
+class DraftCloneResponseDto(CamelModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    source: DraftCloneSourceDto
+    current_version_at_clone: int = Field(ge=1)
+    draft: DraftResponseDto
+
+    @classmethod
+    def from_domain(cls, value: DraftClone) -> "DraftCloneResponseDto":
         return cls.model_validate(value.model_dump())
 
 

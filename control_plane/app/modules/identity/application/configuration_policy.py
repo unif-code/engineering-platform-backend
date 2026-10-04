@@ -124,6 +124,10 @@ def record_policy_rebase(repository: IdentityPolicyOwnerRepository, **values: An
     repository.record_rebase(**values)
 
 
+def record_policy_clone(repository: IdentityPolicyOwnerRepository, **values: Any) -> None:
+    repository.record_clone(**values)
+
+
 def update_policy_draft(
     repository: IdentityPolicyOwnerRepository,
     draft_id: str,

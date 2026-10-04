@@ -12,12 +12,12 @@ from control_plane.app.modules.authorization import (
     principal_version,
 )
 from control_plane.app.modules.configuration.domain import (
+    DraftAuthorizationDenied,
     PolicySnapshotUnavailable,
-    RebaseAuthorizationDenied,
 )
 
 
-class CurrentRebaseAuthorization:
+class CurrentDraftAuthorization:
     def __init__(
         self,
         engine: Engine,
@@ -44,16 +44,16 @@ class CurrentRebaseAuthorization:
                 )
                 after = principal_version(db, account_id=actor_id, dependencies=self.dependencies)
         except Exception:
-            raise PolicySnapshotUnavailable("Current rebase authorization unavailable") from None
+            raise PolicySnapshotUnavailable("Current draft authorization unavailable") from None
         if decision.code is DecisionCode.UNAUTHENTICATED:
-            raise RebaseAuthorizationDenied(401)
+            raise DraftAuthorizationDenied(401)
         if decision.code is DecisionCode.DENIED:
-            raise RebaseAuthorizationDenied(403)
+            raise DraftAuthorizationDenied(403)
         principal = decision.principal
         if not decision.allowed or decision.code is not DecisionCode.ALLOW or principal is None:
-            raise PolicySnapshotUnavailable("Current rebase authorization unavailable")
+            raise PolicySnapshotUnavailable("Current draft authorization unavailable")
         if principal.account_id != actor_id or not principal.is_super_admin:
-            raise RebaseAuthorizationDenied(403)
+            raise DraftAuthorizationDenied(403)
         if (
             before is None
             or after is None
@@ -62,4 +62,4 @@ class CurrentRebaseAuthorization:
             or (before.version, before.fence_generation) != (after.version, after.fence_generation)
             or principal.authorization_version != after.version
         ):
-            raise PolicySnapshotUnavailable("Current rebase authorization changed")
+            raise PolicySnapshotUnavailable("Current draft authorization changed")

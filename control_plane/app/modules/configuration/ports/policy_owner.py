@@ -77,6 +77,8 @@ class PolicyOwnerPort(IdempotencyRepository, Protocol):
 
     def record_rebase(self, **values: Any) -> None: ...
 
+    def record_clone(self, **values: Any) -> None: ...
+
     def update_draft(
         self,
         draft_id: str,

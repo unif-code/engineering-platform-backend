@@ -8,6 +8,7 @@ from sqlalchemy import Connection
 from control_plane.app.modules.configuration.application import drafts
 from control_plane.app.modules.configuration.application.archive import archive_stale_drafts
 from control_plane.app.modules.configuration.application.base_comparison import compare_draft_base
+from control_plane.app.modules.configuration.application.clone import clone_draft
 from control_plane.app.modules.configuration.application.dependencies import (
     ConfigurationDependencies,
 )
@@ -16,6 +17,7 @@ from control_plane.app.modules.configuration.application.rebase import apply_dra
 from control_plane.app.modules.configuration.domain import (
     Draft,
     DraftBaseComparison,
+    DraftClone,
     DraftValidation,
     Preview,
 )
@@ -48,6 +50,9 @@ class PolicyLifecycle:
 
     def apply_rebase(self, **values: Any) -> Draft:
         return apply_draft_rebase(self.db, self.owner, dependencies=self.dependencies, **values)
+
+    def clone_draft(self, **values: Any) -> DraftClone:
+        return clone_draft(self.db, self.owner, dependencies=self.dependencies, **values)
 
     def archive(self, *, now: datetime, namespace: str) -> int:
         return archive_stale_drafts(

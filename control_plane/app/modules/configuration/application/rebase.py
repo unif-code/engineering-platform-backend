@@ -15,17 +15,17 @@ from control_plane.app.modules.configuration.application.drafts import _audit, _
 from control_plane.app.modules.configuration.domain import (
     Draft,
     DraftArchived,
+    DraftAuthorizationDenied,
     DraftNotFound,
     DraftOwnerRequired,
     InvalidPolicyValue,
     PolicySnapshotUnavailable,
-    RebaseAuthorizationDenied,
     StaleDraftRevision,
 )
-from control_plane.app.modules.configuration.ports.policy_owner import PolicyOwnerPort
-from control_plane.app.modules.configuration.ports.rebase_authorization import (
-    RebaseAuthorizationPort,
+from control_plane.app.modules.configuration.ports.draft_authorization import (
+    DraftAuthorizationPort,
 )
+from control_plane.app.modules.configuration.ports.policy_owner import PolicyOwnerPort
 
 
 def apply_draft_rebase(
@@ -38,7 +38,7 @@ def apply_draft_rebase(
     expected_revision: int,
     request: dict[str, Any],
     raw_session: str,
-    authorization: RebaseAuthorizationPort | None,
+    authorization: DraftAuthorizationPort | None,
     dependencies: ConfigurationDependencies,
 ) -> Draft:
     if authorization is None:
@@ -118,7 +118,7 @@ def apply_draft_rebase(
         }
     try:
         authorization.check(raw_session=raw_session, actor_id=actor_id)
-    except (RebaseAuthorizationDenied, PolicySnapshotUnavailable):
+    except (DraftAuthorizationDenied, PolicySnapshotUnavailable):
         raise
     except Exception:
         raise PolicySnapshotUnavailable("Current rebase authorization unavailable") from None
