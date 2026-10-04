@@ -1,10 +1,12 @@
 import hashlib
 import json
+from copy import deepcopy
 from datetime import datetime, timedelta
 from typing import Any
 
 from control_plane.app.modules.identity.domain.configuration_policy import (
     IDENTITY_POLICY_SCHEMA_REVISION,
+    OwnedPolicyCandidateInvalid,
     OwnedPolicyDraft,
     OwnedPolicyKey,
     OwnedPolicyPreviewItem,
@@ -30,6 +32,26 @@ def policy_catalog(
     if validate_identity_policy_catalog(catalog):
         raise OwnedPolicySnapshotUnavailable(namespace)
     return catalog
+
+
+def normalize_policy_candidate(
+    repository: IdentityPolicyOwnerRepository,
+    namespace: str,
+    *,
+    schema_revision: int,
+    values: dict[str, Any],
+) -> dict[str, Any]:
+    if (
+        namespace != "identity"
+        or type(schema_revision) is not int
+        or schema_revision != IDENTITY_POLICY_SCHEMA_REVISION
+    ):
+        raise OwnedPolicySnapshotUnavailable("Unsupported policy schema")
+    policy_catalog(repository, namespace)
+    issues, policy = validate_and_materialize_identity_policy(schema_revision, values)
+    if issues or policy is None:
+        raise OwnedPolicyCandidateInvalid("Invalid policy candidate")
+    return deepcopy(values)
 
 
 def claim_configuration_idempotency(

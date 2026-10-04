@@ -3480,6 +3480,155 @@
         "title": "DossierMaterialRequestDto",
         "type": "object"
       },
+      "DraftBaseComparisonItemDto": {
+        "additionalProperties": false,
+        "properties": {
+          "baseValue": {
+            "title": "Basevalue"
+          },
+          "change": {
+            "enum": [
+              "UNCHANGED",
+              "CURRENT_ONLY",
+              "DRAFT_ONLY",
+              "SAME_CHANGE",
+              "CONFLICT"
+            ],
+            "title": "Change",
+            "type": "string"
+          },
+          "currentValue": {
+            "title": "Currentvalue"
+          },
+          "draftValue": {
+            "title": "Draftvalue"
+          },
+          "key": {
+            "minLength": 1,
+            "title": "Key",
+            "type": "string"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "valueType": {
+            "minLength": 1,
+            "title": "Valuetype",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "valueType",
+          "unit",
+          "baseValue",
+          "currentValue",
+          "draftValue",
+          "change"
+        ],
+        "title": "DraftBaseComparisonItemDto",
+        "type": "object"
+      },
+      "DraftBaseComparisonResponseDto": {
+        "additionalProperties": false,
+        "properties": {
+          "baseSnapshotHash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Basesnapshothash",
+            "type": "string"
+          },
+          "baseVersion": {
+            "minimum": 1.0,
+            "title": "Baseversion",
+            "type": "integer"
+          },
+          "currentSnapshotHash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Currentsnapshothash",
+            "type": "string"
+          },
+          "currentVersion": {
+            "minimum": 1.0,
+            "title": "Currentversion",
+            "type": "integer"
+          },
+          "draftContentHash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Draftcontenthash",
+            "type": "string"
+          },
+          "draftId": {
+            "minLength": 1,
+            "title": "Draftid",
+            "type": "string"
+          },
+          "draftRevision": {
+            "minimum": 1.0,
+            "title": "Draftrevision",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DraftBaseComparisonItemDto"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "namespace": {
+            "minLength": 1,
+            "title": "Namespace",
+            "type": "string"
+          },
+          "ownerId": {
+            "minLength": 1,
+            "title": "Ownerid",
+            "type": "string"
+          },
+          "schemaRevision": {
+            "minimum": 1.0,
+            "title": "Schemarevision",
+            "type": "integer"
+          },
+          "scope": {
+            "const": "PLATFORM",
+            "title": "Scope",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "DRAFT",
+              "ARCHIVED"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "draftId",
+          "namespace",
+          "scope",
+          "ownerId",
+          "draftRevision",
+          "status",
+          "schemaRevision",
+          "baseVersion",
+          "currentVersion",
+          "baseSnapshotHash",
+          "currentSnapshotHash",
+          "draftContentHash",
+          "items"
+        ],
+        "title": "DraftBaseComparisonResponseDto",
+        "type": "object"
+      },
       "DraftResponseDto": {
         "properties": {
           "archivedAt": {
@@ -8124,7 +8273,7 @@
   "info": {
     "description": "内部研发平台 Control Plane API。\n\n全局约定：JSON 一律 camelCase；ID 一律 string；错误统一 application/problem+json（RFC 9457）；\n分页 cursor 型 {items, nextCursor}；写并发 If-Match/ETag；变更命令 Idempotency-Key——\n后三者自 V0.2 首个真实接口起强制执行。",
     "title": "engineering-platform-control-plane",
-    "version": "3.2.0"
+    "version": "3.3.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -12401,6 +12550,152 @@
           }
         ],
         "summary": "Draft Update",
+        "tags": [
+          "configuration"
+        ]
+      }
+    },
+    "/api/v1/admin/policies/{namespace}/drafts/{draft_id}/base-comparison": {
+      "get": {
+        "operationId": "draft_base_comparison",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "draft_id",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Draft Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Strong entity tag in the form \"v<positive-version>\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "description": "Strong entity tag in the form \"v<positive-version>\"",
+              "examples": [
+                "\"v1\""
+              ],
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftBaseComparisonResponseDto"
+                }
+              }
+            },
+            "description": "Observed Base, Current and saved Draft comparison",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "const": "no-store",
+                  "type": "string"
+                }
+              },
+              "ETag": {
+                "description": "Strong draft revision ETag for the next write",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
+          }
+        },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
+        "summary": "Draft Base Comparison",
         "tags": [
           "configuration"
         ]

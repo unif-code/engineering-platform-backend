@@ -7,11 +7,17 @@ from sqlalchemy import Connection
 
 from control_plane.app.modules.configuration.application import drafts
 from control_plane.app.modules.configuration.application.archive import archive_stale_drafts
+from control_plane.app.modules.configuration.application.base_comparison import compare_draft_base
 from control_plane.app.modules.configuration.application.dependencies import (
     ConfigurationDependencies,
 )
 from control_plane.app.modules.configuration.application.preview import preview
-from control_plane.app.modules.configuration.domain import Draft, DraftValidation, Preview
+from control_plane.app.modules.configuration.domain import (
+    Draft,
+    DraftBaseComparison,
+    DraftValidation,
+    Preview,
+)
 from control_plane.app.modules.configuration.ports.policy_owner import PolicyOwnerPort
 
 
@@ -35,6 +41,9 @@ class PolicyLifecycle:
 
     def preview(self, **values: Any) -> Preview:
         return preview(self.db, self.owner, dependencies=self.dependencies, **values)
+
+    def base_comparison(self, **values: Any) -> DraftBaseComparison:
+        return compare_draft_base(self.owner, **values)
 
     def archive(self, *, now: datetime, namespace: str) -> int:
         return archive_stale_drafts(

@@ -4,7 +4,12 @@ from typing import Any, Protocol
 
 from sqlalchemy import Connection
 
-from control_plane.app.modules.configuration.domain import Draft, DraftValidation, Preview
+from control_plane.app.modules.configuration.domain import (
+    Draft,
+    DraftBaseComparison,
+    DraftValidation,
+    Preview,
+)
 from control_plane.app.modules.configuration.ports.policy_owner import PolicyOwnerPort
 from control_plane.app.shared.idempotency import IdempotentResponse
 
@@ -19,6 +24,7 @@ class PolicyLifecyclePort(Protocol):
     def takeover_draft(self, **values: Any) -> Draft: ...
     def validate_draft(self, **values: Any) -> DraftValidation: ...
     def preview(self, **values: Any) -> Preview: ...
+    def base_comparison(self, **values: Any) -> DraftBaseComparison: ...
 
 
 class PolicyRuntimePort(Protocol):

@@ -205,6 +205,10 @@ class OwnedPolicySnapshotUnavailable(RuntimeError):
     """The identity-owned active policy cannot be read as a complete snapshot."""
 
 
+class OwnedPolicyCandidateInvalid(ValueError):
+    """A candidate cannot be materialized under the current owner schema."""
+
+
 class OwnedPolicyValidationIssue(BaseModel):
     model_config = ConfigDict(frozen=True)
 

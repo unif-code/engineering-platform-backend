@@ -1,10 +1,12 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import ConfigDict, Field
 
 from control_plane.app.modules.configuration.domain import (
     Draft,
+    DraftBaseChange,
+    DraftBaseComparison,
     DraftValidation,
     PolicyKey,
     PolicySnapshot,
@@ -97,6 +99,40 @@ class DraftResponseDto(CamelModel):
 
     @classmethod
     def from_domain(cls, value: Draft) -> "DraftResponseDto":
+        return cls.model_validate(value.model_dump())
+
+
+class DraftBaseComparisonItemDto(CamelModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    key: str = Field(min_length=1)
+    value_type: str = Field(min_length=1)
+    unit: str | None
+    base_value: Any
+    current_value: Any
+    draft_value: Any
+    change: DraftBaseChange
+
+
+class DraftBaseComparisonResponseDto(CamelModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    draft_id: str = Field(min_length=1)
+    namespace: str = Field(min_length=1)
+    scope: Literal["PLATFORM"]
+    owner_id: str = Field(min_length=1)
+    draft_revision: int = Field(ge=1)
+    status: Literal["DRAFT", "ARCHIVED"]
+    schema_revision: int = Field(ge=1)
+    base_version: int = Field(ge=1)
+    current_version: int = Field(ge=1)
+    base_snapshot_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    current_snapshot_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    draft_content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    items: list[DraftBaseComparisonItemDto]
+
+    @classmethod
+    def from_domain(cls, value: DraftBaseComparison) -> "DraftBaseComparisonResponseDto":
         return cls.model_validate(value.model_dump())
 
 

@@ -83,6 +83,10 @@ def test_configuration_http_contract_has_exact_operations_security_and_preflight
             "post",
         ): "draft_takeover",
         (
+            "/api/v1/admin/policies/{namespace}/drafts/{draft_id}/base-comparison",
+            "get",
+        ): "draft_base_comparison",
+        (
             "/api/v1/admin/policies/{namespace}/drafts/{draft_id}/publish",
             "post",
         ): "draft_publish",
@@ -128,6 +132,15 @@ def test_configuration_http_contract_has_exact_operations_security_and_preflight
     preview_parameters = {value["name"]: value for value in preview["parameters"]}
     assert preview_parameters["If-Match"]["required"] is True
     assert "Idempotency-Key" not in preview_parameters
+    comparison = schema["paths"][
+        "/api/v1/admin/policies/{namespace}/drafts/{draft_id}/base-comparison"
+    ]["get"]
+    comparison_parameters = {value["name"]: value for value in comparison["parameters"]}
+    assert comparison_parameters["If-Match"]["required"] is True
+    assert "Idempotency-Key" not in comparison_parameters and "requestBody" not in comparison
+    assert (
+        comparison["responses"]["200"]["headers"]["Cache-Control"]["schema"]["const"] == "no-store"
+    )
     assert create["responses"]["201"]["headers"]["ETag"]["schema"]["type"] == "string"
     for operation in (update, validate, preview, takeover):
         assert operation["responses"]["200"]["headers"]["ETag"]["schema"]["type"] == "string"

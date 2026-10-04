@@ -80,6 +80,9 @@ from control_plane.app.modules.identity.application.configuration_policy import 
     locked_active_policy_snapshot as _locked_active_policy_snapshot,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
+    normalize_policy_candidate as _normalize_policy_candidate,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
     policy_catalog as _policy_catalog,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
@@ -169,6 +172,7 @@ from control_plane.app.modules.identity.domain.account import (
     ensure_effective_super_admin_remains,
 )
 from control_plane.app.modules.identity.domain.configuration_policy import (
+    OwnedPolicyCandidateInvalid,
     OwnedPolicyDraft,
     OwnedPolicyKey,
     OwnedPolicyPreviewItem,
@@ -420,6 +424,21 @@ def validate_policy_candidate(
     values: dict[str, Any],
 ) -> list[OwnedPolicyValidationIssue]:
     return _validate_policy_candidate(
+        SqlAlchemyIdentityPolicyOwnerRepository(db),
+        namespace,
+        schema_revision=schema_revision,
+        values=values,
+    )
+
+
+def normalize_policy_candidate(
+    db: Connection,
+    namespace: str,
+    *,
+    schema_revision: int,
+    values: dict[str, Any],
+) -> dict[str, Any]:
+    return _normalize_policy_candidate(
         SqlAlchemyIdentityPolicyOwnerRepository(db),
         namespace,
         schema_revision=schema_revision,
@@ -957,6 +976,7 @@ __all__ = [
     "OwnedPolicyPreviewItem",
     "OwnedPolicyDraft",
     "OwnedPolicySnapshotUnavailable",
+    "OwnedPolicyCandidateInvalid",
     "OwnedPolicyValidationIssue",
     "OwnedPublishedPolicyVersion",
     "PasswordFloorViolation",
@@ -996,6 +1016,7 @@ __all__ = [
     "update_policy_draft",
     "takeover_policy_draft",
     "validate_policy_candidate",
+    "normalize_policy_candidate",
     "confirm_totp",
     "current_identity_change_source",
     "consume_temp_password",

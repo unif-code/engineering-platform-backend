@@ -23,6 +23,7 @@ from control_plane.app.modules.requirement.domain.gate_policy import (
     FORMAL_KEY,
     MAX_ARCHIVE_DAYS,
     NAMESPACE,
+    SCHEMA_REVISION,
     GatePolicy,
     content_hash,
 )
@@ -153,6 +154,19 @@ class SqlAlchemyGatePolicyRepository:
                 )
             ]
         return []
+
+    def normalize_candidate(
+        self, namespace: str, *, schema_revision: int, values: dict[str, Any]
+    ) -> dict[str, Any]:
+        self.catalog(namespace)
+        if type(schema_revision) is not int or schema_revision != SCHEMA_REVISION:
+            raise PolicySnapshotUnavailable("Unsupported Gate policy schema")
+        try:
+            return GatePolicy.parse(
+                values, namespace=namespace, scope="PLATFORM", schema_revision=schema_revision
+            ).values()
+        except ValueError:
+            raise InvalidPolicyValue("Invalid Gate policy candidate") from None
 
     @staticmethod
     def _draft(row: Any) -> Draft:

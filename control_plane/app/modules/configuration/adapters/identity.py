@@ -11,6 +11,7 @@ from control_plane.app.modules.configuration.application.dependencies import (
 from control_plane.app.modules.configuration.application.lifecycle import PolicyLifecycle
 from control_plane.app.modules.configuration.domain import (
     Draft,
+    InvalidPolicyValue,
     PolicyKey,
     PolicySnapshot,
     PolicySnapshotUnavailable,
@@ -20,6 +21,7 @@ from control_plane.app.modules.configuration.domain import (
 )
 from control_plane.app.modules.identity import (
     IdentityPolicyCommandRuntime,
+    OwnedPolicyCandidateInvalid,
     OwnedPolicySnapshotUnavailable,
     active_policy_archive_settings,
     active_policy_snapshot,
@@ -30,6 +32,7 @@ from control_plane.app.modules.identity import (
     configuration_idempotency_by_scope,
     create_policy_draft,
     list_policy_versions,
+    normalize_policy_candidate,
     policy_catalog,
     policy_draft,
     policy_version_snapshot,
@@ -160,6 +163,18 @@ class IdentityPolicyOwner:
     @staticmethod
     def _draft(owned: Any) -> Draft:
         return Draft.model_validate(owned.model_dump())
+
+    def normalize_candidate(
+        self, namespace: str, *, schema_revision: int, values: dict[str, Any]
+    ) -> dict[str, Any]:
+        try:
+            return normalize_policy_candidate(
+                self.db, namespace, schema_revision=schema_revision, values=values
+            )
+        except OwnedPolicySnapshotUnavailable as exc:
+            raise PolicySnapshotUnavailable(namespace) from exc
+        except OwnedPolicyCandidateInvalid:
+            raise InvalidPolicyValue("Invalid policy candidate") from None
 
     def create_draft(self, **values: Any) -> Draft:
         return self._draft(create_policy_draft(self.db, **values))

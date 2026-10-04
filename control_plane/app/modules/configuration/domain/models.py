@@ -1,7 +1,9 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
+
+DraftBaseChange = Literal["UNCHANGED", "CURRENT_ONLY", "DRAFT_ONLY", "SAME_CHANGE", "CONFLICT"]
 
 
 class PolicySnapshot(BaseModel):
@@ -49,6 +51,36 @@ class Draft(BaseModel):
     validation_evidence: dict[str, Any] | None
     rollback_from_version: int | None = None
     preview_evidence: dict[str, Any] | None = None
+
+
+class DraftBaseComparisonItem(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    key: str
+    value_type: str
+    unit: str | None
+    base_value: Any
+    current_value: Any
+    draft_value: Any
+    change: DraftBaseChange
+
+
+class DraftBaseComparison(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    draft_id: str
+    namespace: str
+    scope: Literal["PLATFORM"]
+    owner_id: str
+    draft_revision: int
+    status: Literal["DRAFT", "ARCHIVED"]
+    schema_revision: int
+    base_version: int
+    current_version: int
+    base_snapshot_hash: str
+    current_snapshot_hash: str
+    draft_content_hash: str
+    items: list[DraftBaseComparisonItem]
 
 
 class PreviewItem(BaseModel):
