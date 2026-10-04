@@ -949,6 +949,74 @@
         "title": "AgentWaitingInputResponseDto",
         "type": "object"
       },
+      "ApplyDraftRebaseRequestDto": {
+        "additionalProperties": false,
+        "properties": {
+          "baseSnapshotHash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Basesnapshothash",
+            "type": "string"
+          },
+          "baseVersion": {
+            "exclusiveMinimum": 0.0,
+            "title": "Baseversion",
+            "type": "integer"
+          },
+          "currentSnapshotHash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Currentsnapshothash",
+            "type": "string"
+          },
+          "currentVersion": {
+            "exclusiveMinimum": 0.0,
+            "title": "Currentversion",
+            "type": "integer"
+          },
+          "draftContentHash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Draftcontenthash",
+            "type": "string"
+          },
+          "resolutions": {
+            "additionalProperties": {
+              "discriminator": {
+                "mapping": {
+                  "CURRENT": "#/components/schemas/RebaseSideResolutionDto",
+                  "CUSTOM": "#/components/schemas/RebaseCustomResolutionDto",
+                  "DRAFT": "#/components/schemas/RebaseSideResolutionDto"
+                },
+                "propertyName": "choice"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/RebaseSideResolutionDto"
+                },
+                {
+                  "$ref": "#/components/schemas/RebaseCustomResolutionDto"
+                }
+              ]
+            },
+            "title": "Resolutions",
+            "type": "object"
+          },
+          "schemaRevision": {
+            "exclusiveMinimum": 0.0,
+            "title": "Schemarevision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "baseVersion",
+          "currentVersion",
+          "schemaRevision",
+          "baseSnapshotHash",
+          "currentSnapshotHash",
+          "draftContentHash",
+          "resolutions"
+        ],
+        "title": "ApplyDraftRebaseRequestDto",
+        "type": "object"
+      },
       "ArchiveModelDeploymentRequestDto": {
         "additionalProperties": false,
         "properties": {
@@ -6007,6 +6075,43 @@
         "title": "ReassignDeliveryGateRequestDto",
         "type": "object"
       },
+      "RebaseCustomResolutionDto": {
+        "additionalProperties": false,
+        "properties": {
+          "choice": {
+            "const": "CUSTOM",
+            "title": "Choice",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value"
+          }
+        },
+        "required": [
+          "choice",
+          "value"
+        ],
+        "title": "RebaseCustomResolutionDto",
+        "type": "object"
+      },
+      "RebaseSideResolutionDto": {
+        "additionalProperties": false,
+        "properties": {
+          "choice": {
+            "enum": [
+              "CURRENT",
+              "DRAFT"
+            ],
+            "title": "Choice",
+            "type": "string"
+          }
+        },
+        "required": [
+          "choice"
+        ],
+        "title": "RebaseSideResolutionDto",
+        "type": "object"
+      },
       "RecordState": {
         "enum": [
           "ACTIVE"
@@ -8273,7 +8378,7 @@
   "info": {
     "description": "内部研发平台 Control Plane API。\n\n全局约定：JSON 一律 camelCase；ID 一律 string；错误统一 application/problem+json（RFC 9457）；\n分页 cursor 型 {items, nextCursor}；写并发 If-Match/ETag；变更命令 Idempotency-Key——\n后三者自 V0.2 首个真实接口起强制执行。",
     "title": "engineering-platform-control-plane",
-    "version": "3.3.0"
+    "version": "3.4.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -13000,6 +13105,170 @@
           }
         ],
         "summary": "Draft Publish",
+        "tags": [
+          "configuration"
+        ]
+      }
+    },
+    "/api/v1/admin/policies/{namespace}/drafts/{draft_id}/rebase": {
+      "post": {
+        "operationId": "draft_rebase_apply",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "namespace",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Namespace",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "draft_id",
+            "required": true,
+            "schema": {
+              "minLength": 1,
+              "title": "Draft Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Stable replay key: 8-128 ASCII letters, digits, dot, underscore, colon, or hyphen",
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9._:-]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Strong entity tag in the form \"v<positive-version>\"",
+            "in": "header",
+            "name": "If-Match",
+            "required": true,
+            "schema": {
+              "description": "Strong entity tag in the form \"v<positive-version>\"",
+              "examples": [
+                "\"v1\""
+              ],
+              "title": "If-Match",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplyDraftRebaseRequestDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DraftResponseDto"
+                }
+              }
+            },
+            "description": "Draft updated",
+            "headers": {
+              "ETag": {
+                "description": "Strong draft revision ETag for the next write",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Validation failed"
+          },
+          "500": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Internal server error"
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "Not ready"
+          }
+        },
+        "security": [
+          {
+            "EpSessionCookie": []
+          }
+        ],
+        "summary": "Draft Rebase Apply",
         "tags": [
           "configuration"
         ]

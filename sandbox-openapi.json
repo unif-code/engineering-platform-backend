@@ -1126,7 +1126,7 @@
   "info": {
     "description": "Private workload-to-workload Sandbox Controller API.\n\nJSON uses camelCase. Mutations require Idempotency-Key; current-materialization\nmutations also require a strong If-Match entity tag. Errors use RFC 9457 Problem\nDetails. This API is not mounted in the browser Control Plane application.\n",
     "title": "engineering-platform-sandbox-controller",
-    "version": "3.3.0"
+    "version": "3.4.0"
   },
   "openapi": "3.1.0",
   "paths": {

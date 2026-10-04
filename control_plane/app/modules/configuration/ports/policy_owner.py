@@ -17,6 +17,8 @@ class PolicyOwnerPort(IdempotencyRepository, Protocol):
 
     def active_snapshot(self, namespace: str) -> PolicySnapshot: ...
 
+    def locked_active_snapshot(self, namespace: str) -> PolicySnapshot: ...
+
     def active_archive_settings(
         self,
         namespace: str,
@@ -57,6 +59,23 @@ class PolicyOwnerPort(IdempotencyRepository, Protocol):
     def takeover_draft(
         self, draft_id: str, *, expected_revision: int, owner_id: str, now: datetime
     ) -> Draft | None: ...
+
+    def rebase_draft(
+        self,
+        draft_id: str,
+        *,
+        namespace: str,
+        expected_revision: int,
+        expected_owner_id: str,
+        expected_base_version: int,
+        schema_revision: int,
+        base_version: int,
+        content: dict[str, Any],
+        content_hash: str,
+        now: datetime,
+    ) -> Draft | None: ...
+
+    def record_rebase(self, **values: Any) -> None: ...
 
     def update_draft(
         self,

@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import ConfigDict, Field
 
@@ -70,6 +70,36 @@ class PublishDraftRequestDto(CamelModel):
 class TakeoverDraftRequestDto(CamelModel):
     model_config = ConfigDict(extra="forbid")
     reason: str = Field(min_length=1, max_length=1000)
+
+
+class RebaseSideResolutionDto(CamelModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    choice: Literal["CURRENT", "DRAFT"]
+
+
+class RebaseCustomResolutionDto(CamelModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    choice: Literal["CUSTOM"]
+    value: Any
+
+
+class ApplyDraftRebaseRequestDto(CamelModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    base_version: int = Field(gt=0)
+    current_version: int = Field(gt=0)
+    schema_revision: int = Field(gt=0)
+    base_snapshot_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    current_snapshot_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    draft_content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    resolutions: dict[
+        str,
+        Annotated[
+            RebaseSideResolutionDto | RebaseCustomResolutionDto, Field(discriminator="choice")
+        ],
+    ]
 
 
 class RollbackPolicyRequestDto(CamelModel):

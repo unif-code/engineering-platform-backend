@@ -58,6 +58,9 @@ from control_plane.app.modules.configuration import (
     PolicyRuntimeRegistry,
 )
 from control_plane.app.modules.configuration.adapters import IdentityEffectivePolicy
+from control_plane.app.modules.configuration.adapters.rebase_authorization import (
+    CurrentRebaseAuthorization,
+)
 from control_plane.app.modules.configuration.api import (
     ConfigurationHttpRuntime,
     create_configuration_router,
@@ -420,6 +423,7 @@ def configuration_dependencies() -> ConfigurationDependencies:
 def configuration_http_runtime() -> ConfigurationHttpRuntime:
     dependencies = configuration_dependencies()
     secrets = FileSecretManager(SecuritySettings())
+    auth = authorization_http_runtime()
     return ConfigurationHttpRuntime(
         owners=PolicyRuntimeRegistry(
             identity=IdentityPolicyRuntime(
@@ -431,6 +435,9 @@ def configuration_http_runtime() -> ConfigurationHttpRuntime:
         ),
         dependencies=dependencies,
         secret_manager=secrets,
+        rebase_authorization=CurrentRebaseAuthorization(
+            auth.engine, auth.dependencies, auth.decision_dependencies
+        ),
     )
 
 

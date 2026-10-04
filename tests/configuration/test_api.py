@@ -83,6 +83,10 @@ def test_configuration_http_contract_has_exact_operations_security_and_preflight
             "post",
         ): "draft_takeover",
         (
+            "/api/v1/admin/policies/{namespace}/drafts/{draft_id}/rebase",
+            "post",
+        ): "draft_rebase_apply",
+        (
             "/api/v1/admin/policies/{namespace}/drafts/{draft_id}/base-comparison",
             "get",
         ): "draft_base_comparison",
@@ -123,9 +127,10 @@ def test_configuration_http_contract_has_exact_operations_security_and_preflight
     takeover = schema["paths"]["/api/v1/admin/policies/{namespace}/drafts/{draft_id}/takeover"][
         "post"
     ]
+    rebase = schema["paths"]["/api/v1/admin/policies/{namespace}/drafts/{draft_id}/rebase"]["post"]
     create_parameters = {value["name"]: value for value in create["parameters"]}
     assert create_parameters["Idempotency-Key"]["required"] is True
-    for operation in (update, validate, takeover, publish, rollback):
+    for operation in (update, validate, takeover, rebase, publish, rollback):
         parameters = {value["name"]: value for value in operation["parameters"]}
         assert parameters["Idempotency-Key"]["required"] is True
         assert parameters["If-Match"]["required"] is True

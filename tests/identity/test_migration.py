@@ -276,9 +276,9 @@ def test_current_alembic_heads_are_installed(identity_owner_engine: Engine) -> N
     assert installed == {
         "0007_model_material_sources",
         "0003_agent_run_recovery",
-        "0009_req_formal_owner_denial",
+        "0010_req_draft_rebase",
         "0010_audit_model_worker_grant",
-        "0011_identity_reauth_consumption",
+        "0012_identity_draft_rebase",
         "0013_auth_agent_definitions",
         "0004_run_business_context",
         "0011_sc_delivery_join",

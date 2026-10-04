@@ -144,6 +144,12 @@ class ConfigurationError(RuntimeError):
     """Base class for safe configuration lifecycle conflicts."""
 
 
+class RebaseAuthorizationDenied(ConfigurationError):
+    def __init__(self, status_code: Literal[401, 403]) -> None:
+        super().__init__("Current rebase authorization denied")
+        self.status_code = status_code
+
+
 class DraftNotFound(ConfigurationError):
     pass
 

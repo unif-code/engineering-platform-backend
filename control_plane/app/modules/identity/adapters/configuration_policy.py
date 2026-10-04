@@ -404,6 +404,65 @@ class SqlAlchemyIdentityPolicyOwnerRepository:
         )
         return None if row is None else self._draft(row)
 
+    def rebase_draft(self, draft_id: str, **values: Any) -> OwnedPolicyDraft | None:
+        row = (
+            self.db.execute(
+                text(
+                    "UPDATE identity.draft SET content=CAST(:content AS JSONB), "
+                    "content_hash=:content_hash, "
+                    "base_version=:base_version,revision=revision+1,stale=false,last_meaningful_activity_at=:now,"
+                    " "
+                    "validation_evidence=NULL,validation_content_hash=NULL,validation_schema_revision=NULL,"
+                    " "
+                    "validation_base_version=NULL,validation_dependency_versions=NULL,preview_evidence=NULL,"
+                    " "
+                    "preview_content_hash=NULL,preview_schema_revision=NULL,preview_base_version=NULL,"
+                    " "
+                    "preview_dependency_versions=NULL WHERE id=:id AND namespace=:namespace AND "
+                    "scope='PLATFORM' "
+                    "AND revision=:expected_revision AND owner_id=:expected_owner_id AND "
+                    "base_version=:expected_base_version "
+                    "AND schema_revision=:schema_revision AND status='DRAFT' AND archived_at IS "
+                    "NULL RETURNING *"
+                ),
+                {
+                    **values,
+                    "id": draft_id,
+                    "content": json.dumps(
+                        values["content"], ensure_ascii=False, separators=(",", ":")
+                    ),
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return None if row is None else self._draft(row)
+
+    def record_rebase(self, **values: Any) -> None:
+        self.db.execute(
+            text(
+                "INSERT INTO identity.draft_rebase "
+                "(id,draft_id,namespace,scope,schema_revision,actor_id,recorded_at, "
+                "before_revision,after_revision,base_version,current_version,base_snapshot_hash,current_snapshot_hash,"
+                " "
+                "before_content_hash,after_content_hash,before_content,after_content,selections) "
+                "VALUES "
+                "(:id,:draft_id,:namespace,:scope,:schema_revision,:actor_id,:recorded_at,:before_revision,:after_revision,"
+                " "
+                ":base_version,:current_version,:base_snapshot_hash,:current_snapshot_hash,:before_content_hash,"
+                " "
+                ":after_content_hash,CAST(:before_content AS JSONB),CAST(:after_content AS "
+                "JSONB),CAST(:selections AS JSONB))"
+            ),
+            {
+                **values,
+                **{
+                    key: json.dumps(values[key], ensure_ascii=False, separators=(",", ":"))
+                    for key in ("before_content", "after_content", "selections")
+                },
+            },
+        )
+
     def update_draft(
         self,
         draft_id: str,

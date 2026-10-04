@@ -18,11 +18,13 @@ from control_plane.app.modules.configuration import (
     PolicySnapshotUnavailable,
     PolicyVerificationFailed,
     PolicyVersionNotFound,
+    RebaseAuthorizationDenied,
     SourceStale,
     StaleDraftBase,
     StaleDraftRevision,
 )
 from control_plane.app.modules.configuration.api.dto import (
+    ApplyDraftRebaseRequestDto,
     DraftBaseComparisonResponseDto,
     DraftResponseDto,
     DraftValidationResponseDto,
@@ -37,6 +39,9 @@ from control_plane.app.modules.configuration.api.dto import (
     RollbackPolicyRequestDto,
     TakeoverDraftRequestDto,
     ValidateDraftRequestDto,
+)
+from control_plane.app.modules.configuration.ports.rebase_authorization import (
+    RebaseAuthorizationPort,
 )
 from control_plane.app.modules.identity import (
     OwnedPolicySnapshotUnavailable,
@@ -90,6 +95,7 @@ class ConfigurationHttpRuntime:
     owners: PolicyRuntimeRegistry
     dependencies: ConfigurationDependencies
     secret_manager: SecretManagerPort
+    rebase_authorization: RebaseAuthorizationPort | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,7 +166,13 @@ def _account_id(principal: Any) -> str:
 
 
 def _problem(error: ConfigurationError) -> IdempotentResponse:
-    if isinstance(error, DraftNotFound):
+    status: int
+    if isinstance(error, RebaseAuthorizationDenied):
+        status, title = (
+            error.status_code,
+            "Unauthorized" if error.status_code == 401 else "Forbidden",
+        )
+    elif isinstance(error, DraftNotFound):
         status, title = 404, "Draft not found"
     elif isinstance(error, DraftOwnerRequired):
         status, title = 403, "Draft owner required"
@@ -513,6 +525,57 @@ def create_configuration_router(
             path=request.url.path,
             key=preflight.idempotency_key,
             body=body_data,
+            command=command,
+        )
+
+    @router.post(
+        "/policies/{namespace}/drafts/{draft_id}/rebase",
+        operation_id="draft_rebase_apply",
+        response_model=DraftResponseDto,
+        responses=_WRITE_RESPONSES,
+        dependencies=[Depends(_assert_versioned_preflight), Depends(_versioned_preflight)],
+    )
+    def draft_rebase_apply(
+        namespace: Annotated[str, Path(min_length=1)],
+        draft_id: Annotated[str, Path(min_length=1)],
+        body: ApplyDraftRebaseRequestDto,
+        request: Request,
+        principal: Annotated[Any, Depends(principal_provider)],
+        preflight: Annotated[_VersionedPreflight, Depends(_versioned_preflight)],
+    ) -> Response:
+        capability_guard(principal, PLATFORM_CONFIGURATION_MANAGE, None)
+        runtime = runtime_provider()
+        actor_id = _account_id(principal)
+        body_data = body.model_dump(mode="json", by_alias=True)
+
+        def command(lifecycle: PolicyLifecycle) -> IdempotentResponse:
+            try:
+                result = lifecycle.apply_rebase(
+                    namespace=namespace,
+                    draft_id=draft_id,
+                    actor_id=actor_id,
+                    expected_revision=preflight.expected_revision,
+                    request=body_data,
+                    raw_session=request.cookies.get("ep_session", ""),
+                    authorization=runtime.rebase_authorization,
+                )
+            except ConfigurationError as error:
+                return _problem(error)
+            return IdempotentResponse(
+                status_code=200,
+                body=DraftResponseDto.from_domain(result).model_dump(mode="json", by_alias=True),
+                headers={"ETag": entity_tag(result.revision)},
+            )
+
+        return _execute(
+            runtime,
+            actor_id=actor_id,
+            namespace=namespace,
+            operation="draft_rebase_apply",
+            method="POST",
+            path=request.url.path,
+            key=preflight.idempotency_key,
+            body={**body_data, "expectedRevision": preflight.expected_revision},
             command=command,
         )
 

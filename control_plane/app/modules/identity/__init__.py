@@ -98,6 +98,12 @@ from control_plane.app.modules.identity.application.configuration_policy import 
     publish_policy_version as _publish_policy_version,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
+    rebase_policy_draft as _rebase_policy_draft,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
+    record_policy_rebase as _record_policy_rebase,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
     save_policy_draft_preview as _save_policy_draft_preview,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
@@ -292,6 +298,14 @@ def update_policy_draft(
         draft_id,
         **values,
     )
+
+
+def rebase_policy_draft(db: Connection, draft_id: str, **values: Any) -> OwnedPolicyDraft | None:
+    return _rebase_policy_draft(SqlAlchemyIdentityPolicyOwnerRepository(db), draft_id, **values)
+
+
+def record_policy_rebase(db: Connection, **values: Any) -> None:
+    _record_policy_rebase(SqlAlchemyIdentityPolicyOwnerRepository(db), **values)
 
 
 def save_policy_draft_validation(
@@ -1015,6 +1029,8 @@ __all__ = [
     "active_policy_archive_settings",
     "update_policy_draft",
     "takeover_policy_draft",
+    "rebase_policy_draft",
+    "record_policy_rebase",
     "validate_policy_candidate",
     "normalize_policy_candidate",
     "confirm_totp",

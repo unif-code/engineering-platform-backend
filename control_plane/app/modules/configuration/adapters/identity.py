@@ -32,11 +32,14 @@ from control_plane.app.modules.identity import (
     configuration_idempotency_by_scope,
     create_policy_draft,
     list_policy_versions,
+    locked_active_policy_snapshot,
     normalize_policy_candidate,
     policy_catalog,
     policy_draft,
     policy_version_snapshot,
     preview_policy_candidate,
+    rebase_policy_draft,
+    record_policy_rebase,
     save_policy_draft_preview,
     save_policy_draft_validation,
     takeover_policy_draft,
@@ -97,6 +100,13 @@ class IdentityPolicyOwner:
     def active_snapshot(self, namespace: str) -> PolicySnapshot:
         try:
             owned = active_policy_snapshot(self.db, namespace)
+        except OwnedPolicySnapshotUnavailable as exc:
+            raise PolicySnapshotUnavailable(namespace) from exc
+        return PolicySnapshot.model_validate(owned.model_dump())
+
+    def locked_active_snapshot(self, namespace: str) -> PolicySnapshot:
+        try:
+            owned = locked_active_policy_snapshot(self.db, namespace)
         except OwnedPolicySnapshotUnavailable as exc:
             raise PolicySnapshotUnavailable(namespace) from exc
         return PolicySnapshot.model_validate(owned.model_dump())
@@ -211,6 +221,13 @@ class IdentityPolicyOwner:
             now=now,
         )
         return None if owned is None else self._draft(owned)
+
+    def rebase_draft(self, draft_id: str, **values: Any) -> Draft | None:
+        owned = rebase_policy_draft(self.db, draft_id, **values)
+        return None if owned is None else self._draft(owned)
+
+    def record_rebase(self, **values: Any) -> None:
+        record_policy_rebase(self.db, **values)
 
     def save_validation(
         self,

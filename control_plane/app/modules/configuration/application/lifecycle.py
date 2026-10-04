@@ -12,6 +12,7 @@ from control_plane.app.modules.configuration.application.dependencies import (
     ConfigurationDependencies,
 )
 from control_plane.app.modules.configuration.application.preview import preview
+from control_plane.app.modules.configuration.application.rebase import apply_draft_rebase
 from control_plane.app.modules.configuration.domain import (
     Draft,
     DraftBaseComparison,
@@ -44,6 +45,9 @@ class PolicyLifecycle:
 
     def base_comparison(self, **values: Any) -> DraftBaseComparison:
         return compare_draft_base(self.owner, **values)
+
+    def apply_rebase(self, **values: Any) -> Draft:
+        return apply_draft_rebase(self.db, self.owner, dependencies=self.dependencies, **values)
 
     def archive(self, *, now: datetime, namespace: str) -> int:
         return archive_stale_drafts(

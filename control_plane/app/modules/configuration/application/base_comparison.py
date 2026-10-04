@@ -5,6 +5,7 @@ from typing import Any, Literal, cast
 
 from control_plane.app.modules.configuration.application.drafts import _content_hash
 from control_plane.app.modules.configuration.domain import (
+    Draft,
     DraftBaseChange,
     DraftBaseComparison,
     DraftBaseComparisonItem,
@@ -49,9 +50,15 @@ def _check_snapshot(
 
 
 def compare_draft_base(
-    owner: PolicyOwnerPort, *, namespace: str, draft_id: str, expected_revision: int
+    owner: PolicyOwnerPort,
+    *,
+    namespace: str,
+    draft_id: str,
+    expected_revision: int,
+    draft: Draft | None = None,
+    current: PolicySnapshot | None = None,
 ) -> DraftBaseComparison:
-    draft = owner.draft(draft_id)
+    draft = owner.draft(draft_id) if draft is None else draft
     if draft is None or draft.namespace != namespace or draft.id != draft_id:
         raise DraftNotFound("Draft not found")
     if draft.revision != expected_revision:
@@ -71,7 +78,11 @@ def compare_draft_base(
         namespace,
         draft.schema_revision,
     )
-    current = _check_snapshot(owner.active_snapshot(namespace), namespace, draft.schema_revision)
+    current = _check_snapshot(
+        owner.active_snapshot(namespace) if current is None else current,
+        namespace,
+        draft.schema_revision,
+    )
     if base.version != draft.base_version or current.version < base.version:
         raise _unavailable()
     catalog = owner.catalog(namespace)

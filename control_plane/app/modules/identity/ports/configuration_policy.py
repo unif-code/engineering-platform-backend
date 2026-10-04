@@ -66,6 +66,10 @@ class IdentityPolicyOwnerRepository(Protocol):
         self, draft_id: str, *, expected_revision: int, owner_id: str, now: datetime
     ) -> OwnedPolicyDraft | None: ...
 
+    def rebase_draft(self, draft_id: str, **values: Any) -> OwnedPolicyDraft | None: ...
+
+    def record_rebase(self, **values: Any) -> None: ...
+
     def update_draft(
         self,
         draft_id: str,

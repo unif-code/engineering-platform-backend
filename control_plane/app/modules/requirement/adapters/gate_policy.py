@@ -107,6 +107,19 @@ class SqlAlchemyGatePolicyRepository:
         snapshot = self.active_snapshot(namespace)
         return snapshot, timedelta(days=snapshot.values[ARCHIVE_KEY])
 
+    def locked_active_snapshot(self, namespace: str) -> PolicySnapshot:
+        self.catalog(namespace)
+        locked = self.db.execute(
+            text(
+                "SELECT namespace FROM requirement.gate_policy_active_pointer "
+                "WHERE namespace=:namespace AND scope='PLATFORM' FOR UPDATE"
+            ),
+            {"namespace": namespace},
+        ).scalar_one_or_none()
+        if locked is None:
+            raise PolicySnapshotUnavailable("Effective Gate policy unavailable")
+        return self.active_snapshot(namespace)
+
     def version_snapshot(self, namespace: str, scope: str, version: int) -> PolicySnapshot | None:
         self.catalog(namespace)
         row = (
@@ -238,6 +251,60 @@ class SqlAlchemyGatePolicyRepository:
             .one_or_none()
         )
         return None if row is None else self._draft(row)
+
+    def rebase_draft(self, draft_id: str, **values: Any) -> Draft | None:
+        self._check_archive_cutoff(values["content"], values["now"])
+        row = (
+            self.db.execute(
+                text(
+                    "UPDATE requirement.gate_policy_draft SET content=CAST(:content AS "
+                    "JSONB),content_hash=:content_hash, "
+                    "base_version=:base_version,revision=revision+1,stale=false,last_meaningful_activity_at=:now,"
+                    " "
+                    "validation_evidence=NULL,preview_evidence=NULL WHERE id=:id AND "
+                    "namespace=:namespace AND scope='PLATFORM' "
+                    "AND revision=:expected_revision AND owner_id=:expected_owner_id AND "
+                    "base_version=:expected_base_version "
+                    "AND schema_revision=:schema_revision AND status='DRAFT' AND archived_at IS "
+                    "NULL RETURNING *"
+                ),
+                {
+                    **values,
+                    "id": draft_id,
+                    "content": json.dumps(
+                        values["content"], ensure_ascii=False, separators=(",", ":")
+                    ),
+                },
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return None if row is None else self._draft(row)
+
+    def record_rebase(self, **values: Any) -> None:
+        self.db.execute(
+            text(
+                "INSERT INTO requirement.gate_policy_rebase "
+                "(id,draft_id,namespace,scope,schema_revision,actor_id,recorded_at, "
+                "before_revision,after_revision,base_version,current_version,base_snapshot_hash,current_snapshot_hash,"
+                " "
+                "before_content_hash,after_content_hash,before_content,after_content,selections) "
+                "VALUES "
+                "(:id,:draft_id,:namespace,:scope,:schema_revision,:actor_id,:recorded_at,:before_revision,:after_revision,"
+                " "
+                ":base_version,:current_version,:base_snapshot_hash,:current_snapshot_hash,:before_content_hash,"
+                " "
+                ":after_content_hash,CAST(:before_content AS JSONB),CAST(:after_content AS "
+                "JSONB),CAST(:selections AS JSONB))"
+            ),
+            {
+                **values,
+                **{
+                    key: json.dumps(values[key], ensure_ascii=False, separators=(",", ":"))
+                    for key in ("before_content", "after_content", "selections")
+                },
+            },
+        )
 
     def update_draft(
         self,

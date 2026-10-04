@@ -114,6 +114,16 @@ def takeover_policy_draft(
     )
 
 
+def rebase_policy_draft(
+    repository: IdentityPolicyOwnerRepository, draft_id: str, **values: Any
+) -> OwnedPolicyDraft | None:
+    return repository.rebase_draft(draft_id, **values)
+
+
+def record_policy_rebase(repository: IdentityPolicyOwnerRepository, **values: Any) -> None:
+    repository.record_rebase(**values)
+
+
 def update_policy_draft(
     repository: IdentityPolicyOwnerRepository,
     draft_id: str,
