@@ -217,17 +217,21 @@ def test_real_rebase_custom_updates_only_target_and_history_then_fresh_publicati
 
 
 @pytest.mark.parametrize("namespace", ["identity", "requirement.gate"])
-def test_real_no_conflict_base_advance_ignores_stale_flag_and_clears_all_bound_evidence(
+def test_real_no_conflict_base_advance_uses_owner_publication_facts_and_clears_evidence(
     actors: Any, namespace: str
 ) -> None:
     state = actors
     target = setup_stale(state, namespace)
     source = state.b.client.get(target.current_path)
-    assert source.json()["stale"] is False and source.json()["baseVersion"] == 1
-    assert (
-        source.json()["validationEvidence"] is not None
-        and source.json()["previewEvidence"] is not None
-    )
+    assert source.json()["baseVersion"] == 1
+    if namespace == "identity":
+        assert source.json()["stale"] is False
+        assert source.json()["validationEvidence"] is not None
+        assert source.json()["previewEvidence"] is not None
+    else:
+        assert source.json()["stale"] is True
+        assert source.json()["validationEvidence"] is None
+        assert source.json()["previewEvidence"] is None
     observation = read_comparison(state.b, target.current_path, source)
     body = body_for(observation)
     assert body["resolutions"] == {}
@@ -351,7 +355,13 @@ def test_history_and_original_receipt_survive_new_current_second_rebase_takeover
     apply(state.a, target, etag=taken.headers["etag"], key="original-rebase", status=409)
 
 
-def observe_owner_wait(engine: Any, namespace: str, held: Event) -> tuple[Event, list[int], Any]:
+def observe_owner_wait(
+    engine: Any,
+    namespace: str,
+    held: Event,
+    *,
+    archive_update: bool = False,
+) -> tuple[Event, list[int], Any]:
     started = Event()
     pids: list[int] = []
     tables = (
@@ -363,12 +373,11 @@ def observe_owner_wait(engine: Any, namespace: str, held: Event) -> tuple[Event,
     def observe(
         connection: Any, _cursor: Any, statement: str, _params: Any, _ctx: Any, _many: Any
     ) -> None:
-        if (
-            held.is_set()
-            and not pids
-            and "FOR UPDATE" in statement.upper()
-            and any(table in statement for table in tables)
-        ):
+        locking = "FOR UPDATE" in statement.upper() or (
+            archive_update
+            and statement.upper().lstrip().startswith("UPDATE IDENTITY.DRAFT SET STATUS='ARCHIVED'")
+        )
+        if held.is_set() and not pids and locking and any(table in statement for table in tables):
             pids.append(connection.execute(text("SELECT pg_backend_pid()")).scalar_one())
             started.set()
 
@@ -486,7 +495,12 @@ def test_apply_first_serializes_real_contenders_and_never_loses_history(
     engine = state.journey.database.engines[
         "identity" if namespace == "identity" else "requirement"
     ]
-    started, pids, observe = observe_owner_wait(engine, namespace, held)
+    started, pids, observe = observe_owner_wait(
+        engine,
+        namespace,
+        held,
+        archive_update=namespace == "identity" and contender == "archive",
+    )
     state.clock.value += timedelta(seconds=1)
 
     def compete() -> Any:

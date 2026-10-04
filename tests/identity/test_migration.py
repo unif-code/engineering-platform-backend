@@ -195,7 +195,10 @@ def test_identity_tables_exist(identity_owner_engine: Engine) -> None:
                 )
             ).scalars()
         )
-    assert tables == IDENTITY_TABLES | IDENTITY_CONFIGURATION_TABLES | {"policy_reauth_consumption"}
+    assert tables == IDENTITY_TABLES | IDENTITY_CONFIGURATION_TABLES | {
+        "policy_reauth_consumption",
+        "draft_rebase",
+    }
 
 
 def test_identity_columns_types_nullability_and_defaults_match_contract(

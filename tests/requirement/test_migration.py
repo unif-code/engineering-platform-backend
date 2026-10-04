@@ -18,6 +18,7 @@ EXPECTED_TABLES = {
     "gate_policy_receipt",
     "gate_policy_idempotency",
     "gate_policy_outbox",
+    "gate_policy_rebase",
     "delivery_decision",
     "delivery_gate",
     "delivery_gate_assignment",
