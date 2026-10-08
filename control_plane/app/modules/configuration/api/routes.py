@@ -26,6 +26,7 @@ from control_plane.app.modules.configuration import (
 from control_plane.app.modules.configuration.api.dto import (
     ApplyDraftRebaseRequestDto,
     CloneDraftRequestDto,
+    DraftArchiveTimingResponseDto,
     DraftBaseComparisonResponseDto,
     DraftCloneResponseDto,
     DraftGovernanceRecordsResponseDto,
@@ -412,6 +413,51 @@ def create_configuration_router(
             return _render(_problem(error))
         except Exception:
             return problem_response(503, "Draft base comparison unavailable")
+
+    @router.get(
+        "/policies/{namespace}/drafts/{draft_id}/archive-timing",
+        operation_id="draft_archive_timing",
+        response_model=DraftArchiveTimingResponseDto,
+        responses={
+            **_PROBLEMS,
+            200: {
+                "description": "Inactivity timing observed against the current owner policy",
+                "headers": {
+                    **_ETAG_HEADER,
+                    "Cache-Control": {"schema": {"type": "string", "const": "no-store"}},
+                },
+            },
+        },
+        dependencies=[Depends(_assert_revision_preflight)],
+    )
+    def draft_archive_timing(
+        namespace: Annotated[str, Path(min_length=1)],
+        draft_id: Annotated[str, Path(min_length=1)],
+        principal: Annotated[Any, Depends(principal_provider)],
+        preflight: Annotated[_RevisionPreflight, Depends(_revision_preflight)],
+    ) -> Response:
+        capability_guard(principal, PLATFORM_CONFIGURATION_MANAGE, None)
+        try:
+            with runtime_provider().owners.resolve(namespace).transaction() as lifecycle:
+                result = lifecycle.archive_timing(
+                    namespace=namespace,
+                    draft_id=draft_id,
+                    expected_revision=preflight.expected_revision,
+                )
+                dto = DraftArchiveTimingResponseDto.from_domain(result)
+                return JSONResponse(
+                    dto.model_dump(mode="json", by_alias=True),
+                    headers={
+                        "ETag": entity_tag(result.draft.revision),
+                        "Cache-Control": "no-store",
+                    },
+                )
+        except DraftNotFound:
+            return problem_response(404, "Draft not found")
+        except StaleDraftRevision:
+            return problem_response(409, "Draft archive timing changed")
+        except Exception:
+            return problem_response(503, "Draft archive timing unavailable")
 
     @router.get(
         "/policies/{namespace}/drafts/{draft_id}/governance-records",

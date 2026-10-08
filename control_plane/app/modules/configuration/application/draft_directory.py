@@ -97,23 +97,13 @@ def draft_directory(
                 )
             )
             if (
-                row.namespace != namespace
-                or row.schema_revision != 1
-                or row.base_version > before.version
-                or (owner == "MINE" and row.owner_id != actor_id)
+                (owner == "MINE" and row.owner_id != actor_id)
                 or not matches
                 or (lower is not None and row.id <= lower)
-                or (row.status == "DRAFT" and row.archived_at is not None)
-                or (
-                    row.status == "ARCHIVED"
-                    and (
-                        row.archived_at is None or row.archived_at < row.last_meaningful_activity_at
-                    )
-                )
             ):
                 raise ValueError("Invalid draft directory metadata")
             lower = row.id
-            items.append(DraftListItem(**row.model_dump(), base_behind=behind))
+            items.append(draft_list_item(row, namespace=namespace, current_version=before.version))
         return DraftList(
             namespace=namespace,
             scope="PLATFORM",
@@ -127,3 +117,18 @@ def draft_directory(
         raise
     except Exception:
         raise PolicySnapshotUnavailable("Draft directory unavailable") from None
+
+
+def draft_list_item(row: DraftSummary, *, namespace: str, current_version: int) -> DraftListItem:
+    if (
+        row.namespace != namespace
+        or row.schema_revision != 1
+        or row.base_version > current_version
+        or (row.status == "DRAFT" and row.archived_at is not None)
+        or (
+            row.status == "ARCHIVED"
+            and (row.archived_at is None or row.archived_at < row.last_meaningful_activity_at)
+        )
+    ):
+        raise ValueError("Invalid draft metadata")
+    return DraftListItem(**row.model_dump(), base_behind=row.base_version < current_version)

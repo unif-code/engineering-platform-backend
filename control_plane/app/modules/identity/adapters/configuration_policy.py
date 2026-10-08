@@ -179,6 +179,27 @@ class SqlAlchemyIdentityPolicyOwnerRepository:
             values=dict(row["snapshot"]),
         )
 
+    def draft_summary(self, namespace: str, scope: str, draft_id: str) -> dict[str, Any] | None:
+        row = (
+            self.db.execute(
+                text(
+                    "SELECT id,namespace,scope,owner_id,revision,status,base_version,"
+                    "schema_revision,"
+                    "content_hash,last_meaningful_activity_at,archived_at,rollback_from_version "
+                    "FROM identity.draft "
+                    "WHERE id=:draft_id AND namespace=:namespace AND scope=:scope"
+                ),
+                dict(draft_id=draft_id, namespace=namespace, scope=scope),
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return (
+            None
+            if row is None
+            else {**dict(row), "id": str(row["id"]), "owner_id": str(row["owner_id"])}
+        )
+
     def list_draft_summaries(
         self,
         namespace: str,

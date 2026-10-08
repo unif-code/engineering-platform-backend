@@ -386,3 +386,9 @@ def list_policy_draft_summaries(
     **values: Any,
 ) -> list[dict[str, Any]]:
     return repository.list_draft_summaries(namespace, scope, **values)
+
+
+def policy_draft_summary(
+    repository: IdentityPolicyOwnerRepository, namespace: str, scope: str, draft_id: str
+) -> dict[str, Any] | None:
+    return repository.draft_summary(namespace, scope, draft_id)

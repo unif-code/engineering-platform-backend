@@ -38,6 +38,7 @@ from control_plane.app.modules.identity import (
     policy_catalog,
     policy_clone_record,
     policy_draft,
+    policy_draft_summary,
     policy_rebase_records,
     policy_version_snapshot,
     preview_policy_candidate,
@@ -114,6 +115,13 @@ class IdentityPolicyOwner:
         except OwnedPolicySnapshotUnavailable as exc:
             raise PolicySnapshotUnavailable(namespace) from exc
         return PolicySnapshot.model_validate(owned.model_dump())
+
+    def read_archive_settings(self, namespace: str) -> tuple[PolicySnapshot, timedelta]:
+        # Identity's existing Facade materializes the period from one ordinary Active read.
+        return self.active_archive_settings(namespace)
+
+    def draft_summary(self, namespace: str, scope: str, draft_id: str) -> dict[str, Any] | None:
+        return policy_draft_summary(self.db, namespace, scope, draft_id)
 
     def active_archive_settings(
         self,

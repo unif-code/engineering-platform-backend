@@ -47,6 +47,8 @@ class IdentityPolicyOwnerRepository(Protocol):
         version: int,
     ) -> OwnedPolicySnapshot | None: ...
 
+    def draft_summary(self, namespace: str, scope: str, draft_id: str) -> dict[str, Any] | None: ...
+
     def list_draft_summaries(
         self,
         namespace: str,

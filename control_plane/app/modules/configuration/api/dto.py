@@ -16,6 +16,7 @@ from control_plane.app.modules.configuration.domain import (
     PublishedVersion,
     ValidationIssue,
 )
+from control_plane.app.modules.configuration.domain.archive_timing import DraftArchiveTiming
 from control_plane.app.modules.configuration.domain.draft_directory import (
     DraftDirectoryId,
     DraftDirectoryOwner,
@@ -374,4 +375,19 @@ class DraftListResponseDto(CamelModel):
 
     @classmethod
     def from_domain(cls, value: DraftList) -> "DraftListResponseDto":
+        return cls.model_validate(value.model_dump())
+
+
+class DraftArchiveTimingResponseDto(CamelModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    draft: DraftListItemDto
+    current: PolicySnapshotDto
+    archive_after_days: int = Field(gt=0)
+    observed_at: AwareDatetime
+    expected_archive_at: AwareDatetime | None
+    inactivity_elapsed: bool | None
+
+    @classmethod
+    def from_domain(cls, value: DraftArchiveTiming) -> "DraftArchiveTimingResponseDto":
         return cls.model_validate(value.model_dump())

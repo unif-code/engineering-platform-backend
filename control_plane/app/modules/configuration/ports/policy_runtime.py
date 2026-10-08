@@ -10,6 +10,7 @@ from control_plane.app.modules.configuration.domain import (
     DraftValidation,
     Preview,
 )
+from control_plane.app.modules.configuration.domain.archive_timing import DraftArchiveTiming
 from control_plane.app.modules.configuration.domain.draft_directory import DraftList
 from control_plane.app.modules.configuration.domain.governance_records import DraftGovernanceRecords
 from control_plane.app.modules.configuration.ports.policy_owner import PolicyOwnerPort
@@ -30,6 +31,7 @@ class PolicyLifecyclePort(Protocol):
     def apply_rebase(self, **values: Any) -> Draft: ...
     def governance_records(self, **values: Any) -> DraftGovernanceRecords: ...
     def draft_directory(self, **values: Any) -> DraftList: ...
+    def archive_timing(self, **values: Any) -> DraftArchiveTiming: ...
 
 
 class PolicyRuntimePort(Protocol):

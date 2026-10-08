@@ -95,6 +95,9 @@ from control_plane.app.modules.identity.application.configuration_policy import 
     policy_draft as _policy_draft,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
+    policy_draft_summary as _policy_draft_summary,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
     policy_rebase_records as _policy_rebase_records,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
@@ -281,6 +284,14 @@ def complete_configuration_idempotency(
 
 def create_policy_draft(db: Connection, **values: Any) -> OwnedPolicyDraft:
     return _create_policy_draft(SqlAlchemyIdentityPolicyOwnerRepository(db), **values)
+
+
+def policy_draft_summary(
+    db: Connection, namespace: str, scope: str, draft_id: str
+) -> dict[str, Any] | None:
+    return _policy_draft_summary(
+        SqlAlchemyIdentityPolicyOwnerRepository(db), namespace, scope, draft_id
+    )
 
 
 def policy_draft(
@@ -1064,6 +1075,7 @@ __all__ = [
     "configuration_idempotency_by_scope",
     "create_policy_draft",
     "policy_draft",
+    "policy_draft_summary",
     "policy_catalog",
     "policy_version_snapshot",
     "publish_policy_version",
