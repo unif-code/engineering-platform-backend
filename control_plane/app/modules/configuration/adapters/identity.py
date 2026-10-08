@@ -35,7 +35,9 @@ from control_plane.app.modules.identity import (
     locked_active_policy_snapshot,
     normalize_policy_candidate,
     policy_catalog,
+    policy_clone_record,
     policy_draft,
+    policy_rebase_records,
     policy_version_snapshot,
     preview_policy_candidate,
     rebase_policy_draft,
@@ -189,6 +191,29 @@ class IdentityPolicyOwner:
 
     def create_draft(self, **values: Any) -> Draft:
         return self._draft(create_policy_draft(self.db, **values))
+
+    def clone_record(self, namespace: str, scope: str, draft_id: str) -> dict[str, Any] | None:
+        return policy_clone_record(self.db, namespace, scope, draft_id)
+
+    def rebase_records(
+        self,
+        namespace: str,
+        scope: str,
+        draft_id: str,
+        *,
+        through_revision: int,
+        before_revision: int | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        return policy_rebase_records(
+            self.db,
+            namespace,
+            scope,
+            draft_id,
+            through_revision=through_revision,
+            before_revision=before_revision,
+            limit=limit,
+        )
 
     def record_clone(self, **values: Any) -> None:
         record_policy_clone(self.db, **values)

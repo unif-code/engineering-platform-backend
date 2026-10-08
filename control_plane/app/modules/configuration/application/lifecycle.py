@@ -12,6 +12,9 @@ from control_plane.app.modules.configuration.application.clone import clone_draf
 from control_plane.app.modules.configuration.application.dependencies import (
     ConfigurationDependencies,
 )
+from control_plane.app.modules.configuration.application.governance_records import (
+    governance_records,
+)
 from control_plane.app.modules.configuration.application.preview import preview
 from control_plane.app.modules.configuration.application.rebase import apply_draft_rebase
 from control_plane.app.modules.configuration.domain import (
@@ -21,6 +24,7 @@ from control_plane.app.modules.configuration.domain import (
     DraftValidation,
     Preview,
 )
+from control_plane.app.modules.configuration.domain.governance_records import DraftGovernanceRecords
 from control_plane.app.modules.configuration.ports.policy_owner import PolicyOwnerPort
 
 
@@ -53,6 +57,9 @@ class PolicyLifecycle:
 
     def clone_draft(self, **values: Any) -> DraftClone:
         return clone_draft(self.db, self.owner, dependencies=self.dependencies, **values)
+
+    def governance_records(self, **values: Any) -> DraftGovernanceRecords:
+        return governance_records(self.owner, **values)
 
     def archive(self, *, now: datetime, namespace: str) -> int:
         return archive_stale_drafts(

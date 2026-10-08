@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import ConfigDict, Field
+from pydantic import AwareDatetime, ConfigDict, Field
 
 from control_plane.app.modules.configuration.domain import (
     Draft,
@@ -16,6 +16,7 @@ from control_plane.app.modules.configuration.domain import (
     PublishedVersion,
     ValidationIssue,
 )
+from control_plane.app.modules.configuration.domain.governance_records import DraftGovernanceRecords
 from control_plane.app.shared.api.camel import CamelModel
 
 
@@ -275,3 +276,62 @@ class PublishedVersionDto(CamelModel):
 class PolicyVersionsResponseDto(CamelModel):
     items: list[PublishedVersionDto]
     next_cursor: str | None
+
+
+class _GovernanceRecordDto(CamelModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    id: str = Field(min_length=1)
+    draft_id: str = Field(min_length=1)
+    namespace: str = Field(min_length=1)
+    scope: Literal["PLATFORM"]
+    schema_revision: int = Field(gt=0)
+    actor_id: str = Field(min_length=1)
+    recorded_at: AwareDatetime
+    base_snapshot: PolicySnapshotDto
+    current_snapshot_at_operation: PolicySnapshotDto
+
+
+class DraftCloneRecordDto(_GovernanceRecordDto):
+    source: DraftCloneSourceDto
+    source_content: dict[str, Any]
+    created_content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class DraftRebaseSelectionDto(CamelModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    change: DraftBaseChange
+    source: Literal["BASE", "CURRENT", "DRAFT", "CUSTOM"]
+    resolution: (
+        Annotated[
+            RebaseSideResolutionDto | RebaseCustomResolutionDto, Field(discriminator="choice")
+        ]
+        | None
+    )
+
+
+class DraftRebaseRecordDto(_GovernanceRecordDto):
+    before_revision: int = Field(gt=0)
+    after_revision: int = Field(gt=0)
+    before_content: dict[str, Any]
+    after_content: dict[str, Any]
+    before_content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    after_content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    selections: dict[str, DraftRebaseSelectionDto]
+
+
+class DraftGovernanceRecordsResponseDto(CamelModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    draft_id: str = Field(min_length=1)
+    namespace: str = Field(min_length=1)
+    scope: Literal["PLATFORM"]
+    draft_revision: int = Field(gt=0)
+    clone_record: DraftCloneRecordDto | None
+    rebases: list[DraftRebaseRecordDto]
+    next_cursor: str | None
+
+    @classmethod
+    def from_domain(cls, value: DraftGovernanceRecords) -> "DraftGovernanceRecordsResponseDto":
+        return cls.model_validate(value.model_dump())

@@ -72,6 +72,19 @@ class IdentityPolicyOwnerRepository(Protocol):
 
     def record_clone(self, **values: Any) -> None: ...
 
+    def clone_record(self, namespace: str, scope: str, draft_id: str) -> dict[str, Any] | None: ...
+
+    def rebase_records(
+        self,
+        namespace: str,
+        scope: str,
+        draft_id: str,
+        *,
+        through_revision: int,
+        before_revision: int | None,
+        limit: int,
+    ) -> list[dict[str, Any]]: ...
+
     def update_draft(
         self,
         draft_id: str,

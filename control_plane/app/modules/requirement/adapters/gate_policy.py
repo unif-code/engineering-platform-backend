@@ -282,6 +282,64 @@ class SqlAlchemyGatePolicyRepository:
         )
         return None if row is None else self._draft(row)
 
+    @staticmethod
+    def _governance_record(row: Any) -> dict[str, Any]:
+        result = dict(row)
+        for key in (
+            "id",
+            "draft_id",
+            "actor_id",
+            "source_draft_id",
+            "source_owner_id",
+            "cloned_from_archived_draft_id",
+        ):
+            if key in result and result[key] is not None:
+                result[key] = str(result[key])
+        return result
+
+    def clone_record(self, namespace: str, scope: str, draft_id: str) -> dict[str, Any] | None:
+        row = (
+            self.db.execute(
+                text(
+                    "SELECT * FROM requirement.gate_policy_clone WHERE namespace=:namespace "
+                    "AND scope=:scope AND draft_id=:draft_id"
+                ),
+                dict(namespace=namespace, scope=scope, draft_id=draft_id),
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return None if row is None else self._governance_record(row)
+
+    def rebase_records(
+        self,
+        namespace: str,
+        scope: str,
+        draft_id: str,
+        *,
+        through_revision: int,
+        before_revision: int | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            text(
+                "SELECT * FROM requirement.gate_policy_rebase "
+                "WHERE namespace=:namespace AND scope=:scope "
+                "AND draft_id=:draft_id AND after_revision<=:through_revision "
+                + ("AND after_revision<:before_revision " if before_revision is not None else "")
+                + "ORDER BY after_revision DESC LIMIT :limit"
+            ),
+            dict(
+                namespace=namespace,
+                scope=scope,
+                draft_id=draft_id,
+                through_revision=through_revision,
+                before_revision=before_revision,
+                limit=limit,
+            ),
+        ).mappings()
+        return [self._governance_record(row) for row in rows]
+
     def record_clone(self, **values: Any) -> None:
         self.db.execute(
             text("""

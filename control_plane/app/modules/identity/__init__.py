@@ -86,7 +86,13 @@ from control_plane.app.modules.identity.application.configuration_policy import 
     policy_catalog as _policy_catalog,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
+    policy_clone_record as _policy_clone_record,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
     policy_draft as _policy_draft,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
+    policy_rebase_records as _policy_rebase_records,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
     policy_version_snapshot as _policy_version_snapshot,
@@ -313,6 +319,22 @@ def record_policy_rebase(db: Connection, **values: Any) -> None:
 
 def record_policy_clone(db: Connection, **values: Any) -> None:
     _record_policy_clone(SqlAlchemyIdentityPolicyOwnerRepository(db), **values)
+
+
+def policy_clone_record(
+    db: Connection, namespace: str, scope: str, draft_id: str
+) -> dict[str, Any] | None:
+    return _policy_clone_record(
+        SqlAlchemyIdentityPolicyOwnerRepository(db), namespace, scope, draft_id
+    )
+
+
+def policy_rebase_records(
+    db: Connection, namespace: str, scope: str, draft_id: str, **values: Any
+) -> list[dict[str, Any]]:
+    return _policy_rebase_records(
+        SqlAlchemyIdentityPolicyOwnerRepository(db), namespace, scope, draft_id, **values
+    )
 
 
 def save_policy_draft_validation(
@@ -1039,6 +1061,8 @@ __all__ = [
     "rebase_policy_draft",
     "record_policy_rebase",
     "record_policy_clone",
+    "policy_clone_record",
+    "policy_rebase_records",
     "validate_policy_candidate",
     "normalize_policy_candidate",
     "confirm_totp",

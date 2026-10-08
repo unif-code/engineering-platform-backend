@@ -12,13 +12,13 @@ from control_plane.app.modules.configuration.application.dependencies import (
     ConfigurationDependencies,
 )
 from control_plane.app.modules.configuration.application.drafts import _audit, _content_hash
+from control_plane.app.modules.configuration.application.rebase_candidate import rebase_candidate
 from control_plane.app.modules.configuration.domain import (
     Draft,
     DraftArchived,
     DraftAuthorizationDenied,
     DraftNotFound,
     DraftOwnerRequired,
-    InvalidPolicyValue,
     PolicySnapshotUnavailable,
     StaleDraftRevision,
 )
@@ -74,48 +74,7 @@ def apply_draft_rebase(
     if observation.base_version >= observation.current_version:
         raise StaleDraftRevision("Draft does not need rebase")
     resolutions = request.get("resolutions")
-    conflicts = {item.key for item in observation.items if item.change == "CONFLICT"}
-    if not isinstance(resolutions, dict) or set(resolutions) != conflicts:
-        raise InvalidPolicyValue("Resolve exactly the current conflicts")
-    candidate: dict[str, Any] = {}
-    selections: dict[str, dict[str, Any]] = {}
-    automatic = {
-        "UNCHANGED": "BASE",
-        "CURRENT_ONLY": "CURRENT",
-        "DRAFT_ONLY": "DRAFT",
-        "SAME_CHANGE": "CURRENT",
-    }
-    for item in observation.items:
-        if item.change == "CONFLICT":
-            resolution = resolutions[item.key]
-            if not isinstance(resolution, dict):
-                raise InvalidPolicyValue("Invalid conflict resolution")
-            source = resolution.get("choice")
-            if source not in {"CURRENT", "DRAFT", "CUSTOM"} or set(resolution) != (
-                {"choice", "value"} if source == "CUSTOM" else {"choice"}
-            ):
-                raise InvalidPolicyValue("Invalid conflict resolution")
-        else:
-            source = automatic[item.change]
-        candidate[item.key] = deepcopy(
-            resolutions[item.key]["value"]
-            if source == "CUSTOM"
-            else item.base_value
-            if source == "BASE"
-            else item.current_value
-            if source == "CURRENT"
-            else item.draft_value
-        )
-        selections[item.key] = {"change": item.change, "source": source}
-    normalized = owner.normalize_candidate(
-        namespace, schema_revision=observation.schema_revision, values=candidate
-    )
-    for key in conflicts:
-        choice = selections[key]["source"]
-        selections[key]["resolution"] = {
-            "choice": choice,
-            **({"value": deepcopy(normalized[key])} if choice == "CUSTOM" else {}),
-        }
+    normalized, selections = rebase_candidate(owner, observation, resolutions)
     try:
         authorization.check(raw_session=raw_session, actor_id=actor_id)
     except (DraftAuthorizationDenied, PolicySnapshotUnavailable):

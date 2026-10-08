@@ -361,3 +361,19 @@ def effective_identity_policy(
     namespace: str = "identity",
 ) -> EffectiveIdentityPolicy:
     return _active_policy_and_effective(repository, namespace)[1]
+
+
+def policy_clone_record(
+    repository: IdentityPolicyOwnerRepository, namespace: str, scope: str, draft_id: str
+) -> dict[str, Any] | None:
+    return repository.clone_record(namespace, scope, draft_id)
+
+
+def policy_rebase_records(
+    repository: IdentityPolicyOwnerRepository,
+    namespace: str,
+    scope: str,
+    draft_id: str,
+    **values: Any,
+) -> list[dict[str, Any]]:
+    return repository.rebase_records(namespace, scope, draft_id, **values)

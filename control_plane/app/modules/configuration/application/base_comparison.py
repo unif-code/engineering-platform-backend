@@ -85,6 +85,40 @@ def compare_draft_base(
     )
     if base.version != draft.base_version or current.version < base.version:
         raise _unavailable()
+    items = compare_policy_values(
+        owner,
+        namespace=namespace,
+        schema_revision=draft.schema_revision,
+        base=base,
+        current=current,
+        content=draft.content,
+    )
+    return DraftBaseComparison(
+        draft_id=draft.id,
+        namespace=namespace,
+        scope="PLATFORM",
+        owner_id=draft.owner_id,
+        draft_revision=draft.revision,
+        status=cast(Literal["DRAFT", "ARCHIVED"], draft.status),
+        schema_revision=draft.schema_revision,
+        base_version=base.version,
+        current_version=current.version,
+        base_snapshot_hash=base.snapshot_hash,
+        current_snapshot_hash=current.snapshot_hash,
+        draft_content_hash=draft.content_hash,
+        items=items,
+    )
+
+
+def compare_policy_values(
+    owner: PolicyOwnerPort,
+    *,
+    namespace: str,
+    schema_revision: int,
+    base: PolicySnapshot,
+    current: PolicySnapshot,
+    content: dict[str, Any],
+) -> list[DraftBaseComparisonItem]:
     catalog = owner.catalog(namespace)
     keys = {item.key for item in catalog}
     if (
@@ -94,7 +128,7 @@ def compare_draft_base(
             not item.key
             or not item.value_type
             or item.namespace != namespace
-            or item.schema_revision != draft.schema_revision
+            or item.schema_revision != schema_revision
             for item in catalog
         )
     ):
@@ -114,7 +148,7 @@ def compare_draft_base(
         raise _unavailable() from None
     draft_values = deepcopy(
         owner.normalize_candidate(
-            namespace, schema_revision=draft.schema_revision, values=deepcopy(draft.content)
+            namespace, schema_revision=schema_revision, values=deepcopy(content)
         )
     )
     if any(set(values) != keys for values in (base_values, current_values, draft_values)):
@@ -153,18 +187,4 @@ def compare_draft_base(
                 change=change,
             )
         )
-    return DraftBaseComparison(
-        draft_id=draft.id,
-        namespace=namespace,
-        scope="PLATFORM",
-        owner_id=draft.owner_id,
-        draft_revision=draft.revision,
-        status=cast(Literal["DRAFT", "ARCHIVED"], draft.status),
-        schema_revision=draft.schema_revision,
-        base_version=base.version,
-        current_version=current.version,
-        base_snapshot_hash=base.snapshot_hash,
-        current_snapshot_hash=current.snapshot_hash,
-        draft_content_hash=draft.content_hash,
-        items=items,
-    )
+    return items
