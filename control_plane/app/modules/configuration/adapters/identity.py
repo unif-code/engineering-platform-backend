@@ -31,6 +31,7 @@ from control_plane.app.modules.identity import (
     complete_configuration_idempotency,
     configuration_idempotency_by_scope,
     create_policy_draft,
+    list_policy_draft_summaries,
     list_policy_versions,
     locked_active_policy_snapshot,
     normalize_policy_candidate,
@@ -135,6 +136,28 @@ class IdentityPolicyOwner:
         except OwnedPolicySnapshotUnavailable as exc:
             raise PolicySnapshotUnavailable(namespace) from exc
         return None if owned is None else PolicySnapshot.model_validate(owned.model_dump())
+
+    def list_draft_summaries(
+        self,
+        namespace: str,
+        scope: str,
+        *,
+        view: str,
+        owner_id: str | None,
+        current_version: int,
+        after_id: str | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        return list_policy_draft_summaries(
+            self.db,
+            namespace,
+            scope,
+            view=view,
+            owner_id=owner_id,
+            current_version=current_version,
+            after_id=after_id,
+            limit=limit,
+        )
 
     def list_versions(
         self,

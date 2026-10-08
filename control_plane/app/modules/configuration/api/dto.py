@@ -16,6 +16,12 @@ from control_plane.app.modules.configuration.domain import (
     PublishedVersion,
     ValidationIssue,
 )
+from control_plane.app.modules.configuration.domain.draft_directory import (
+    DraftDirectoryId,
+    DraftDirectoryOwner,
+    DraftDirectoryView,
+    DraftList,
+)
 from control_plane.app.modules.configuration.domain.governance_records import DraftGovernanceRecords
 from control_plane.app.shared.api.camel import CamelModel
 
@@ -334,4 +340,38 @@ class DraftGovernanceRecordsResponseDto(CamelModel):
 
     @classmethod
     def from_domain(cls, value: DraftGovernanceRecords) -> "DraftGovernanceRecordsResponseDto":
+        return cls.model_validate(value.model_dump())
+
+
+class DraftListItemDto(CamelModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    id: DraftDirectoryId
+    namespace: str = Field(min_length=1)
+    scope: Literal["PLATFORM"]
+    owner_id: str = Field(min_length=1)
+    revision: int = Field(gt=0)
+    status: Literal["DRAFT", "ARCHIVED"]
+    base_version: int = Field(gt=0)
+    schema_revision: int = Field(gt=0)
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    last_meaningful_activity_at: AwareDatetime
+    archived_at: AwareDatetime | None
+    rollback_from_version: Annotated[int, Field(gt=0)] | None
+    base_behind: bool
+
+
+class DraftListResponseDto(CamelModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    namespace: str = Field(min_length=1)
+    scope: Literal["PLATFORM"]
+    view: DraftDirectoryView
+    owner: DraftDirectoryOwner
+    current_version: int = Field(gt=0)
+    items: list[DraftListItemDto]
+    next_cursor: DraftDirectoryId | None
+
+    @classmethod
+    def from_domain(cls, value: DraftList) -> "DraftListResponseDto":
         return cls.model_validate(value.model_dump())

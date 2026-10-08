@@ -377,3 +377,12 @@ def policy_rebase_records(
     **values: Any,
 ) -> list[dict[str, Any]]:
     return repository.rebase_records(namespace, scope, draft_id, **values)
+
+
+def list_policy_draft_summaries(
+    repository: IdentityPolicyOwnerRepository,
+    namespace: str,
+    scope: str,
+    **values: Any,
+) -> list[dict[str, Any]]:
+    return repository.list_draft_summaries(namespace, scope, **values)

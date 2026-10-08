@@ -31,6 +31,18 @@ class PolicyOwnerPort(IdempotencyRepository, Protocol):
         version: int,
     ) -> PolicySnapshot | None: ...
 
+    def list_draft_summaries(
+        self,
+        namespace: str,
+        scope: str,
+        *,
+        view: str,
+        owner_id: str | None,
+        current_version: int,
+        after_id: str | None,
+        limit: int,
+    ) -> list[dict[str, Any]]: ...
+
     def list_versions(
         self,
         namespace: str,

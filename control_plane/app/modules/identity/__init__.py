@@ -74,6 +74,9 @@ from control_plane.app.modules.identity.application.configuration_policy import 
     effective_identity_policy as _effective_identity_policy,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
+    list_policy_draft_summaries as _list_policy_draft_summaries,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
     list_policy_versions as _list_policy_versions,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
@@ -432,6 +435,17 @@ def archive_policy_draft(db: Connection, **values: Any) -> bool:
     return _archive_policy_draft(
         SqlAlchemyIdentityPolicyOwnerRepository(db),
         **values,
+    )
+
+
+def list_policy_draft_summaries(
+    db: Connection,
+    namespace: str,
+    scope: str,
+    **values: Any,
+) -> list[dict[str, Any]]:
+    return _list_policy_draft_summaries(
+        SqlAlchemyIdentityPolicyOwnerRepository(db), namespace, scope, **values
     )
 
 
@@ -1043,6 +1057,7 @@ __all__ = [
     "archive_policy_draft",
     "locked_active_policy_snapshot",
     "list_policy_versions",
+    "list_policy_draft_summaries",
     "effective_identity_policy",
     "claim_configuration_idempotency",
     "complete_configuration_idempotency",

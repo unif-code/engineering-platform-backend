@@ -29,6 +29,7 @@ from control_plane.app.modules.configuration.api.dto import (
     DraftBaseComparisonResponseDto,
     DraftCloneResponseDto,
     DraftGovernanceRecordsResponseDto,
+    DraftListResponseDto,
     DraftResponseDto,
     DraftValidationResponseDto,
     DraftValuesRequestDto,
@@ -42,6 +43,10 @@ from control_plane.app.modules.configuration.api.dto import (
     RollbackPolicyRequestDto,
     TakeoverDraftRequestDto,
     ValidateDraftRequestDto,
+)
+from control_plane.app.modules.configuration.domain.draft_directory import (
+    DraftDirectoryOwner,
+    DraftDirectoryView,
 )
 from control_plane.app.modules.configuration.ports.draft_authorization import (
     DraftAuthorizationPort,
@@ -479,6 +484,52 @@ def create_configuration_router(
             items=[PolicyKeyDto.from_domain(key) for key in keys],
             active=PolicySnapshotDto.from_domain(snapshot),
         )
+
+    @router.get(
+        "/policies/{namespace}/drafts",
+        operation_id="draft_list",
+        response_model=DraftListResponseDto,
+        responses={
+            **_PROBLEMS,
+            200: {
+                "description": "Draft metadata observed against the current policy version",
+                "headers": {"Cache-Control": {"schema": {"type": "string", "const": "no-store"}}},
+            },
+        },
+    )
+    def draft_list(
+        namespace: Annotated[str, Path(min_length=1)],
+        principal: Annotated[Any, Depends(principal_provider)],
+        view: Annotated[DraftDirectoryView, Query()] = "ALL",
+        owner: Annotated[DraftDirectoryOwner, Query()] = "ALL",
+        cursor: Annotated[str | None, Query()] = None,
+        current_version: Annotated[int | None, Query(ge=1)] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    ) -> Response:
+        capability_guard(principal, PLATFORM_CONFIGURATION_MANAGE, None)
+        actor_id = _account_id(principal)
+        try:
+            with runtime_provider().owners.resolve(namespace).transaction() as lifecycle:
+                result = lifecycle.draft_directory(
+                    namespace=namespace,
+                    actor_id=actor_id,
+                    view=view,
+                    owner=owner,
+                    cursor=cursor,
+                    current_version=current_version,
+                    limit=limit,
+                )
+                dto = DraftListResponseDto.from_domain(result)
+                return JSONResponse(
+                    dto.model_dump(mode="json", by_alias=True),
+                    headers={"Cache-Control": "no-store"},
+                )
+        except InvalidPolicyValue:
+            return problem_response(422, "Invalid draft directory query")
+        except StaleDraftBase:
+            return problem_response(409, "Draft directory Current changed")
+        except Exception:
+            return problem_response(503, "Draft directory unavailable")
 
     @router.post(
         "/policies/{namespace}/drafts",

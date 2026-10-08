@@ -135,6 +135,46 @@ class SqlAlchemyGatePolicyRepository:
         )
         return None if row is None else self._snapshot(row)
 
+    def list_draft_summaries(
+        self,
+        namespace: str,
+        scope: str,
+        *,
+        view: str,
+        owner_id: str | None,
+        current_version: int,
+        after_id: str | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        state_filter = {
+            "ALL": "",
+            "ACTIVE": "AND status='DRAFT' AND base_version=:current_version ",
+            "STALE": "AND status='DRAFT' AND base_version<:current_version ",
+            "ARCHIVED": "AND status='ARCHIVED' ",
+        }[view]
+        rows = self.db.execute(
+            text(
+                "SELECT id,namespace,scope,owner_id,revision,status,base_version,schema_revision,"
+                "content_hash,last_meaningful_activity_at,archived_at,rollback_from_version "
+                "FROM requirement.gate_policy_draft WHERE namespace=:namespace AND scope=:scope "
+                + state_filter
+                + ("AND owner_id=:owner_id " if owner_id is not None else "")
+                + ("AND id>:after_id " if after_id is not None else "")
+                + "ORDER BY id ASC LIMIT :limit"
+            ),
+            dict(
+                namespace=namespace,
+                scope=scope,
+                owner_id=owner_id,
+                current_version=current_version,
+                after_id=after_id,
+                limit=limit,
+            ),
+        ).mappings()
+        return [
+            {**dict(row), "id": str(row["id"]), "owner_id": str(row["owner_id"])} for row in rows
+        ]
+
     def list_versions(
         self, namespace: str, scope: str, *, before_version: int | None, limit: int
     ) -> list[PublishedVersion]:

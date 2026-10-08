@@ -10,6 +10,7 @@ from control_plane.app.modules.configuration.domain import (
     DraftValidation,
     Preview,
 )
+from control_plane.app.modules.configuration.domain.draft_directory import DraftList
 from control_plane.app.modules.configuration.domain.governance_records import DraftGovernanceRecords
 from control_plane.app.modules.configuration.ports.policy_owner import PolicyOwnerPort
 from control_plane.app.shared.idempotency import IdempotentResponse
@@ -28,6 +29,7 @@ class PolicyLifecyclePort(Protocol):
     def base_comparison(self, **values: Any) -> DraftBaseComparison: ...
     def apply_rebase(self, **values: Any) -> Draft: ...
     def governance_records(self, **values: Any) -> DraftGovernanceRecords: ...
+    def draft_directory(self, **values: Any) -> DraftList: ...
 
 
 class PolicyRuntimePort(Protocol):
