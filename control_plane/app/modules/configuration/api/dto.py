@@ -17,6 +17,7 @@ from control_plane.app.modules.configuration.domain import (
     ValidationIssue,
 )
 from control_plane.app.modules.configuration.domain.archive_timing import DraftArchiveTiming
+from control_plane.app.modules.configuration.domain.draft_archive import DraftArchive
 from control_plane.app.modules.configuration.domain.draft_directory import (
     DraftDirectoryId,
     DraftDirectoryOwner,
@@ -390,4 +391,19 @@ class DraftArchiveTimingResponseDto(CamelModel):
 
     @classmethod
     def from_domain(cls, value: DraftArchiveTiming) -> "DraftArchiveTimingResponseDto":
+        return cls.model_validate(value.model_dump())
+
+
+class DraftArchiveResponseDto(CamelModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    draft_id: str = Field(min_length=1)
+    namespace: str = Field(min_length=1)
+    scope: Literal["PLATFORM"]
+    draft_revision: int = Field(gt=0)
+    status: Literal["ARCHIVED"]
+    archived_at: AwareDatetime
+
+    @classmethod
+    def from_domain(cls, value: DraftArchive) -> "DraftArchiveResponseDto":
         return cls.model_validate(value.model_dump())

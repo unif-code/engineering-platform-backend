@@ -17,6 +17,7 @@ from control_plane.app.modules.configuration.application.draft_directory import 
 from control_plane.app.modules.configuration.application.governance_records import (
     governance_records,
 )
+from control_plane.app.modules.configuration.application.manual_archive import archive_draft
 from control_plane.app.modules.configuration.application.preview import preview
 from control_plane.app.modules.configuration.application.rebase import apply_draft_rebase
 from control_plane.app.modules.configuration.domain import (
@@ -27,6 +28,7 @@ from control_plane.app.modules.configuration.domain import (
     Preview,
 )
 from control_plane.app.modules.configuration.domain.archive_timing import DraftArchiveTiming
+from control_plane.app.modules.configuration.domain.draft_archive import DraftArchive
 from control_plane.app.modules.configuration.domain.draft_directory import DraftList
 from control_plane.app.modules.configuration.domain.governance_records import DraftGovernanceRecords
 from control_plane.app.modules.configuration.ports.policy_owner import PolicyOwnerPort
@@ -70,6 +72,9 @@ class PolicyLifecycle:
 
     def archive_timing(self, **values: Any) -> DraftArchiveTiming:
         return archive_timing(self.owner, dependencies=self.dependencies, **values)
+
+    def archive_draft(self, **values: Any) -> DraftArchive:
+        return archive_draft(self.db, self.owner, dependencies=self.dependencies, **values)
 
     def archive(self, *, now: datetime, namespace: str) -> int:
         return archive_stale_drafts(

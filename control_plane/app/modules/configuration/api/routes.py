@@ -26,6 +26,7 @@ from control_plane.app.modules.configuration import (
 from control_plane.app.modules.configuration.api.dto import (
     ApplyDraftRebaseRequestDto,
     CloneDraftRequestDto,
+    DraftArchiveResponseDto,
     DraftArchiveTimingResponseDto,
     DraftBaseComparisonResponseDto,
     DraftCloneResponseDto,
@@ -622,6 +623,69 @@ def create_configuration_router(
             path=request.url.path,
             key=preflight.idempotency_key,
             body=body_data,
+            command=command,
+        )
+
+    @router.post(
+        "/policies/{namespace}/drafts/{draft_id}/archive",
+        operation_id="draft_archive",
+        response_model=DraftArchiveResponseDto,
+        responses={
+            **_PROBLEMS,
+            200: {
+                "description": "Draft archived by its current owner",
+                "headers": {
+                    **_ETAG_HEADER,
+                    "Cache-Control": {"schema": {"type": "string", "const": "no-store"}},
+                },
+            },
+        },
+        dependencies=[Depends(_assert_versioned_preflight), Depends(_versioned_preflight)],
+    )
+    def draft_archive(
+        namespace: Annotated[str, Path(min_length=1)],
+        draft_id: Annotated[str, Path(min_length=1)],
+        body: CloneDraftRequestDto,
+        request: Request,
+        principal: Annotated[Any, Depends(principal_provider)],
+        preflight: Annotated[_VersionedPreflight, Depends(_versioned_preflight)],
+    ) -> Response:
+        capability_guard(principal, PLATFORM_CONFIGURATION_MANAGE, None)
+        runtime = runtime_provider()
+        actor_id = _account_id(principal)
+
+        def command(lifecycle: PolicyLifecycle) -> IdempotentResponse:
+            try:
+                receipt = lifecycle.archive_draft(
+                    namespace=namespace,
+                    draft_id=draft_id,
+                    actor_id=actor_id,
+                    expected_revision=preflight.expected_revision,
+                    raw_session=request.cookies.get("ep_session", ""),
+                    authorization=runtime.draft_authorization,
+                )
+            except ConfigurationError as error:
+                return _problem(error)
+            return IdempotentResponse(
+                status_code=200,
+                body=DraftArchiveResponseDto.from_domain(receipt).model_dump(
+                    mode="json", by_alias=True
+                ),
+                headers={"ETag": entity_tag(receipt.draft_revision), "Cache-Control": "no-store"},
+            )
+
+        return _execute(
+            runtime,
+            actor_id=actor_id,
+            namespace=namespace,
+            operation="draft_archive",
+            method="POST",
+            path=request.url.path,
+            key=preflight.idempotency_key,
+            body={
+                **body.model_dump(mode="json", by_alias=True),
+                "expectedRevision": preflight.expected_revision,
+            },
             command=command,
         )
 
