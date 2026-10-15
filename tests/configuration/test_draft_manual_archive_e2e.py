@@ -102,6 +102,10 @@ def test_real_owner_archive_retains_facts_clears_evidence_and_allows_explicit_cl
                 status=201,
             )
             path = f"/api/v1/admin/policies/{namespace}/drafts/{draft.json()['id']}"
+            created_etag = draft.headers["etag"]
+            draft = state.a.client.get(path)
+            assert draft.status_code == 200, draft.text
+            assert draft.headers["etag"] == created_etag
     comparison = read_comparison(state.a, path, draft) if kind == "saved" else None
     before = all_facts(state)
     original = draft.json()
