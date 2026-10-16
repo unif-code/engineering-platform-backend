@@ -7,6 +7,7 @@ from sqlalchemy import Connection
 
 from control_plane.app.modules.configuration.application import drafts
 from control_plane.app.modules.configuration.application.archive import archive_stale_drafts
+from control_plane.app.modules.configuration.application.archive_source import archive_source
 from control_plane.app.modules.configuration.application.archive_timing import archive_timing
 from control_plane.app.modules.configuration.application.base_comparison import compare_draft_base
 from control_plane.app.modules.configuration.application.clone import clone_draft
@@ -27,6 +28,7 @@ from control_plane.app.modules.configuration.domain import (
     DraftValidation,
     Preview,
 )
+from control_plane.app.modules.configuration.domain.archive_source import DraftArchiveSource
 from control_plane.app.modules.configuration.domain.archive_timing import DraftArchiveTiming
 from control_plane.app.modules.configuration.domain.draft_archive import DraftArchive
 from control_plane.app.modules.configuration.domain.draft_directory import DraftList
@@ -72,6 +74,9 @@ class PolicyLifecycle:
 
     def archive_timing(self, **values: Any) -> DraftArchiveTiming:
         return archive_timing(self.owner, dependencies=self.dependencies, **values)
+
+    def archive_source(self, **values: Any) -> DraftArchiveSource:
+        return archive_source(self.owner, **values)
 
     def archive_draft(self, **values: Any) -> DraftArchive:
         return archive_draft(self.db, self.owner, dependencies=self.dependencies, **values)

@@ -95,6 +95,9 @@ from control_plane.app.modules.identity.application.configuration_policy import 
     policy_draft as _policy_draft,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
+    policy_draft_archive_records as _policy_draft_archive_records,
+)
+from control_plane.app.modules.identity.application.configuration_policy import (
     policy_draft_summary as _policy_draft_summary,
 )
 from control_plane.app.modules.identity.application.configuration_policy import (
@@ -290,6 +293,14 @@ def policy_draft_summary(
     db: Connection, namespace: str, scope: str, draft_id: str
 ) -> dict[str, Any] | None:
     return _policy_draft_summary(
+        SqlAlchemyIdentityPolicyOwnerRepository(db), namespace, scope, draft_id
+    )
+
+
+def policy_draft_archive_records(
+    db: Connection, namespace: str, scope: str, draft_id: str
+) -> list[dict[str, Any]]:
+    return _policy_draft_archive_records(
         SqlAlchemyIdentityPolicyOwnerRepository(db), namespace, scope, draft_id
     )
 
@@ -1076,6 +1087,7 @@ __all__ = [
     "create_policy_draft",
     "policy_draft",
     "policy_draft_summary",
+    "policy_draft_archive_records",
     "policy_catalog",
     "policy_version_snapshot",
     "publish_policy_version",

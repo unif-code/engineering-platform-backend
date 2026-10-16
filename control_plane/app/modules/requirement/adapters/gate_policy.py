@@ -161,6 +161,26 @@ class SqlAlchemyGatePolicyRepository:
             else {**dict(row), "id": str(row["id"]), "owner_id": str(row["owner_id"])}
         )
 
+    def archive_records(self, namespace: str, scope: str, draft_id: str) -> list[dict[str, Any]]:
+        rows = (
+            self.db.execute(
+                text(
+                    "SELECT id,namespace,scope,event_type,aggregate_id,payload,occurred_at "
+                    "FROM requirement.gate_policy_outbox "
+                    "WHERE namespace=:namespace AND scope=:scope "
+                    "AND event_type='DRAFT_ARCHIVED' AND aggregate_id=:aggregate_id LIMIT 2"
+                ),
+                dict(
+                    namespace=namespace,
+                    scope=scope,
+                    aggregate_id=f"{namespace}:{scope}:draft:{draft_id}",
+                ),
+            )
+            .mappings()
+            .all()
+        )
+        return [{**dict(row), "id": str(row["id"])} for row in rows]
+
     def list_draft_summaries(
         self,
         namespace: str,

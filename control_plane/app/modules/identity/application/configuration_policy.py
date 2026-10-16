@@ -392,3 +392,9 @@ def policy_draft_summary(
     repository: IdentityPolicyOwnerRepository, namespace: str, scope: str, draft_id: str
 ) -> dict[str, Any] | None:
     return repository.draft_summary(namespace, scope, draft_id)
+
+
+def policy_draft_archive_records(
+    repository: IdentityPolicyOwnerRepository, namespace: str, scope: str, draft_id: str
+) -> list[dict[str, Any]]:
+    return repository.archive_records(namespace, scope, draft_id)

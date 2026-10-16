@@ -16,6 +16,7 @@ from control_plane.app.modules.configuration.domain import (
     PublishedVersion,
     ValidationIssue,
 )
+from control_plane.app.modules.configuration.domain.archive_source import DraftArchiveSource
 from control_plane.app.modules.configuration.domain.archive_timing import DraftArchiveTiming
 from control_plane.app.modules.configuration.domain.draft_archive import DraftArchive
 from control_plane.app.modules.configuration.domain.draft_directory import (
@@ -406,4 +407,48 @@ class DraftArchiveResponseDto(CamelModel):
 
     @classmethod
     def from_domain(cls, value: DraftArchive) -> "DraftArchiveResponseDto":
+        return cls.model_validate(value.model_dump())
+
+
+class DraftManualArchiveRecordDto(CamelModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    source: Literal["MANUAL"]
+    id: DraftDirectoryId
+    recorded_at: AwareDatetime
+    actor_id: str = Field(min_length=1)
+    actor_type: Literal["human"]
+    draft_revision: int = Field(gt=0)
+
+
+class DraftInactivityArchiveRecordDto(CamelModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    source: Literal["INACTIVITY"]
+    id: DraftDirectoryId
+    recorded_at: AwareDatetime
+    policy_version: int = Field(gt=0)
+    cutoff: AwareDatetime
+
+
+class DraftArchiveSourceResponseDto(CamelModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    draft_id: DraftDirectoryId
+    namespace: str = Field(min_length=1)
+    scope: Literal["PLATFORM"]
+    draft_revision: int = Field(gt=0)
+    status: Literal["DRAFT", "ARCHIVED"]
+    archived_at: AwareDatetime | None
+    record_status: Literal["NOT_ARCHIVED", "RECORDED", "UNKNOWN"]
+    record: (
+        Annotated[
+            DraftManualArchiveRecordDto | DraftInactivityArchiveRecordDto,
+            Field(discriminator="source"),
+        ]
+        | None
+    )
+
+    @classmethod
+    def from_domain(cls, value: DraftArchiveSource) -> "DraftArchiveSourceResponseDto":
         return cls.model_validate(value.model_dump())
