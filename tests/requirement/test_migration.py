@@ -20,6 +20,7 @@ EXPECTED_TABLES = {
     "gate_policy_outbox",
     "gate_policy_rebase",
     "gate_policy_clone",
+    "gate_policy_revision",
     "delivery_decision",
     "delivery_gate",
     "delivery_gate_assignment",

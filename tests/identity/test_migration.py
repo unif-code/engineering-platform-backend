@@ -199,6 +199,7 @@ def test_identity_tables_exist(identity_owner_engine: Engine) -> None:
         "policy_reauth_consumption",
         "draft_rebase",
         "draft_clone",
+        "draft_revision",
     }
 
 
