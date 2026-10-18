@@ -225,8 +225,10 @@ def protected_policy_command(
                 owner_id=actor_id,
                 now=now,
                 schema_revision=draft.schema_revision,
-                content_hash=draft.content_hash,
                 rollback_from_version=to_version,
+            )
+            repository.record_revision(
+                draft=draft.model_dump(), operation="ROLLBACK", actor_id=actor_id
             )
             repository.reference_receipt(receipt, now=now)
             body = draft.model_dump(mode="json")

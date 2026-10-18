@@ -155,7 +155,7 @@ def test_configuration_http_contract_has_exact_operations_security_and_preflight
 
 @pytest.mark.integration
 def test_draft_api_enforces_etags_durable_replay_validation_and_current_request_id(
-    configuration_rw_engine: Engine,
+    identity_rw_engine: Engine,
     configuration_owner_engine: Engine,
     configuration_seed: None,
 ) -> None:
@@ -168,9 +168,7 @@ def test_draft_api_enforces_etags_durable_replay_validation_and_current_request_
     actor_id = f"admin-{uuid4()}"
     guarded: list[tuple[str, str | None]] = []
     runtime = ConfigurationHttpRuntime(
-        owners=PolicyRuntimeRegistry(
-            IdentityPolicyRuntime(configuration_rw_engine, _dependencies())
-        ),
+        owners=PolicyRuntimeRegistry(IdentityPolicyRuntime(identity_rw_engine, _dependencies())),
         dependencies=_dependencies(),
         secret_manager=_Secrets(),
     )
@@ -272,6 +270,7 @@ def test_draft_api_enforces_etags_durable_replay_validation_and_current_request_
             text("DELETE FROM identity.configuration_idempotency_record WHERE actor=:actor"),
             {"actor": actor_id},
         )
+        db.execute(text("DELETE FROM identity.draft_revision WHERE draft_id=:id"), {"id": draft_id})
         db.execute(text("DELETE FROM identity.draft WHERE id=:id"), {"id": draft_id})
 
 
@@ -320,7 +319,7 @@ def test_configuration_writes_reject_cross_site_before_database_or_guard() -> No
 
 @pytest.mark.integration
 def test_create_unknown_key_replays_one_value_safe_denial_audit(
-    configuration_rw_engine: Engine,
+    identity_rw_engine: Engine,
     configuration_owner_engine: Engine,
     configuration_seed: None,
 ) -> None:
@@ -332,9 +331,7 @@ def test_create_unknown_key_replays_one_value_safe_denial_audit(
 
     actor_id = f"admin-{uuid4()}"
     runtime = ConfigurationHttpRuntime(
-        owners=PolicyRuntimeRegistry(
-            IdentityPolicyRuntime(configuration_rw_engine, _dependencies())
-        ),
+        owners=PolicyRuntimeRegistry(IdentityPolicyRuntime(identity_rw_engine, _dependencies())),
         dependencies=_dependencies(),
         secret_manager=_Secrets(),
     )
@@ -404,7 +401,7 @@ def test_create_unknown_key_replays_one_value_safe_denial_audit(
 
 @pytest.mark.integration
 def test_update_deterministic_denials_each_append_one_safe_audit(
-    configuration_rw_engine: Engine,
+    identity_rw_engine: Engine,
     configuration_owner_engine: Engine,
     configuration_seed: None,
 ) -> None:
@@ -417,9 +414,7 @@ def test_update_deterministic_denials_each_append_one_safe_audit(
     owner_id = f"admin-{uuid4()}"
     other_id = f"admin-{uuid4()}"
     runtime = ConfigurationHttpRuntime(
-        owners=PolicyRuntimeRegistry(
-            IdentityPolicyRuntime(configuration_rw_engine, _dependencies())
-        ),
+        owners=PolicyRuntimeRegistry(IdentityPolicyRuntime(identity_rw_engine, _dependencies())),
         dependencies=_dependencies(),
         secret_manager=_Secrets(),
     )
@@ -562,12 +557,15 @@ def test_update_deterministic_denials_each_append_one_safe_audit(
                 {"owner": owner_id, "other": other_id},
             )
             if draft_id is not None:
+                db.execute(
+                    text("DELETE FROM identity.draft_revision WHERE draft_id=:id"), {"id": draft_id}
+                )
                 db.execute(text("DELETE FROM identity.draft WHERE id=:id"), {"id": draft_id})
 
 
 @pytest.mark.integration
 def test_create_rolls_back_and_returns_safe_503_for_invalid_active_snapshot(
-    configuration_rw_engine: Engine,
+    identity_rw_engine: Engine,
     configuration_owner_engine: Engine,
     configuration_seed: None,
 ) -> None:
@@ -579,9 +577,7 @@ def test_create_rolls_back_and_returns_safe_503_for_invalid_active_snapshot(
 
     actor_id = f"admin-{uuid4()}"
     runtime = ConfigurationHttpRuntime(
-        owners=PolicyRuntimeRegistry(
-            IdentityPolicyRuntime(configuration_rw_engine, _dependencies())
-        ),
+        owners=PolicyRuntimeRegistry(IdentityPolicyRuntime(identity_rw_engine, _dependencies())),
         dependencies=_dependencies(),
         secret_manager=_Secrets(),
     )
@@ -636,7 +632,7 @@ def test_create_rolls_back_and_returns_safe_503_for_invalid_active_snapshot(
 
 @pytest.mark.integration
 def test_create_rolls_back_all_facts_when_audit_append_fails(
-    configuration_rw_engine: Engine,
+    identity_rw_engine: Engine,
     configuration_owner_engine: Engine,
     configuration_seed: None,
 ) -> None:
@@ -650,7 +646,7 @@ def test_create_rolls_back_all_facts_when_audit_append_fails(
     runtime = ConfigurationHttpRuntime(
         owners=PolicyRuntimeRegistry(
             IdentityPolicyRuntime(
-                configuration_rw_engine,
+                identity_rw_engine,
                 ConfigurationDependencies(clock=_Clock(), random=_Random(), audit=_FailingAudit()),
             )
         ),

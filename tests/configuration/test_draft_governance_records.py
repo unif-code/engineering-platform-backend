@@ -31,7 +31,7 @@ def governance_state(namespace: str = "identity") -> Any:
             update={
                 "base_version": values["base_version"],
                 "content": deepcopy(values["content"]),
-                "content_hash": values["content_hash"],
+                "content_hash": _content_hash(values["content"]),
                 "revision": h.draft.revision + 1,
                 "stale": False,
                 "validation_evidence": None,

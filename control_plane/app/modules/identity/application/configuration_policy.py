@@ -134,7 +134,6 @@ def update_policy_draft(
     *,
     expected_revision: int,
     content: dict[str, Any],
-    content_hash: str,
     stale: bool,
     now: datetime,
 ) -> OwnedPolicyDraft | None:
@@ -142,7 +141,6 @@ def update_policy_draft(
         draft_id,
         expected_revision=expected_revision,
         content=content,
-        content_hash=content_hash,
         stale=stale,
         now=now,
     )

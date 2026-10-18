@@ -39,12 +39,16 @@ from control_plane.app.modules.identity import (
     policy_clone_record,
     policy_draft,
     policy_draft_archive_records,
+    policy_draft_revision_rows,
+    policy_draft_revision_stats,
+    policy_draft_revision_target,
     policy_draft_summary,
     policy_rebase_records,
     policy_version_snapshot,
     preview_policy_candidate,
     rebase_policy_draft,
     record_policy_clone,
+    record_policy_draft_revision,
     record_policy_rebase,
     save_policy_draft_preview,
     save_policy_draft_validation,
@@ -94,6 +98,41 @@ class IdentityPolicyOwner:
             result_metadata=result_metadata,
             sealed_response=sealed_response,
             now=now,
+        )
+
+    def record_revision(self, **values: Any) -> None:
+        record_policy_draft_revision(self.db, **values)
+
+    def draft_revision_target(
+        self, namespace: str, scope: str, draft_id: str
+    ) -> dict[str, Any] | None:
+        return policy_draft_revision_target(self.db, namespace, scope, draft_id)
+
+    def draft_revision_stats(
+        self, namespace: str, scope: str, draft_id: str, *, through_revision: int
+    ) -> dict[str, Any]:
+        return policy_draft_revision_stats(
+            self.db, namespace, scope, draft_id, through_revision=through_revision
+        )
+
+    def draft_revision_rows(
+        self,
+        namespace: str,
+        scope: str,
+        draft_id: str,
+        *,
+        through_revision: int,
+        before_revision: int | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        return policy_draft_revision_rows(
+            self.db,
+            namespace,
+            scope,
+            draft_id,
+            through_revision=through_revision,
+            before_revision=before_revision,
+            limit=limit,
         )
 
     def catalog(self, namespace: str) -> list[PolicyKey]:
@@ -271,7 +310,6 @@ class IdentityPolicyOwner:
         *,
         expected_revision: int,
         content: dict[str, Any],
-        content_hash: str,
         stale: bool,
         now: datetime,
     ) -> Draft | None:
@@ -280,7 +318,6 @@ class IdentityPolicyOwner:
             draft_id,
             expected_revision=expected_revision,
             content=content,
-            content_hash=content_hash,
             stale=stale,
             now=now,
         )

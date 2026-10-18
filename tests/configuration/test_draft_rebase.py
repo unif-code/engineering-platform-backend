@@ -75,7 +75,7 @@ def rebase_state(namespace: str = "identity") -> Any:
         return h.draft.model_copy(
             update={
                 "content": deepcopy(values["content"]),
-                "content_hash": values["content_hash"],
+                "content_hash": _content_hash(values["content"]),
                 "base_version": values["base_version"],
                 "revision": h.draft.revision + 1,
                 "stale": False,

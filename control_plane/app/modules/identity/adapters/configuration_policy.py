@@ -10,6 +10,8 @@ from control_plane.app.modules.identity.domain.configuration_policy import (
     OwnedPolicySnapshot,
     OwnedPublishedPolicyVersion,
 )
+from control_plane.app.shared.db.json import materialize_jsonb
+from control_plane.app.shared.json import json_digest
 
 
 class SqlAlchemyIdentityPolicyOwnerRepository:
@@ -81,6 +83,127 @@ class SqlAlchemyIdentityPolicyOwnerRepository:
             },
         )
         return result.rowcount == 1
+
+    def record_revision(
+        self,
+        *,
+        draft: dict[str, Any],
+        operation: str,
+        actor_id: str,
+        validation: dict[str, Any] | None = None,
+        takeover: dict[str, Any] | None = None,
+        governance_record_id: str | None = None,
+    ) -> None:
+        from control_plane.app.modules.configuration import draft_revision_record
+
+        values = draft_revision_record(
+            draft,
+            operation=operation,
+            actor_id=actor_id,
+            validation=validation,
+            takeover=takeover,
+            governance_record_id=governance_record_id,
+        )
+        self.db.execute(
+            text(
+                "INSERT INTO identity.draft_revision (draft_id,namespace,scope,revision"
+                ",operation,actor_id,recorded_at,owner_id,base_version,schema_revision,"
+                "content_hash,content_json,content_hash_matches_content,revision_snapsh"
+                "ot_hash,rollback_from_version,validation,takeover,governance_record_id"
+                ") VALUES (:draft_id,:namespace,:scope,:revision,:operation,:actor_id,:"
+                "recorded_at,:owner_id,:base_version,:schema_revision,:content_hash,:co"
+                "ntent_json,:content_hash_matches_content,:revision_snapshot_hash,:roll"
+                "back_from_version,CAST(:validation AS JSONB),CAST(:takeover AS JSONB),"
+                ":governance_record_id)"
+            ),
+            {
+                **values,
+                **{
+                    field: json.dumps(values[field], ensure_ascii=False)
+                    if values[field] is not None
+                    else None
+                    for field in ("validation", "takeover")
+                },
+            },
+        )
+
+    def draft_revision_target(
+        self, namespace: str, scope: str, draft_id: str
+    ) -> dict[str, Any] | None:
+        row = (
+            self.db.execute(
+                text(
+                    "SELECT id,namespace,scope,revision FROM identity.draft WHERE id=CAST(:"
+                    "id AS UUID) AND namespace=:namespace AND scope=:scope"
+                ),
+                {"id": draft_id, "namespace": namespace, "scope": scope},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return None if row is None else {**dict(row), "id": str(row["id"])}
+
+    def draft_revision_stats(
+        self, namespace: str, scope: str, draft_id: str, *, through_revision: int
+    ) -> dict[str, Any]:
+        return dict(
+            self.db.execute(
+                text(
+                    "SELECT count(*) AS recorded_count,min(revision) AS first_recorded_revi"
+                    "sion,max(revision) AS last_recorded_revision FROM identity.draft_revis"
+                    "ion WHERE draft_id=CAST(:id AS UUID) AND namespace=:namespace AND scop"
+                    "e=:scope AND revision<=:through"
+                ),
+                {
+                    "id": draft_id,
+                    "namespace": namespace,
+                    "scope": scope,
+                    "through": through_revision,
+                },
+            )
+            .mappings()
+            .one()
+        )
+
+    def draft_revision_rows(
+        self,
+        namespace: str,
+        scope: str,
+        draft_id: str,
+        *,
+        through_revision: int,
+        before_revision: int | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            text(
+                "SELECT draft_id,namespace,scope,revision,operation,actor_id,recorded_a"
+                "t,owner_id,base_version,schema_revision,content_hash,content_json,cont"
+                "ent_hash_matches_content,revision_snapshot_hash,rollback_from_version,"
+                "validation,takeover,governance_record_id FROM identity.draft_revision "
+                "WHERE draft_id=CAST(:id AS UUID) AND namespace=:namespace AND scope=:s"
+                "cope AND revision<=:through AND (CAST(:before AS BIGINT) IS NULL OR re"
+                "vision<:before) ORDER BY revision DESC LIMIT :limit"
+            ),
+            {
+                "id": draft_id,
+                "namespace": namespace,
+                "scope": scope,
+                "through": through_revision,
+                "before": before_revision,
+                "limit": limit,
+            },
+        ).mappings()
+        return [
+            {
+                **dict(row),
+                **{
+                    key: str(row[key]) if row[key] is not None else None
+                    for key in ("draft_id", "actor_id", "owner_id", "governance_record_id")
+                },
+            }
+            for row in rows
+        ]
 
     def catalog(self, namespace: str) -> list[OwnedPolicyKey]:
         rows = self.db.execute(
@@ -292,7 +415,34 @@ class SqlAlchemyIdentityPolicyOwnerRepository:
         values["id"] = str(values["id"])
         return OwnedPolicyDraft.model_validate(values)
 
-    def insert_draft(self, **values: Any) -> OwnedPolicyDraft:
+    def insert_draft(
+        self,
+        *,
+        id: str,
+        namespace: str,
+        scope: str,
+        content: dict[str, Any],
+        base_version: int,
+        owner_id: str,
+        now: datetime,
+        schema_revision: int,
+        stale: bool = False,
+        rollback_from_version: int | None = None,
+    ) -> OwnedPolicyDraft:
+        values: dict[str, Any] = dict(
+            id=id,
+            namespace=namespace,
+            scope=scope,
+            content=content,
+            base_version=base_version,
+            owner_id=owner_id,
+            now=now,
+            schema_revision=schema_revision,
+            stale=stale,
+            rollback_from_version=rollback_from_version,
+        )
+        values["content"] = materialize_jsonb(self.db, content)
+        values["content_hash"] = json_digest(values["content"])
         row = (
             self.db.execute(
                 text(
@@ -486,19 +636,47 @@ class SqlAlchemyIdentityPolicyOwnerRepository:
         )
         return None if row is None else self._draft(row)
 
-    def rebase_draft(self, draft_id: str, **values: Any) -> OwnedPolicyDraft | None:
+    def rebase_draft(
+        self,
+        draft_id: str,
+        *,
+        namespace: str,
+        expected_revision: int,
+        expected_owner_id: str,
+        expected_base_version: int,
+        schema_revision: int,
+        base_version: int,
+        content: dict[str, Any],
+        now: datetime,
+    ) -> OwnedPolicyDraft | None:
+        values: dict[str, Any] = dict(
+            namespace=namespace,
+            expected_revision=expected_revision,
+            expected_owner_id=expected_owner_id,
+            expected_base_version=expected_base_version,
+            schema_revision=schema_revision,
+            base_version=base_version,
+            content=content,
+            now=now,
+        )
+        values["content"] = materialize_jsonb(self.db, content)
+        values["content_hash"] = json_digest(values["content"])
         row = (
             self.db.execute(
                 text(
                     "UPDATE identity.draft SET content=CAST(:content AS JSONB), "
                     "content_hash=:content_hash, "
-                    "base_version=:base_version,revision=revision+1,stale=false,last_meaningful_activity_at=:now,"
+                    "base_version=:base_version,revision=revision+1,stale=false,last_meanin"
+                    "gful_activity_at=:now,"
                     " "
-                    "validation_evidence=NULL,validation_content_hash=NULL,validation_schema_revision=NULL,"
+                    "validation_evidence=NULL,validation_content_hash=NULL,validation_schem"
+                    "a_revision=NULL,"
                     " "
-                    "validation_base_version=NULL,validation_dependency_versions=NULL,preview_evidence=NULL,"
+                    "validation_base_version=NULL,validation_dependency_versions=NULL,previ"
+                    "ew_evidence=NULL,"
                     " "
-                    "preview_content_hash=NULL,preview_schema_revision=NULL,preview_base_version=NULL,"
+                    "preview_content_hash=NULL,preview_schema_revision=NULL,preview_base_ve"
+                    "rsion=NULL,"
                     " "
                     "preview_dependency_versions=NULL WHERE id=:id AND namespace=:namespace AND "
                     "scope='PLATFORM' "
@@ -607,13 +785,16 @@ class SqlAlchemyIdentityPolicyOwnerRepository:
             text(
                 "INSERT INTO identity.draft_rebase "
                 "(id,draft_id,namespace,scope,schema_revision,actor_id,recorded_at, "
-                "before_revision,after_revision,base_version,current_version,base_snapshot_hash,current_snapshot_hash,"
+                "before_revision,after_revision,base_version,current_version,base_snaps"
+                "hot_hash,current_snapshot_hash,"
                 " "
                 "before_content_hash,after_content_hash,before_content,after_content,selections) "
                 "VALUES "
-                "(:id,:draft_id,:namespace,:scope,:schema_revision,:actor_id,:recorded_at,:before_revision,:after_revision,"
+                "(:id,:draft_id,:namespace,:scope,:schema_revision,:actor_id,:recorded_"
+                "at,:before_revision,:after_revision,"
                 " "
-                ":base_version,:current_version,:base_snapshot_hash,:current_snapshot_hash,:before_content_hash,"
+                ":base_version,:current_version,:base_snapshot_hash,:current_snapshot_h"
+                "ash,:before_content_hash,"
                 " "
                 ":after_content_hash,CAST(:before_content AS JSONB),CAST(:after_content AS "
                 "JSONB),CAST(:selections AS JSONB))"
@@ -633,10 +814,11 @@ class SqlAlchemyIdentityPolicyOwnerRepository:
         *,
         expected_revision: int,
         content: dict[str, Any],
-        content_hash: str,
         stale: bool,
         now: datetime,
     ) -> OwnedPolicyDraft | None:
+        content = materialize_jsonb(self.db, content)
+        content_hash = json_digest(content)
         row = (
             self.db.execute(
                 text(

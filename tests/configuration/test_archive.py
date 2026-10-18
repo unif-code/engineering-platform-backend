@@ -16,7 +16,7 @@ from tests.configuration.test_publish import _Clock, _Random
 
 @pytest.mark.integration
 def test_archive_uses_active_policy_boundary_is_idempotent_and_only_transitions_drafts(
-    configuration_rw_engine: Engine,
+    identity_rw_engine: Engine,
     configuration_owner_engine: Engine,
     configuration_seed: None,
 ) -> None:
@@ -30,7 +30,7 @@ def test_archive_uses_active_policy_boundary_is_idempotent_and_only_transitions_
     )
     owner_id = f"archive-owner-{uuid4()}"
     now = dependencies.clock.now()
-    with configuration_rw_engine.begin() as db:
+    with identity_rw_engine.begin() as db:
         exact = create_draft(
             db,
             namespace="identity",
@@ -88,9 +88,9 @@ def test_archive_uses_active_policy_boundary_is_idempotent_and_only_transitions_
         )
 
     try:
-        with configuration_rw_engine.begin() as db:
+        with identity_rw_engine.begin() as db:
             first_count = archive_stale_drafts(db, now=now, dependencies=dependencies)
-        with configuration_rw_engine.begin() as db:
+        with identity_rw_engine.begin() as db:
             replay_count = archive_stale_drafts(db, now=now, dependencies=dependencies)
 
         with configuration_owner_engine.connect() as db:
@@ -162,6 +162,10 @@ def test_archive_uses_active_policy_boundary_is_idempotent_and_only_transitions_
             )
             db.execute(
                 text("DELETE FROM audit.audit_event WHERE target_id = ANY(:ids)"),
+                {"ids": draft_ids},
+            )
+            db.execute(
+                text("DELETE FROM identity.draft_revision WHERE draft_id::text = ANY(:ids)"),
                 {"ids": draft_ids},
             )
             db.execute(

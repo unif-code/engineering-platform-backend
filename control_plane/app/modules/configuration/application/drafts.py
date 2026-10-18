@@ -1,5 +1,3 @@
-import hashlib
-import json
 from typing import Any
 
 from sqlalchemy import Connection
@@ -8,6 +6,7 @@ from control_plane.app.modules.audit import AuditEnvelope, record_in_transaction
 from control_plane.app.modules.configuration.application.dependencies import (
     ConfigurationDependencies,
 )
+from control_plane.app.modules.configuration.application.draft_revisions import capture_revision
 from control_plane.app.modules.configuration.domain import (
     ConfigurationError,
     Draft,
@@ -21,16 +20,11 @@ from control_plane.app.modules.configuration.domain import (
 )
 from control_plane.app.modules.configuration.ports import PolicyOwnerPort
 from control_plane.app.shared.api.request_id import current_request_id
+from control_plane.app.shared.json import json_digest
 
 
 def _content_hash(content: dict[str, Any]) -> str:
-    canonical = json.dumps(
-        content,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()
+    return json_digest(content)
 
 
 def _audit(
@@ -168,8 +162,8 @@ def create_draft(
         owner_id=actor_id,
         now=dependencies.clock.now(),
         schema_revision=active.schema_revision,
-        content_hash=_content_hash(content),
     )
+    capture_revision(owner, draft, operation="CREATE", actor_id=actor_id)
     _audit(
         db,
         dependencies=dependencies,
@@ -210,7 +204,6 @@ def update_draft(
             draft_id,
             expected_revision=expected_revision,
             content=content,
-            content_hash=_content_hash(content),
             stale=False,
             now=dependencies.clock.now(),
         )
@@ -227,6 +220,7 @@ def update_draft(
             error=error,
         )
         raise
+    capture_revision(owner, updated, operation="UPDATE", actor_id=actor_id)
     _audit(
         db,
         dependencies=dependencies,
@@ -270,6 +264,13 @@ def takeover_draft(
     )
     if updated is None:
         raise StaleDraftRevision(draft_id)
+    capture_revision(
+        owner,
+        updated,
+        operation="TAKEOVER",
+        actor_id=actor_id,
+        takeover={"previous_owner_id": draft.owner_id, "reason": reason},
+    )
     _audit(
         db,
         dependencies=dependencies,
@@ -332,6 +333,7 @@ def validate_draft(
             error=error,
         )
         raise
+    capture_revision(owner, updated, operation="VALIDATE", actor_id=actor_id, validation=evidence)
     _audit(
         db,
         dependencies=dependencies,

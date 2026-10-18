@@ -98,13 +98,13 @@ def _delete_policy_admin(owner_engine: Engine, actor_id: str) -> None:
 
 @pytest.mark.integration
 def test_preview_reports_only_changed_keys_in_stable_order_without_refreshing_activity(
-    configuration_rw_engine: Engine,
+    identity_rw_engine: Engine,
     configuration_seed: None,
 ) -> None:
     del configuration_seed
     from control_plane.app.modules.configuration import create_draft, preview
 
-    with configuration_rw_engine.connect() as db:
+    with identity_rw_engine.connect() as db:
         transaction = db.begin()
         try:
             draft = create_draft(
@@ -169,13 +169,13 @@ def test_preview_reports_only_changed_keys_in_stable_order_without_refreshing_ac
 
 @pytest.mark.integration
 def test_edit_after_preview_invalidates_preview_binding(
-    configuration_rw_engine: Engine,
+    identity_rw_engine: Engine,
     configuration_seed: None,
 ) -> None:
     del configuration_seed
     from control_plane.app.modules.configuration import create_draft, preview, update_draft
 
-    with configuration_rw_engine.connect() as db:
+    with identity_rw_engine.connect() as db:
         transaction = db.begin()
         try:
             draft = create_draft(
@@ -211,7 +211,6 @@ def test_edit_after_preview_invalidates_preview_binding(
 
 @pytest.mark.integration
 def test_identity_owner_runtime_publishes_with_reauthentication_in_one_transaction(
-    configuration_rw_engine: Engine,
     identity_rw_engine: Engine,
     configuration_owner_engine: Engine,
     configuration_seed: None,
@@ -231,7 +230,7 @@ def test_identity_owner_runtime_publishes_with_reauthentication_in_one_transacti
         random=_Random(),
         audit=SqlAlchemyTransactionalAuditAppender(),
     )
-    with configuration_rw_engine.begin() as db:
+    with identity_rw_engine.begin() as db:
         draft = create_draft(
             db,
             namespace="identity",
@@ -298,6 +297,9 @@ def test_identity_owner_runtime_publishes_with_reauthentication_in_one_transacti
                     "DELETE FROM identity.version WHERE namespace='identity' "
                     "AND scope='PLATFORM' AND version=2"
                 )
+            )
+            db.execute(
+                text("DELETE FROM identity.draft_revision WHERE draft_id=:id"), {"id": draft.id}
             )
             db.execute(text("DELETE FROM identity.draft WHERE id=:id"), {"id": draft.id})
         _delete_policy_admin(configuration_owner_engine, actor_id)
@@ -370,6 +372,10 @@ def test_identity_owner_runtime_creates_rollback_draft_in_one_transaction(
             )
             if draft_id is not None:
                 db.execute(
+                    text("DELETE FROM identity.draft_revision WHERE draft_id=:draft_id"),
+                    {"draft_id": draft_id},
+                )
+                db.execute(
                     text("DELETE FROM identity.draft WHERE id=:draft_id"),
                     {"draft_id": draft_id},
                 )
@@ -378,7 +384,6 @@ def test_identity_owner_runtime_creates_rollback_draft_in_one_transaction(
 
 @pytest.mark.integration
 def test_concurrent_publish_has_one_winner_without_duplicate_totp_side_effect(
-    configuration_rw_engine: Engine,
     identity_rw_engine: Engine,
     configuration_owner_engine: Engine,
     configuration_seed: None,
@@ -401,7 +406,7 @@ def test_concurrent_publish_has_one_winner_without_duplicate_totp_side_effect(
         "control_plane.app.shared.security.totp.time.time",
         lambda: identity_deps.clock.now().timestamp(),
     )
-    with configuration_rw_engine.begin() as db:
+    with identity_rw_engine.begin() as db:
         first = create_draft(
             db,
             namespace="identity",
@@ -528,6 +533,10 @@ def test_concurrent_publish_has_one_winner_without_duplicate_totp_side_effect(
                 )
             )
             db.execute(
+                text("DELETE FROM identity.draft_revision WHERE draft_id IN (:first, :second)"),
+                {"first": first.id, "second": second.id},
+            )
+            db.execute(
                 text("DELETE FROM identity.draft WHERE id IN (:first, :second)"),
                 {"first": first.id, "second": second.id},
             )
@@ -536,7 +545,6 @@ def test_concurrent_publish_has_one_winner_without_duplicate_totp_side_effect(
 
 @pytest.mark.integration
 def test_policy_http_lifecycle_replays_source_stale_and_uses_fresh_totp_once(
-    configuration_rw_engine: Engine,
     identity_rw_engine: Engine,
     configuration_owner_engine: Engine,
     configuration_seed: None,
@@ -563,7 +571,7 @@ def test_policy_http_lifecycle_replays_source_stale_and_uses_fresh_totp_once(
         "control_plane.app.shared.security.totp.time.time",
         lambda: identity_deps.clock.now().timestamp(),
     )
-    with configuration_rw_engine.begin() as db:
+    with identity_rw_engine.begin() as db:
         winner = create_draft(
             db,
             namespace="identity",
@@ -767,6 +775,10 @@ def test_policy_http_lifecycle_replays_source_stale_and_uses_fresh_totp_once(
             if rollback_draft_id is not None:
                 draft_ids.append(rollback_draft_id)
             db.execute(
+                text("DELETE FROM identity.draft_revision WHERE draft_id = ANY(:draft_ids)"),
+                {"draft_ids": draft_ids},
+            )
+            db.execute(
                 text("DELETE FROM identity.draft WHERE id = ANY(:draft_ids)"),
                 {"draft_ids": draft_ids},
             )
@@ -775,7 +787,6 @@ def test_policy_http_lifecycle_replays_source_stale_and_uses_fresh_totp_once(
 
 @pytest.mark.integration
 def test_wrong_publish_totp_replays_one_safe_denial_without_domain_facts(
-    configuration_rw_engine: Engine,
     identity_rw_engine: Engine,
     configuration_owner_engine: Engine,
     configuration_seed: None,
@@ -802,7 +813,7 @@ def test_wrong_publish_totp_replays_one_safe_denial_without_domain_facts(
         "control_plane.app.shared.security.totp.time.time",
         lambda: identity_deps.clock.now().timestamp(),
     )
-    with configuration_rw_engine.begin() as db:
+    with identity_rw_engine.begin() as db:
         draft = create_draft(
             db,
             namespace="identity",
@@ -911,6 +922,9 @@ def test_wrong_publish_totp_replays_one_safe_denial_without_domain_facts(
                 text("DELETE FROM identity.configuration_idempotency_record WHERE actor=:actor_id"),
                 {"actor_id": actor_id},
             )
+            db.execute(
+                text("DELETE FROM identity.draft_revision WHERE draft_id=:id"), {"id": draft.id}
+            )
             db.execute(text("DELETE FROM identity.draft WHERE id=:id"), {"id": draft.id})
         _delete_policy_admin(configuration_owner_engine, actor_id)
 
@@ -919,7 +933,6 @@ def test_wrong_publish_totp_replays_one_safe_denial_without_domain_facts(
 @pytest.mark.parametrize("operation", ["publish", "rollback"])
 def test_current_super_admin_recheck_denial_is_durable_after_guard_race(
     operation: str,
-    configuration_rw_engine: Engine,
     identity_rw_engine: Engine,
     configuration_owner_engine: Engine,
     configuration_seed: None,
@@ -941,7 +954,7 @@ def test_current_super_admin_recheck_denial_is_durable_after_guard_race(
         random=_Random(),
         audit=SqlAlchemyTransactionalAuditAppender(),
     )
-    with configuration_rw_engine.begin() as db:
+    with identity_rw_engine.begin() as db:
         draft = create_draft(
             db,
             namespace="identity",
@@ -1087,13 +1100,15 @@ def test_current_super_admin_recheck_denial_is_durable_after_guard_race(
                 text("DELETE FROM identity.configuration_idempotency_record WHERE actor=:actor"),
                 {"actor": actor_id},
             )
+            db.execute(
+                text("DELETE FROM identity.draft_revision WHERE draft_id=:id"), {"id": draft.id}
+            )
             db.execute(text("DELETE FROM identity.draft WHERE id=:id"), {"id": draft.id})
         _delete_policy_admin(configuration_owner_engine, actor_id)
 
 
 @pytest.mark.integration
 def test_unexpected_publish_failure_rolls_back_every_fact_and_idempotency_claim(
-    configuration_rw_engine: Engine,
     identity_rw_engine: Engine,
     configuration_owner_engine: Engine,
     configuration_seed: None,
@@ -1120,7 +1135,7 @@ def test_unexpected_publish_failure_rolls_back_every_fact_and_idempotency_claim(
         random=_Random(),
         audit=SqlAlchemyTransactionalAuditAppender(),
     )
-    with configuration_rw_engine.begin() as db:
+    with identity_rw_engine.begin() as db:
         draft = create_draft(
             db,
             namespace="identity",
@@ -1204,13 +1219,15 @@ def test_unexpected_publish_failure_rolls_back_every_fact_and_idempotency_claim(
         assert "credential-sentinel" not in response.text
     finally:
         with configuration_owner_engine.begin() as db:
+            db.execute(
+                text("DELETE FROM identity.draft_revision WHERE draft_id=:id"), {"id": draft.id}
+            )
             db.execute(text("DELETE FROM identity.draft WHERE id=:id"), {"id": draft.id})
         _delete_policy_admin(configuration_owner_engine, actor_id)
 
 
 @pytest.mark.integration
 def test_publish_atomically_activates_immutable_version_and_stales_other_drafts(
-    configuration_rw_engine: Engine,
     identity_rw_engine: Engine,
     configuration_owner_engine: Engine,
     configuration_seed: None,
@@ -1240,7 +1257,7 @@ def test_publish_atomically_activates_immutable_version_and_stales_other_drafts(
                 "WHERE namespace='identity' AND scope='PLATFORM' AND version=1"
             )
         ).one()
-    with configuration_rw_engine.begin() as db:
+    with identity_rw_engine.begin() as db:
         other = create_draft(
             db,
             namespace="identity",
@@ -1348,6 +1365,10 @@ def test_publish_atomically_activates_immutable_version_and_stales_other_drafts(
                     "DELETE FROM identity.version WHERE namespace='identity' "
                     "AND scope='PLATFORM' AND version=2"
                 )
+            )
+            db.execute(
+                text("DELETE FROM identity.draft_revision WHERE draft_id IN (:other, :source)"),
+                {"other": other.id, "source": source.id},
             )
             db.execute(
                 text("DELETE FROM identity.draft WHERE id IN (:other, :source)"),
@@ -1503,6 +1524,10 @@ def test_rollback_creates_a_new_draft_and_republish_uses_a_higher_version(
                 )
             )
             if rollback_draft_id is not None:
+                db.execute(
+                    text("DELETE FROM identity.draft_revision WHERE draft_id=:draft_id"),
+                    {"draft_id": rollback_draft_id},
+                )
                 db.execute(
                     text("DELETE FROM identity.draft WHERE id=:draft_id"),
                     {"draft_id": rollback_draft_id},

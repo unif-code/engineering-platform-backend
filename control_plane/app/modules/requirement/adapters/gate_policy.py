@@ -27,11 +27,134 @@ from control_plane.app.modules.requirement.domain.gate_policy import (
     GatePolicy,
     content_hash,
 )
+from control_plane.app.shared.db.json import materialize_jsonb
+from control_plane.app.shared.json import json_digest
 
 
 class SqlAlchemyGatePolicyRepository:
     def __init__(self, db: Connection) -> None:
         self.db = db
+
+    def record_revision(
+        self,
+        *,
+        draft: dict[str, Any],
+        operation: str,
+        actor_id: str,
+        validation: dict[str, Any] | None = None,
+        takeover: dict[str, Any] | None = None,
+        governance_record_id: str | None = None,
+    ) -> None:
+        from control_plane.app.modules.configuration import draft_revision_record
+
+        values = draft_revision_record(
+            draft,
+            operation=operation,
+            actor_id=actor_id,
+            validation=validation,
+            takeover=takeover,
+            governance_record_id=governance_record_id,
+        )
+        self.db.execute(
+            text(
+                "INSERT INTO requirement.gate_policy_revision (draft_id,namespace,scope"
+                ",revision,operation,actor_id,recorded_at,owner_id,base_version,schema_"
+                "revision,content_hash,content_json,content_hash_matches_content,revisi"
+                "on_snapshot_hash,rollback_from_version,validation,takeover,governance_"
+                "record_id) VALUES (:draft_id,:namespace,:scope,:revision,:operation,:a"
+                "ctor_id,:recorded_at,:owner_id,:base_version,:schema_revision,:content"
+                "_hash,:content_json,:content_hash_matches_content,:revision_snapshot_h"
+                "ash,:rollback_from_version,CAST(:validation AS JSONB),CAST(:takeover A"
+                "S JSONB),:governance_record_id)"
+            ),
+            {
+                **values,
+                **{
+                    field: json.dumps(values[field], ensure_ascii=False)
+                    if values[field] is not None
+                    else None
+                    for field in ("validation", "takeover")
+                },
+            },
+        )
+
+    def draft_revision_target(
+        self, namespace: str, scope: str, draft_id: str
+    ) -> dict[str, Any] | None:
+        row = (
+            self.db.execute(
+                text(
+                    "SELECT id,namespace,scope,revision FROM requirement.gate_policy_draft "
+                    "WHERE id=CAST(:id AS UUID) AND namespace=:namespace AND scope=:scope"
+                ),
+                {"id": draft_id, "namespace": namespace, "scope": scope},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return None if row is None else {**dict(row), "id": str(row["id"])}
+
+    def draft_revision_stats(
+        self, namespace: str, scope: str, draft_id: str, *, through_revision: int
+    ) -> dict[str, Any]:
+        return dict(
+            self.db.execute(
+                text(
+                    "SELECT count(*) AS recorded_count,min(revision) AS first_recorded_revi"
+                    "sion,max(revision) AS last_recorded_revision FROM requirement.gate_pol"
+                    "icy_revision WHERE draft_id=CAST(:id AS UUID) AND namespace=:namespace"
+                    " AND scope=:scope AND revision<=:through"
+                ),
+                {
+                    "id": draft_id,
+                    "namespace": namespace,
+                    "scope": scope,
+                    "through": through_revision,
+                },
+            )
+            .mappings()
+            .one()
+        )
+
+    def draft_revision_rows(
+        self,
+        namespace: str,
+        scope: str,
+        draft_id: str,
+        *,
+        through_revision: int,
+        before_revision: int | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        rows = self.db.execute(
+            text(
+                "SELECT draft_id,namespace,scope,revision,operation,actor_id,recorded_a"
+                "t,owner_id,base_version,schema_revision,content_hash,content_json,cont"
+                "ent_hash_matches_content,revision_snapshot_hash,rollback_from_version,"
+                "validation,takeover,governance_record_id FROM requirement.gate_policy_"
+                "revision WHERE draft_id=CAST(:id AS UUID) AND namespace=:namespace AND"
+                " scope=:scope AND revision<=:through AND (CAST(:before AS BIGINT) IS N"
+                "ULL OR revision<:before) ORDER BY revision DESC LIMIT :limit"
+            ),
+            {
+                "id": draft_id,
+                "namespace": namespace,
+                "scope": scope,
+                "through": through_revision,
+                "before": before_revision,
+                "limit": limit,
+            },
+        ).mappings()
+        return [
+            {
+                **dict(row),
+                **{
+                    key: str(row[key]) if row[key] is not None else None
+                    for key in ("draft_id", "actor_id", "owner_id", "governance_record_id")
+                },
+            }
+            for row in rows
+        ]
 
     def catalog(self, namespace: str) -> list[PolicyKey]:
         if namespace != NAMESPACE:
@@ -271,12 +394,39 @@ class SqlAlchemyGatePolicyRepository:
     def _draft(row: Any) -> Draft:
         return Draft.model_validate({**dict(row), "id": str(row["id"])})
 
-    def create_draft(self, **values: Any) -> Draft:
+    def create_draft(
+        self,
+        *,
+        id: str,
+        namespace: str,
+        scope: str,
+        content: dict[str, Any],
+        base_version: int,
+        owner_id: str,
+        now: datetime,
+        schema_revision: int,
+        stale: bool = False,
+        rollback_from_version: int | None = None,
+    ) -> Draft:
+        values: dict[str, Any] = dict(
+            id=id,
+            namespace=namespace,
+            scope=scope,
+            content=content,
+            base_version=base_version,
+            owner_id=owner_id,
+            now=now,
+            schema_revision=schema_revision,
+            stale=stale,
+            rollback_from_version=rollback_from_version,
+        )
         if values["scope"] != "PLATFORM" or self.validate_candidate(
             values["namespace"], schema_revision=values["schema_revision"], values=values["content"]
         ):
             raise InvalidPolicyValue("Invalid Gate policy")
         self._check_archive_cutoff(values["content"], values["now"])
+        values["content"] = materialize_jsonb(self.db, content)
+        values["content_hash"] = json_digest(values["content"])
         row = (
             self.db.execute(
                 text(
@@ -339,14 +489,39 @@ class SqlAlchemyGatePolicyRepository:
         )
         return None if row is None else self._draft(row)
 
-    def rebase_draft(self, draft_id: str, **values: Any) -> Draft | None:
+    def rebase_draft(
+        self,
+        draft_id: str,
+        *,
+        namespace: str,
+        expected_revision: int,
+        expected_owner_id: str,
+        expected_base_version: int,
+        schema_revision: int,
+        base_version: int,
+        content: dict[str, Any],
+        now: datetime,
+    ) -> Draft | None:
+        values: dict[str, Any] = dict(
+            namespace=namespace,
+            expected_revision=expected_revision,
+            expected_owner_id=expected_owner_id,
+            expected_base_version=expected_base_version,
+            schema_revision=schema_revision,
+            base_version=base_version,
+            content=content,
+            now=now,
+        )
         self._check_archive_cutoff(values["content"], values["now"])
+        values["content"] = materialize_jsonb(self.db, content)
+        values["content_hash"] = json_digest(values["content"])
         row = (
             self.db.execute(
                 text(
                     "UPDATE requirement.gate_policy_draft SET content=CAST(:content AS "
                     "JSONB),content_hash=:content_hash, "
-                    "base_version=:base_version,revision=revision+1,stale=false,last_meaningful_activity_at=:now,"
+                    "base_version=:base_version,revision=revision+1,stale=false,last_meanin"
+                    "gful_activity_at=:now,"
                     " "
                     "validation_evidence=NULL,preview_evidence=NULL WHERE id=:id AND "
                     "namespace=:namespace AND scope='PLATFORM' "
@@ -456,13 +631,16 @@ class SqlAlchemyGatePolicyRepository:
             text(
                 "INSERT INTO requirement.gate_policy_rebase "
                 "(id,draft_id,namespace,scope,schema_revision,actor_id,recorded_at, "
-                "before_revision,after_revision,base_version,current_version,base_snapshot_hash,current_snapshot_hash,"
+                "before_revision,after_revision,base_version,current_version,base_snaps"
+                "hot_hash,current_snapshot_hash,"
                 " "
                 "before_content_hash,after_content_hash,before_content,after_content,selections) "
                 "VALUES "
-                "(:id,:draft_id,:namespace,:scope,:schema_revision,:actor_id,:recorded_at,:before_revision,:after_revision,"
+                "(:id,:draft_id,:namespace,:scope,:schema_revision,:actor_id,:recorded_"
+                "at,:before_revision,:after_revision,"
                 " "
-                ":base_version,:current_version,:base_snapshot_hash,:current_snapshot_hash,:before_content_hash,"
+                ":base_version,:current_version,:base_snapshot_hash,:current_snapshot_h"
+                "ash,:before_content_hash,"
                 " "
                 ":after_content_hash,CAST(:before_content AS JSONB),CAST(:after_content AS "
                 "JSONB),CAST(:selections AS JSONB))"
@@ -482,13 +660,14 @@ class SqlAlchemyGatePolicyRepository:
         *,
         expected_revision: int,
         content: dict[str, Any],
-        content_hash: str,
         stale: bool,
         now: datetime,
     ) -> Draft | None:
         if self.validate_candidate(NAMESPACE, schema_revision=1, values=content):
             raise InvalidPolicyValue("Invalid Gate policy")
         self._check_archive_cutoff(content, now)
+        content = materialize_jsonb(self.db, content)
+        content_hash = json_digest(content)
         row = (
             self.db.execute(
                 text(

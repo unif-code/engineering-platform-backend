@@ -47,6 +47,7 @@ from control_plane.app.modules.configuration.domain import (
     StaleDraftRevision,
     ValidationIssue,
 )
+from control_plane.app.modules.configuration.domain.draft_revisions import draft_revision_record
 from control_plane.app.modules.configuration.ports.policy_owner import PolicyOwnerPort
 
 
@@ -174,6 +175,7 @@ def policy_versions(
 
 
 __all__ = [
+    "draft_revision_record",
     "PolicyLifecycle",
     "PolicyRuntimeRegistry",
     "IdentityPolicyRuntime",

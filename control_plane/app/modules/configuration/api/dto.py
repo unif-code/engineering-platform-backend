@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import AwareDatetime, ConfigDict, Field
+from pydantic import AwareDatetime, ConfigDict, Field, field_serializer
 
 from control_plane.app.modules.configuration.domain import (
     Draft,
@@ -452,3 +452,58 @@ class DraftArchiveSourceResponseDto(CamelModel):
     @classmethod
     def from_domain(cls, value: DraftArchiveSource) -> "DraftArchiveSourceResponseDto":
         return cls.model_validate(value.model_dump())
+
+
+class DraftRevisionValidationDto(CamelModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    valid: bool
+    issues: list[ValidationIssueDto]
+
+
+class DraftRevisionTakeoverDto(CamelModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    previous_owner_id: str = Field(min_length=1)
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class DraftRevisionDto(CamelModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    revision: int = Field(gt=0)
+    operation: Literal["CREATE", "UPDATE", "VALIDATE", "TAKEOVER", "REBASE", "CLONE", "ROLLBACK"]
+    actor_id: str = Field(min_length=1)
+    recorded_at: AwareDatetime
+    owner_id: str = Field(min_length=1)
+    base_version: int = Field(gt=0)
+    schema_revision: int = Field(gt=0)
+    content_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    content_json: str
+    content_hash_matches_content: bool
+    revision_snapshot_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    rollback_from_version: Annotated[int, Field(gt=0)] | None
+    validation: DraftRevisionValidationDto | None
+    takeover: DraftRevisionTakeoverDto | None
+    governance_record_id: DraftDirectoryId | None
+
+    @field_serializer("recorded_at")
+    def serialize_recorded_at(self, value: datetime) -> str:
+        from control_plane.app.modules.configuration.domain.draft_revisions import revision_time
+
+        return revision_time(value)
+
+
+class DraftRevisionsResponseDto(CamelModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    draft_id: DraftDirectoryId
+    namespace: str = Field(min_length=1)
+    scope: Literal["PLATFORM"]
+    draft_revision: int = Field(gt=0)
+    coverage: Literal["NONE", "PARTIAL", "COMPLETE"]
+    recorded_count: int = Field(ge=0)
+    first_recorded_revision: Annotated[int, Field(gt=0)] | None
+    last_recorded_revision: Annotated[int, Field(gt=0)] | None
+    items: list[DraftRevisionDto]
+    next_cursor: str | None

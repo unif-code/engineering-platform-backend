@@ -245,6 +245,46 @@ from control_plane.app.modules.identity.ports.policy import EffectivePolicyPort
 from control_plane.app.modules.identity.ports.repository import IdentityRepositoryFactory
 
 
+def record_policy_draft_revision(db: Connection, **values: Any) -> None:
+    SqlAlchemyIdentityPolicyOwnerRepository(db).record_revision(**values)
+
+
+def policy_draft_revision_target(
+    db: Connection, namespace: str, scope: str, draft_id: str
+) -> dict[str, Any] | None:
+    return SqlAlchemyIdentityPolicyOwnerRepository(db).draft_revision_target(
+        namespace, scope, draft_id
+    )
+
+
+def policy_draft_revision_stats(
+    db: Connection, namespace: str, scope: str, draft_id: str, *, through_revision: int
+) -> dict[str, Any]:
+    return SqlAlchemyIdentityPolicyOwnerRepository(db).draft_revision_stats(
+        namespace, scope, draft_id, through_revision=through_revision
+    )
+
+
+def policy_draft_revision_rows(
+    db: Connection,
+    namespace: str,
+    scope: str,
+    draft_id: str,
+    *,
+    through_revision: int,
+    before_revision: int | None,
+    limit: int,
+) -> list[dict[str, Any]]:
+    return SqlAlchemyIdentityPolicyOwnerRepository(db).draft_revision_rows(
+        namespace,
+        scope,
+        draft_id,
+        through_revision=through_revision,
+        before_revision=before_revision,
+        limit=limit,
+    )
+
+
 def policy_catalog(db: Connection, namespace: str) -> list[OwnedPolicyKey]:
     return _policy_catalog(SqlAlchemyIdentityPolicyOwnerRepository(db), namespace)
 

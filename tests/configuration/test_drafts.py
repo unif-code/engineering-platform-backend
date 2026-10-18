@@ -308,7 +308,7 @@ def test_active_snapshot_rejects_recursive_catalog_json_type_drift(
 
 
 def test_catalog_drift_fails_closed_across_all_public_policy_consumers(
-    configuration_rw_engine: Engine,
+    identity_rw_engine: Engine,
     configuration_owner_engine: Engine,
 ) -> None:
     from control_plane.app.bootstrap.app import create_app
@@ -326,7 +326,7 @@ def test_catalog_drift_fails_closed_across_all_public_policy_consumers(
         "maximumDelaySeconds": 900,
         "resetAfterHours": 24,
     }
-    with _rollback(configuration_rw_engine) as db:
+    with _rollback(identity_rw_engine) as db:
         dependencies = _dependencies()
         created = create_draft(
             db,
@@ -400,7 +400,7 @@ def test_catalog_drift_fails_closed_across_all_public_policy_consumers(
 
 
 def test_draft_create_and_update_use_revision_etags_and_full_canonical_content(
-    configuration_rw_engine: Engine,
+    identity_rw_engine: Engine,
 ) -> None:
     from control_plane.app.modules.configuration import (
         StaleDraftRevision,
@@ -408,7 +408,7 @@ def test_draft_create_and_update_use_revision_etags_and_full_canonical_content(
         update_draft,
     )
 
-    with configuration_rw_engine.connect() as db:
+    with identity_rw_engine.connect() as db:
         transaction = db.begin()
         dependencies = _dependencies()
         created = create_draft(
@@ -449,7 +449,7 @@ def test_draft_create_and_update_use_revision_etags_and_full_canonical_content(
 
 
 def test_validation_is_bound_and_reports_idle_below_fifteen_without_echoing_values(
-    configuration_rw_engine: Engine,
+    identity_rw_engine: Engine,
 ) -> None:
     from control_plane.app.modules.configuration import (
         create_draft,
@@ -457,7 +457,7 @@ def test_validation_is_bound_and_reports_idle_below_fifteen_without_echoing_valu
         validate_draft,
     )
 
-    with configuration_rw_engine.connect() as db:
+    with identity_rw_engine.connect() as db:
         transaction = db.begin()
         dependencies = _dependencies()
         created = create_draft(
@@ -504,11 +504,11 @@ def test_validation_is_bound_and_reports_idle_below_fifteen_without_echoing_valu
 
 
 def test_draft_validation_observes_identity_owner_schema_without_a_local_rule_copy(
-    configuration_rw_engine: Engine,
+    identity_rw_engine: Engine,
 ) -> None:
     from control_plane.app.modules.configuration import create_draft, validate_draft
 
-    with _rollback(configuration_rw_engine) as db:
+    with _rollback(identity_rw_engine) as db:
         dependencies = _dependencies()
         created = create_draft(
             db,
@@ -576,13 +576,13 @@ def test_draft_validation_observes_identity_owner_schema_without_a_local_rule_co
     ],
 )
 def test_draft_validation_rejects_values_the_runtime_policy_cannot_materialize(
-    configuration_rw_engine: Engine,
+    identity_rw_engine: Engine,
     values: dict[str, object],
     issue_path: str,
 ) -> None:
     from control_plane.app.modules.configuration import create_draft, validate_draft
 
-    with _rollback(configuration_rw_engine) as db:
+    with _rollback(identity_rw_engine) as db:
         dependencies = _dependencies()
         before = db.execute(
             text(

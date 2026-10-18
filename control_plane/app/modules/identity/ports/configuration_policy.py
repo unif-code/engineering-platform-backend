@@ -31,6 +31,36 @@ class IdentityPolicyOwnerRepository(Protocol):
         now: datetime,
     ) -> bool: ...
 
+    def record_revision(
+        self,
+        *,
+        draft: dict[str, Any],
+        operation: str,
+        actor_id: str,
+        validation: dict[str, Any] | None = None,
+        takeover: dict[str, Any] | None = None,
+        governance_record_id: str | None = None,
+    ) -> None: ...
+
+    def draft_revision_target(
+        self, namespace: str, scope: str, draft_id: str
+    ) -> dict[str, Any] | None: ...
+
+    def draft_revision_stats(
+        self, namespace: str, scope: str, draft_id: str, *, through_revision: int
+    ) -> dict[str, Any]: ...
+
+    def draft_revision_rows(
+        self,
+        namespace: str,
+        scope: str,
+        draft_id: str,
+        *,
+        through_revision: int,
+        before_revision: int | None,
+        limit: int,
+    ) -> list[dict[str, Any]]: ...
+
     def catalog(self, namespace: str) -> list[OwnedPolicyKey]: ...
 
     def active_snapshot(
@@ -74,7 +104,20 @@ class IdentityPolicyOwnerRepository(Protocol):
         limit: int,
     ) -> list[OwnedPublishedPolicyVersion]: ...
 
-    def insert_draft(self, **values: Any) -> OwnedPolicyDraft: ...
+    def insert_draft(
+        self,
+        *,
+        id: str,
+        namespace: str,
+        scope: str,
+        content: dict[str, Any],
+        base_version: int,
+        owner_id: str,
+        now: datetime,
+        schema_revision: int,
+        stale: bool = False,
+        rollback_from_version: int | None = None,
+    ) -> OwnedPolicyDraft: ...
 
     def draft_by_id(
         self, draft_id: str, *, for_update: bool = False
@@ -84,7 +127,19 @@ class IdentityPolicyOwnerRepository(Protocol):
         self, draft_id: str, *, expected_revision: int, owner_id: str, now: datetime
     ) -> OwnedPolicyDraft | None: ...
 
-    def rebase_draft(self, draft_id: str, **values: Any) -> OwnedPolicyDraft | None: ...
+    def rebase_draft(
+        self,
+        draft_id: str,
+        *,
+        namespace: str,
+        expected_revision: int,
+        expected_owner_id: str,
+        expected_base_version: int,
+        schema_revision: int,
+        base_version: int,
+        content: dict[str, Any],
+        now: datetime,
+    ) -> OwnedPolicyDraft | None: ...
 
     def record_rebase(self, **values: Any) -> None: ...
 
@@ -109,7 +164,6 @@ class IdentityPolicyOwnerRepository(Protocol):
         *,
         expected_revision: int,
         content: dict[str, Any],
-        content_hash: str,
         stale: bool,
         now: datetime,
     ) -> OwnedPolicyDraft | None: ...

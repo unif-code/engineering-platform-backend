@@ -1,5 +1,3 @@
-import hashlib
-import json
 from typing import Any
 
 from control_plane.app.modules.identity.application.common import audit
@@ -24,6 +22,7 @@ from control_plane.app.modules.identity.ports.configuration_policy import (
 )
 from control_plane.app.modules.identity.ports.repository import IdentityRepository
 from control_plane.app.shared.idempotency import IdempotentResponse
+from control_plane.app.shared.json import json_digest
 
 
 class _PolicyCommandDenied(Exception):
@@ -53,13 +52,7 @@ class _PolicyCommandDenied(Exception):
 
 
 def _content_hash(content: dict[str, Any]) -> str:
-    canonical = json.dumps(
-        content,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()
+    return json_digest(content)
 
 
 def _configuration_audit(
@@ -380,7 +373,6 @@ def rollback_policy_command(
             owner_id=actor_id,
             now=dependencies.clock.now(),
             schema_revision=active.schema_revision,
-            content_hash=_content_hash(content),
             rollback_from_version=to_version,
         )
     except _PolicyCommandDenied as denied:
@@ -396,6 +388,9 @@ def rollback_policy_command(
         )
         return denied.response()
 
+    policy_repository.record_revision(
+        draft=draft.model_dump(), operation="ROLLBACK", actor_id=actor_id
+    )
     _configuration_audit(
         identity_repository,
         dependencies=dependencies,

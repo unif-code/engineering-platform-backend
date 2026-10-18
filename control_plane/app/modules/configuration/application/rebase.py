@@ -11,7 +11,8 @@ from control_plane.app.modules.configuration.application.base_comparison import 
 from control_plane.app.modules.configuration.application.dependencies import (
     ConfigurationDependencies,
 )
-from control_plane.app.modules.configuration.application.drafts import _audit, _content_hash
+from control_plane.app.modules.configuration.application.draft_revisions import capture_revision
+from control_plane.app.modules.configuration.application.drafts import _audit
 from control_plane.app.modules.configuration.application.rebase_candidate import rebase_candidate
 from control_plane.app.modules.configuration.domain import (
     Draft,
@@ -91,7 +92,6 @@ def apply_draft_rebase(
         schema_revision=draft.schema_revision,
         base_version=current.version,
         content=normalized,
-        content_hash=_content_hash(normalized),
         now=now,
     )
     if updated is None:
@@ -118,6 +118,9 @@ def apply_draft_rebase(
         selections=selections,
     )
     owner.record_rebase(**record)
+    capture_revision(
+        owner, updated, operation="REBASE", actor_id=actor_id, governance_record_id=record_id
+    )
     summary = {
         key: value
         for key, value in record.items()

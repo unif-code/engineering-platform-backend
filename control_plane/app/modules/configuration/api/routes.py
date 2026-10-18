@@ -34,6 +34,7 @@ from control_plane.app.modules.configuration.api.dto import (
     DraftGovernanceRecordsResponseDto,
     DraftListResponseDto,
     DraftResponseDto,
+    DraftRevisionsResponseDto,
     DraftValidationResponseDto,
     DraftValuesRequestDto,
     PolicyCatalogResponseDto,
@@ -415,6 +416,50 @@ def create_configuration_router(
             return _render(_problem(error))
         except Exception:
             return problem_response(503, "Draft base comparison unavailable")
+
+    @router.get(
+        "/policies/{namespace}/drafts/{draft_id}/revisions",
+        operation_id="draft_revisions",
+        response_model=DraftRevisionsResponseDto,
+        responses={
+            **_PROBLEMS,
+            200: {
+                "description": "Captured revisions bounded by the observed draft revision",
+                "headers": {
+                    **_ETAG_HEADER,
+                    "Cache-Control": {"schema": {"type": "string", "const": "no-store"}},
+                },
+            },
+        },
+        dependencies=[Depends(_assert_revision_preflight)],
+    )
+    def draft_revisions(
+        namespace: Annotated[str, Path(min_length=1)],
+        draft_id: Annotated[str, Path(min_length=1)],
+        principal: Annotated[Any, Depends(principal_provider)],
+        preflight: Annotated[_RevisionPreflight, Depends(_revision_preflight)],
+        cursor: Annotated[str | None, Query()] = None,
+        limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    ) -> Response:
+        capability_guard(principal, PLATFORM_CONFIGURATION_MANAGE, None)
+        try:
+            with runtime_provider().owners.resolve(namespace).transaction() as lifecycle:
+                value = lifecycle.draft_revisions(
+                    namespace=namespace,
+                    draft_id=draft_id,
+                    expected_revision=preflight.expected_revision,
+                    cursor=cursor,
+                    limit=limit,
+                )
+                dto = DraftRevisionsResponseDto.model_validate(value.model_dump())
+                return JSONResponse(
+                    dto.model_dump(mode="json", by_alias=True),
+                    headers={"ETag": entity_tag(value.draft_revision), "Cache-Control": "no-store"},
+                )
+        except (DraftNotFound, StaleDraftRevision, InvalidPolicyValue) as error:
+            return _render(_problem(error))
+        except Exception:
+            return problem_response(503, "Draft revision history unavailable")
 
     @router.get(
         "/policies/{namespace}/drafts/{draft_id}/archive-source",

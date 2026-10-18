@@ -15,6 +15,7 @@ from control_plane.app.modules.configuration.application.dependencies import (
     ConfigurationDependencies,
 )
 from control_plane.app.modules.configuration.application.draft_directory import draft_directory
+from control_plane.app.modules.configuration.application.draft_revisions import draft_revisions
 from control_plane.app.modules.configuration.application.governance_records import (
     governance_records,
 )
@@ -32,11 +33,15 @@ from control_plane.app.modules.configuration.domain.archive_source import DraftA
 from control_plane.app.modules.configuration.domain.archive_timing import DraftArchiveTiming
 from control_plane.app.modules.configuration.domain.draft_archive import DraftArchive
 from control_plane.app.modules.configuration.domain.draft_directory import DraftList
+from control_plane.app.modules.configuration.domain.draft_revisions import DraftRevisions
 from control_plane.app.modules.configuration.domain.governance_records import DraftGovernanceRecords
 from control_plane.app.modules.configuration.ports.policy_owner import PolicyOwnerPort
 
 
 class PolicyLifecycle:
+    def draft_revisions(self, **values: Any) -> DraftRevisions:
+        return draft_revisions(self.owner, **values)
+
     def __init__(
         self, db: Connection, owner: PolicyOwnerPort, dependencies: ConfigurationDependencies
     ) -> None:

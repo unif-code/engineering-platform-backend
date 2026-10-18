@@ -13,6 +13,36 @@ from control_plane.app.shared.idempotency import IdempotencyRepository
 
 
 class PolicyOwnerPort(IdempotencyRepository, Protocol):
+    def record_revision(
+        self,
+        *,
+        draft: dict[str, Any],
+        operation: str,
+        actor_id: str,
+        validation: dict[str, Any] | None = None,
+        takeover: dict[str, Any] | None = None,
+        governance_record_id: str | None = None,
+    ) -> None: ...
+
+    def draft_revision_target(
+        self, namespace: str, scope: str, draft_id: str
+    ) -> dict[str, Any] | None: ...
+
+    def draft_revision_stats(
+        self, namespace: str, scope: str, draft_id: str, *, through_revision: int
+    ) -> dict[str, Any]: ...
+
+    def draft_revision_rows(
+        self,
+        namespace: str,
+        scope: str,
+        draft_id: str,
+        *,
+        through_revision: int,
+        before_revision: int | None,
+        limit: int,
+    ) -> list[dict[str, Any]]: ...
+
     def catalog(self, namespace: str) -> list[PolicyKey]: ...
 
     def active_snapshot(self, namespace: str) -> PolicySnapshot: ...
@@ -72,7 +102,20 @@ class PolicyOwnerPort(IdempotencyRepository, Protocol):
         self, namespace: str, *, schema_revision: int, values: dict[str, Any]
     ) -> dict[str, Any]: ...
 
-    def create_draft(self, **values: Any) -> Draft: ...
+    def create_draft(
+        self,
+        *,
+        id: str,
+        namespace: str,
+        scope: str,
+        content: dict[str, Any],
+        base_version: int,
+        owner_id: str,
+        now: datetime,
+        schema_revision: int,
+        stale: bool = False,
+        rollback_from_version: int | None = None,
+    ) -> Draft: ...
 
     def draft(self, draft_id: str, *, for_update: bool = False) -> Draft | None: ...
 
@@ -91,7 +134,6 @@ class PolicyOwnerPort(IdempotencyRepository, Protocol):
         schema_revision: int,
         base_version: int,
         content: dict[str, Any],
-        content_hash: str,
         now: datetime,
     ) -> Draft | None: ...
 
@@ -118,7 +160,6 @@ class PolicyOwnerPort(IdempotencyRepository, Protocol):
         *,
         expected_revision: int,
         content: dict[str, Any],
-        content_hash: str,
         stale: bool,
         now: datetime,
     ) -> Draft | None: ...
