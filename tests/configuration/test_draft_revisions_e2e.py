@@ -274,13 +274,16 @@ def test_history_runtime_role_is_append_only_and_plain_reads_do_not_wait_on_draf
         ]:
             with pytest.raises(ProgrammingError), lifecycle.db.begin_nested():
                 lifecycle.db.execute(text(command))
-    with state.journey.database.owner.begin() as lock:
+    # Release the blocker before joining a reader that timed out.
+    with (
+        ThreadPoolExecutor(max_workers=1) as pool,
+        state.journey.database.owner.begin() as lock,
+    ):
         lock.execute(
             text(f"SELECT id FROM {tables(namespace)[0]} WHERE id=:id FOR UPDATE"),
             {"id": target.json()["id"]},
         )
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            result = pool.submit(query, state.c, path, target).result(timeout=5)
+        result = pool.submit(query, state.c, path, target).result(timeout=5)
         assert result.json()["coverage"] == "COMPLETE"
 
 
