@@ -90,6 +90,39 @@ async def public_addresses(hostname: str) -> tuple[str, ...]:
     return await future
 
 
+async def verified_public_address(
+    hostname: str, resolver: Callable[[str], Awaitable[tuple[str, ...]]]
+) -> str:
+    addresses = await resolver(hostname)
+    try:
+        if not addresses:
+            raise ValueError
+        for address in addresses:
+            ip = ipaddress.ip_address(address)
+            if not ip.is_global or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+                raise ValueError
+    except ValueError:
+        raise CheckBlocked(CheckReason.TARGET_NOT_ALLOWED) from None
+    return addresses[0]
+
+
+def model_https_client(
+    transport: httpx.AsyncBaseTransport | None, timeout: float
+) -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        transport=transport
+        or httpx.AsyncHTTPTransport(
+            verify=ssl.create_default_context(),
+            retries=0,
+            trust_env=False,
+            limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
+        ),
+        trust_env=False,
+        follow_redirects=False,
+        timeout=httpx.Timeout(timeout, connect=5),
+    )
+
+
 def parse_response(raw: bytes, requested_model: str) -> ProbeOutcome:
     try:
         value = json.loads(raw)
@@ -175,24 +208,15 @@ class HttpxModelProbe:
         if material.version != connection.material_version:
             raise CheckBlocked(CheckReason.MATERIAL_VERSION_CHANGED)
 
-        async def resolve() -> tuple[str, ...]:
+        async def resolve() -> str:
             async with asyncio.timeout(5):
-                return await self.resolver(connection.hostname)
+                return await verified_public_address(connection.hostname, self.resolver)
 
         try:
-            addresses = asyncio.run(resolve())
+            address = asyncio.run(resolve())
         except (OSError, TimeoutError):
             raise CheckBlocked(CheckReason.TARGET_UNAVAILABLE) from None
-        try:
-            if not addresses:
-                raise ValueError
-            for address in addresses:
-                ip = ipaddress.ip_address(address)
-                if not ip.is_global or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
-                    raise ValueError
-        except ValueError:
-            raise CheckBlocked(CheckReason.TARGET_NOT_ALLOWED) from None
-        return PreparedProbe(connection.hostname, addresses[0], material)
+        return PreparedProbe(connection.hostname, address, material)
 
     def send(self, prepared: PreparedProbe, model_id: str, check_kind: CheckKind) -> ProbeOutcome:
         start = time.monotonic()
@@ -318,19 +342,8 @@ class HttpxModelProbe:
         target = httpx.URL(f"https://{prepared.hostname}{probe_path(check_kind)}").copy_with(
             host=prepared.address
         )
-        transport = self.transport or httpx.AsyncHTTPTransport(
-            verify=ssl.create_default_context(),
-            retries=0,
-            trust_env=False,
-            limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
-        )
         deadline = asyncio.get_running_loop().time() + PROBE_TIMEOUT_SECONDS
-        client = httpx.AsyncClient(
-            transport=transport,
-            trust_env=False,
-            follow_redirects=False,
-            timeout=httpx.Timeout(PROBE_TIMEOUT_SECONDS, connect=5),
-        )
+        client = model_https_client(self.transport, PROBE_TIMEOUT_SECONDS)
         response: httpx.Response | None = None
         close_failed = False
         try:

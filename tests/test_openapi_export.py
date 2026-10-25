@@ -26,8 +26,21 @@ def test_render_is_deterministic_and_versioned() -> None:
     first, second = render(), render()
     assert first == second
     assert f'"version": "{__version__}"' in first
-    assert json.loads(first)["info"]["version"] == "3.11.0"
-    assert json.loads(render_sandbox())["info"]["version"] == "3.11.0"
+    assert json.loads(first)["info"]["version"] == "3.12.0"
+    assert json.loads(render_sandbox())["info"]["version"] == "3.12.0"
+
+
+def test_metadata_source_schema_requires_an_independent_purpose_and_has_no_arbitrary_endpoint() -> (
+    None
+):
+    schema = json.loads(export_openapi.render_metadata_sources())
+    assert schema["additionalProperties"] is False
+    definition = schema["$defs"]["MetadataSourceDefinition"]
+    assert definition["properties"]["purpose"]["const"] == "MODEL_METADATA_OBSERVATION"
+    assert {"serviceSite", "materialVersion", "secretRef", "inferenceProvider"} <= set(
+        definition["required"]
+    )
+    assert "endpoint" not in definition["properties"]
 
 
 def test_render_contains_the_typed_requirement_contract() -> None:
@@ -142,17 +155,25 @@ def test_check_mode_passes_after_export(
     monkeypatch.setattr(export_openapi, "SANDBOX_OUT", sandbox_artifact)
     source_schema = tmp_path / "model-material-sources.schema.json"
     monkeypatch.setattr(export_openapi, "MATERIAL_SOURCES_OUT", source_schema)
+    metadata_schema = tmp_path / "model-metadata-sources.schema.json"
+    committed_metadata = export_openapi.METADATA_SOURCES_OUT
+    metadata_before = committed_metadata.read_bytes()
+    monkeypatch.setattr(export_openapi, "METADATA_SOURCES_OUT", metadata_schema)
 
     monkeypatch.setattr(sys, "argv", ["export_openapi.py"])
     assert export_openapi.main() == 0
     assert artifact.read_text(encoding="utf-8") == render()
     assert sandbox_artifact.read_text(encoding="utf-8") == render_sandbox()
     assert source_schema.read_text(encoding="utf-8") == export_openapi.render_material_sources()
+    assert metadata_schema.read_text(encoding="utf-8") == export_openapi.render_metadata_sources()
 
     monkeypatch.setattr(sys, "argv", ["export_openapi.py", "--check"])
     assert export_openapi.main() == 0
 
     assert committed.read_bytes() == before  # 写模式绝不碰入库件
+    assert committed_metadata.read_bytes() == metadata_before
+    metadata_schema.write_text("{}\n")
+    assert export_openapi.main() == 1
 
 
 # 退出码 1 的两条分支（内容不一致 / 文件缺失）都在进程内验证，全程只碰 tmp_path，不动仓库文件。

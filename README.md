@@ -141,6 +141,25 @@ relativePath 和 copySha256；规范化引用与外部版本必须唯一，不�
 核对记录只追加，详情每次实际重测来源以识别同版本、同大小/mtime 的内容替换。当前性、材料期限
 与历史核对结果独立；目录版本、文件存在或摘要相等都不证明来源权威、语义真实性或模型可激活。
 
+### Model Gateway 官方元数据观察
+
+元数据观察使用独立批准的 `MODEL_GATEWAY_METADATA_SOURCES_PATH` 清单，格式由
+`model-metadata-sources.schema.json` 约束。声明须明确 metadata 用途、关联 connectionRef、
+环境、官方地域映射所需 Workspace 或服务范围、serviceSite、允许模型、inferenceProvider
+及 Secret 引用/材料版本；不配置即不可用，不继承推理许可。Secret 解析和 HTTP 仍只在 worker。
+
+先应用元数据观察迁移，再启动本版本 API/worker；批准来源前，两类 worker 须使用同一应用版本，
+确保同 connection 的旧检查与新观察共享 RUNNING 准入。专用批处理入口为：
+
+```bash
+uv run python -m control_plane.tools.model_gateway_worker --kind metadata-observations --limit 20
+```
+
+POST 返回的 202 只代表已受理；详情 GET 不再次请求 Provider。只处理完整单页唯一结果，
+读取预算见[元数据观察规格](../engineering-platform-docs/docs/superpowers/specs/2026-10-26-model-metadata-observation-design.md)
+及其参数附录。数字、null、缺失与未声明分别显示；结果保存本方观察时间，不生成来源有效期。
+报告及声明差异不改变候选、材料档案或 Policy，也不证明上下文实测能力、模型可调用或完整验证。
+
 ### Agent 运行只读查询
 
 `GET /api/v1/agent-runs` 要求显式 workspaceId 和该 Workspace 的 `agent.run.read`，支持

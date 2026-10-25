@@ -7,10 +7,12 @@ from pathlib import Path
 from control_plane.app.bootstrap.app import create_app
 from control_plane.app.bootstrap.sandbox_controller import create_sandbox_controller_app
 from control_plane.app.modules.model_gateway.adapters.material_sources import MaterialSourceManifest
+from control_plane.app.modules.model_gateway.adapters.metadata_sources import MetadataSourceManifest
 
 OUT = Path(__file__).resolve().parents[1] / "openapi.json"
 SANDBOX_OUT = Path(__file__).resolve().parents[1] / "sandbox-openapi.json"
 MATERIAL_SOURCES_OUT = OUT.parent / "model-material-sources.schema.json"
+METADATA_SOURCES_OUT = OUT.parent / "model-metadata-sources.schema.json"
 
 
 def render() -> str:
@@ -41,11 +43,24 @@ def render_material_sources() -> str:
     )
 
 
+def render_metadata_sources() -> str:
+    return (
+        json.dumps(
+            MetadataSourceManifest.model_json_schema(by_alias=True),
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    )
+
+
 def _artifacts() -> tuple[tuple[Path, bytes], ...]:
     return (
         (OUT, render().encode("utf-8")),
         (SANDBOX_OUT, render_sandbox().encode("utf-8")),
         (MATERIAL_SOURCES_OUT, render_material_sources().encode("utf-8")),
+        (METADATA_SOURCES_OUT, render_metadata_sources().encode("utf-8")),
     )
 
 

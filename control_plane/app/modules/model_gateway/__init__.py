@@ -22,6 +22,13 @@ __all__ = [
 
 from control_plane.app.modules.model_gateway.application.checks import ModelConnectionChecks
 from control_plane.app.modules.model_gateway.application.dossiers import ModelValidationDossiers
+from control_plane.app.modules.model_gateway.application.metadata import ModelMetadataObservations
+from control_plane.app.modules.model_gateway.application.metadata_worker import (
+    ModelMetadataWorkerDependencies,
+    process_metadata_observation,
+    recover_expired_metadata_observations,
+    run_model_metadata_batch,
+)
 from control_plane.app.modules.model_gateway.application.source_checks import (
     ModelMaterialSourceChecks,
 )
@@ -48,3 +55,11 @@ __all__ += [
 
 __all__ += ["ModelValidationDossiers", "CreateValidationDossier", "ValidationDossier"]
 __all__ += ["ModelMaterialSourceChecks", "ModelMaterialSourcePort", "MaterialSourceCheck"]
+
+__all__ += [
+    "ModelMetadataObservations",
+    "ModelMetadataWorkerDependencies",
+    "process_metadata_observation",
+    "recover_expired_metadata_observations",
+    "run_model_metadata_batch",
+]

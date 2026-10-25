@@ -2,11 +2,32 @@ import json
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import Connection, text
 
 from control_plane.app.modules.model_gateway.adapters import SqlAlchemyDeploymentRepository
 from control_plane.app.modules.model_gateway.domain.checks import ConnectionCheck
 from control_plane.app.modules.model_gateway.domain.connections import CheckKind
+
+
+def connection_busy(db: Connection, reference: str) -> bool:
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:reference,0))"),
+        {"reference": f"model-gateway:{reference}"},
+    )
+    return bool(
+        db.execute(
+            text("""
+        SELECT EXISTS(
+            SELECT 1 FROM model_gateway.connection_check
+                WHERE connection_ref=:reference AND state='RUNNING'
+            UNION ALL
+            SELECT 1 FROM model_gateway.metadata_observation
+                WHERE connection_ref=:reference AND state='RUNNING'
+        )
+    """),
+            {"reference": reference},
+        ).scalar_one()
+    )
 
 
 class SqlAlchemyCheckRepository(SqlAlchemyDeploymentRepository):
@@ -91,19 +112,7 @@ class SqlAlchemyCheckRepository(SqlAlchemyDeploymentRepository):
         ]
 
     def connection_busy(self, reference: str) -> bool:
-        self.db.execute(
-            text("SELECT pg_advisory_xact_lock(hashtextextended(:reference,0))"),
-            {"reference": f"model-gateway:{reference}"},
-        )
-        return bool(
-            self.db.execute(
-                text(
-                    "SELECT EXISTS(SELECT 1 FROM model_gateway.connection_check "
-                    "WHERE connection_ref=:reference AND state='RUNNING')"
-                ),
-                {"reference": reference},
-            ).scalar_one()
-        )
+        return connection_busy(self.db, reference)
 
     def save_check(self, value: ConnectionCheck, *, expected_revision: int) -> bool:
         result = self.db.execute(

@@ -27,6 +27,7 @@ from control_plane.app.modules.model_gateway.api.dto import (
     PatchModelDeploymentRequestDto,
 )
 from control_plane.app.modules.model_gateway.ports.checks import ConnectionDirectoryPort
+from control_plane.app.modules.model_gateway.ports.metadata import MetadataSourceDirectoryPort
 from control_plane.app.modules.model_gateway.ports.source_checks import ModelMaterialSourcePort
 from control_plane.app.shared.api.concurrency import entity_tag, require_if_match
 from control_plane.app.shared.api.idempotency import require_idempotency_key
@@ -79,6 +80,7 @@ class ModelGatewayHttpRuntime:
     secret_manager: SecretManagerPort
     connections: ConnectionDirectoryPort
     material_sources: ModelMaterialSourcePort
+    metadata_sources: MetadataSourceDirectoryPort
 
 
 def _dto(value: Deployment) -> ModelDeploymentDto:
@@ -102,6 +104,7 @@ def _denial(error: CatalogError) -> IdempotentResponse:
         "MODEL_DOSSIER_CHECK_NOT_FOUND",
         "MODEL_MATERIAL_SOURCE_CHECK_NOT_FOUND",
         "MODEL_SOURCE_MATERIAL_NOT_FOUND",
+        "MODEL_METADATA_OBSERVATION_NOT_FOUND",
     }:
         status = 404
     elif error.code in {
@@ -109,6 +112,7 @@ def _denial(error: CatalogError) -> IdempotentResponse:
         "INVALID_MODEL_CONNECTION_CHECK_CURSOR",
         "INVALID_MODEL_DOSSIER_CURSOR",
         "INVALID_MODEL_SOURCE_CHECK_CURSOR",
+        "INVALID_MODEL_METADATA_CURSOR",
     }:
         status = 422
     elif error.code == "MODEL_SOURCE_CHECK_BINDING_UNAVAILABLE":

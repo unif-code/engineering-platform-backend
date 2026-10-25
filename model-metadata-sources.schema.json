@@ -1,0 +1,162 @@
+{
+  "$defs": {
+    "MetadataSourceDefinition": {
+      "additionalProperties": false,
+      "properties": {
+        "allowedModelIds": {
+          "items": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$",
+            "type": "string"
+          },
+          "maxItems": 100,
+          "minItems": 1,
+          "title": "Allowedmodelids",
+          "type": "array"
+        },
+        "connectionRef": {
+          "maxLength": 128,
+          "minLength": 18,
+          "pattern": "^model-connection:[a-z][a-z0-9]*([._-][a-z0-9]+)*$",
+          "title": "Connectionref",
+          "type": "string"
+        },
+        "inferenceProvider": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9._-]*$",
+          "title": "Inferenceprovider",
+          "type": "string"
+        },
+        "materialVersion": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Materialversion",
+          "type": "string"
+        },
+        "providerKind": {
+          "$ref": "#/$defs/ProviderKind"
+        },
+        "purpose": {
+          "const": "MODEL_METADATA_OBSERVATION",
+          "title": "Purpose",
+          "type": "string"
+        },
+        "region": {
+          "enum": [
+            "cn-beijing",
+            "ap-southeast-1",
+            "us-east-1",
+            "cn-hongkong",
+            "eu-central-1",
+            "ap-northeast-1"
+          ],
+          "title": "Region",
+          "type": "string"
+        },
+        "secretRef": {
+          "maxLength": 266,
+          "pattern": "^secret-ref:[A-Za-z0-9][A-Za-z0-9._/-]*$",
+          "title": "Secretref",
+          "type": "string"
+        },
+        "serviceSite": {
+          "enum": [
+            "global",
+            "international",
+            "asia-pacific-china",
+            "cn-hongkong",
+            "european-union",
+            "united-states",
+            "japan"
+          ],
+          "title": "Servicesite",
+          "type": "string"
+        },
+        "sourceId": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Sourceid",
+          "type": "string"
+        },
+        "version": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Version",
+          "type": "string"
+        },
+        "workspaceId": {
+          "anyOf": [
+            {
+              "maxLength": 63,
+              "minLength": 1,
+              "pattern": "^[a-z0-9][a-z0-9-]*$",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Workspaceid"
+        }
+      },
+      "required": [
+        "purpose",
+        "sourceId",
+        "version",
+        "connectionRef",
+        "providerKind",
+        "region",
+        "workspaceId",
+        "serviceSite",
+        "allowedModelIds",
+        "inferenceProvider",
+        "secretRef",
+        "materialVersion"
+      ],
+      "title": "MetadataSourceDefinition",
+      "type": "object"
+    },
+    "ProviderKind": {
+      "enum": [
+        "BAILIAN_COMPATIBLE_MODE"
+      ],
+      "title": "ProviderKind",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "environment": {
+      "maxLength": 32,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$",
+      "title": "Environment",
+      "type": "string"
+    },
+    "schemaVersion": {
+      "const": 1,
+      "title": "Schemaversion",
+      "type": "integer"
+    },
+    "sources": {
+      "items": {
+        "$ref": "#/$defs/MetadataSourceDefinition"
+      },
+      "maxItems": 100,
+      "title": "Sources",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "environment",
+    "sources"
+  ],
+  "title": "MetadataSourceManifest",
+  "type": "object"
+}
