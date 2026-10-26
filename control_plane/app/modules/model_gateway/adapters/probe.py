@@ -218,7 +218,14 @@ class HttpxModelProbe:
             raise CheckBlocked(CheckReason.TARGET_UNAVAILABLE) from None
         return PreparedProbe(connection.hostname, address, material)
 
-    def send(self, prepared: PreparedProbe, model_id: str, check_kind: CheckKind) -> ProbeOutcome:
+    def send(
+        self,
+        prepared: PreparedProbe,
+        model_id: str,
+        check_kind: CheckKind,
+        *,
+        dispatch_guard: Callable[[], float],
+    ) -> ProbeOutcome:
         start = time.monotonic()
         stream = (
             None
@@ -226,7 +233,9 @@ class HttpxModelProbe:
             else StreamProbe(check_kind, model_id)
         )
         try:
-            outcome = asyncio.run(self._send(prepared, model_id, check_kind, stream))
+            outcome = asyncio.run(
+                self._send(prepared, model_id, check_kind, stream, dispatch_guard)
+            )
         except Exception as error:
             if stream is not None:
                 outcome = stream.outcome(
@@ -337,17 +346,24 @@ class HttpxModelProbe:
         model_id: str,
         check_kind: CheckKind,
         stream: StreamProbe | None,
+        dispatch_guard: Callable[[], float],
     ) -> ProbeOutcome:
         # Pin the validated public IP; retain the approved hostname for Host and TLS verification.
         target = httpx.URL(f"https://{prepared.hostname}{probe_path(check_kind)}").copy_with(
             host=prepared.address
         )
-        deadline = asyncio.get_running_loop().time() + PROBE_TIMEOUT_SECONDS
+        loop = asyncio.get_running_loop()
+        # The readback itself cannot grant extra time beyond the committed lease.
+        checked_at = loop.time()
+        remaining = dispatch_guard()
+        if remaining <= 0:
+            return ProbeOutcome(state=CheckState.UNKNOWN, reason=CheckReason.EXECUTION_EXPIRED)
+        deadline = checked_at + min(PROBE_TIMEOUT_SECONDS, remaining)
         client = model_https_client(self.transport, PROBE_TIMEOUT_SECONDS)
         response: httpx.Response | None = None
         close_failed = False
         try:
-            async with asyncio.timeout_at(deadline):
+            async with asyncio.timeout_at(deadline) as budget:
                 request = client.build_request(
                     "POST",
                     target,
@@ -365,6 +381,15 @@ class HttpxModelProbe:
                     },
                     extensions={"sni_hostname": prepared.hostname},
                 )
+                # Client/request preparation can outlive the claim; fence the actual POST.
+                checked_at = loop.time()
+                remaining = dispatch_guard()
+                deadline = min(deadline, checked_at + max(0.0, remaining))
+                budget.reschedule(deadline)
+                if remaining <= 0 or loop.time() >= deadline:
+                    return ProbeOutcome(
+                        state=CheckState.UNKNOWN, reason=CheckReason.EXECUTION_EXPIRED
+                    )
                 response = await client.send(request, stream=True)
                 outcome = await self._body(response, model_id, stream, check_kind)
                 if stream is not None:

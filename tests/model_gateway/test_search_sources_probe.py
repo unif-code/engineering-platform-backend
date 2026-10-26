@@ -12,7 +12,7 @@ from control_plane.app.modules.model_gateway.domain.connections import (
     CheckKind,
     ConnectionDefinition,
 )
-from tests.model_gateway.test_probe import CONNECTION, material, public_dns, response
+from tests.model_gateway.test_probe import CONNECTION, live_dispatch, material, public_dns, response
 from tests.model_gateway.test_stream_probe import ControlledStream
 
 
@@ -71,7 +71,9 @@ def run_search(tmp_path: Path, value: object) -> ProbeOutcome:
             CONNECTION | {"responsesSearchModelIds": ["synthetic-model"]}
         )
     )
-    result = probe.send(prepared, "synthetic-model", CheckKind.SEARCH_SOURCES)
+    result = probe.send(
+        prepared, "synthetic-model", CheckKind.SEARCH_SOURCES, dispatch_guard=live_dispatch
+    )
     assert len(calls) == 1
     for private in (
         "synthetic private query",
@@ -120,7 +122,9 @@ def test_search_uses_stateless_single_tool_request(tmp_path: Path) -> None:
             CONNECTION | {"responsesSearchModelIds": ["synthetic-model"]}
         )
     )
-    result = probe.send(prepared, "synthetic-model", CheckKind.SEARCH_SOURCES)
+    result = probe.send(
+        prepared, "synthetic-model", CheckKind.SEARCH_SOURCES, dispatch_guard=live_dispatch
+    )
     assert result.state == "SUCCEEDED" and len(calls) == 1
 
 
@@ -307,7 +311,9 @@ def test_search_timeout_close_failure_and_oversize_never_replay(
         FileModelSecretPort(tmp_path), transport=httpx.MockTransport(handler), resolver=public_dns
     )
     prepared = probe.prepare(ConnectionDefinition.model_validate(CONNECTION))
-    result = probe.send(prepared, "synthetic-model", CheckKind.SEARCH_SOURCES)
+    result = probe.send(
+        prepared, "synthetic-model", CheckKind.SEARCH_SOURCES, dispatch_guard=live_dispatch
+    )
     assert result.state == "UNKNOWN" and result.reason == "RESPONSE_CLOSE_FAILED"
     assert len(calls) == 1 and result.observation is None
     monkeypatch.setattr(
@@ -322,7 +328,12 @@ def test_search_timeout_close_failure_and_oversize_never_replay(
     timed = HttpxModelProbe(
         FileModelSecretPort(tmp_path), transport=httpx.MockTransport(timeout), resolver=public_dns
     )
-    assert timed.send(prepared, "synthetic-model", CheckKind.SEARCH_SOURCES).state == "UNKNOWN"
+    assert (
+        timed.send(
+            prepared, "synthetic-model", CheckKind.SEARCH_SOURCES, dispatch_guard=live_dispatch
+        ).state
+        == "UNKNOWN"
+    )
     assert len(calls) == 2
     assert run_search(tmp_path, b"x" * 65537).reason == "RESPONSE_TOO_LARGE"
 

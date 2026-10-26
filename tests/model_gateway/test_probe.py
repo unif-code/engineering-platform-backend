@@ -17,6 +17,7 @@ from control_plane.app.modules.model_gateway.domain.checks import (
     CheckState,
 )
 from control_plane.app.modules.model_gateway.domain.connections import (
+    EXECUTION_LEASE_SECONDS,
     CheckKind,
     ConnectionDefinition,
     probe_body,
@@ -54,6 +55,11 @@ async def public_dns(hostname: str) -> tuple[str, ...]:
     return ("8.8.8.8",)
 
 
+def live_dispatch() -> float:
+    """Direct adapter cases have a live synthetic lease; worker tests use the real guard."""
+    return float(EXECUTION_LEASE_SECONDS)
+
+
 def response(
     body: object = RESPONSE, *, status: int = 200, headers: dict[str, str] | None = None
 ) -> httpx.Response:
@@ -86,7 +92,9 @@ def test_single_send_uses_pinned_public_ip_original_sni_fixed_probe_and_optional
         FileModelSecretPort(tmp_path), transport=httpx.MockTransport(handler), resolver=public_dns
     )
     prepared = probe.prepare(ConnectionDefinition.model_validate(CONNECTION))
-    result = probe.send(prepared, "synthetic-model", CheckKind.BASIC_TEXT)
+    result = probe.send(
+        prepared, "synthetic-model", CheckKind.BASIC_TEXT, dispatch_guard=live_dispatch
+    )
     assert result.state is CheckState.SUCCEEDED and result.usage is None
     assert len(calls) == 1 and result.elapsed_ms is not None
     assert "synthetic-only-secret" not in result.model_dump_json()
@@ -146,6 +154,7 @@ def test_protocol_failures_are_bounded_sanitized_and_never_retried(
         probe.prepare(ConnectionDefinition.model_validate(CONNECTION)),
         "synthetic-model",
         CheckKind.BASIC_TEXT,
+        dispatch_guard=live_dispatch,
     )
     assert result.state is CheckState.FAILED and result.reason is reason
     assert len(calls) == 1
@@ -173,6 +182,7 @@ def test_send_timeout_is_unknown_and_usage_is_preserved_without_inventing_zero(
         probe.prepare(ConnectionDefinition.model_validate(CONNECTION)),
         "synthetic-model",
         CheckKind.BASIC_TEXT,
+        dispatch_guard=live_dispatch,
     )
     assert result.state is CheckState.UNKNOWN and len(calls) == 1
     assert result.provider_request_id is None
@@ -236,6 +246,7 @@ def test_provider_cannot_echo_material_in_otherwise_valid_metadata(tmp_path: Pat
         probe.prepare(ConnectionDefinition.model_validate(CONNECTION)),
         "synthetic-model",
         CheckKind.BASIC_TEXT,
+        dispatch_guard=live_dispatch,
     )
     assert result.state is CheckState.FAILED and result.reason is CheckReason.INVALID_RESPONSE
     assert "synthetic-only-secret" not in result.model_dump_json()

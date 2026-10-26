@@ -196,9 +196,35 @@ def process_connection_check(check_id: str, *, dependencies: ModelCheckWorkerDep
             )
             return False
     assert prepared is not None and connection is not None
-    # No transaction or row lock spans this boundary. RUNNING is never sent again.
+
+    def dispatch_guard() -> float:
+        # Release this read transaction before HTTP; a recovered claim is never reacquired.
+        with deps.engine.connect() as db:
+            current = deps.repository_factory(db).check(running.id)
+            if (
+                current is not None
+                and current.state is CheckState.RUNNING
+                and current.revision == running.revision
+                and current.execution_token == running.execution_token
+                and current.deadline_at == running.deadline_at
+                and current.deadline_at is not None
+                and current.deadline_at > deps.common.now()
+            ):
+                return max(0.0, (current.deadline_at - deps.common.now()).total_seconds())
+            return 0.0
+
+    attempted = False
     try:
-        outcome = deps.probe.send(prepared, running.input.provider_model_id, running.check_kind)
+        if dispatch_guard() > 0:
+            attempted = True
+            outcome = deps.probe.send(
+                prepared,
+                running.input.provider_model_id,
+                running.check_kind,
+                dispatch_guard=dispatch_guard,
+            )
+        else:
+            outcome = ProbeOutcome(state=CheckState.UNKNOWN, reason=CheckReason.EXECUTION_EXPIRED)
     except Exception:
         outcome = ProbeOutcome(state=CheckState.UNKNOWN, reason=CheckReason.REQUEST_OUTCOME_UNKNOWN)
     try:
@@ -218,12 +244,12 @@ def process_connection_check(check_id: str, *, dependencies: ModelCheckWorkerDep
             or current.execution_token != running.execution_token
             or current.revision != running.revision
         ):
-            return True
+            return attempted
         if current.deadline_at is None or current.deadline_at <= deps.common.now():
             outcome = ProbeOutcome(state=CheckState.UNKNOWN, reason=CheckReason.EXECUTION_EXPIRED)
             material = InputCurrentness.UNVERIFIABLE
         _finish(repository, current, outcome, material, deps)
-    return True
+    return attempted
 
 
 def run_model_check_batch(

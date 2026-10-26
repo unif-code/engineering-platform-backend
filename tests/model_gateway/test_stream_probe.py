@@ -13,7 +13,7 @@ from control_plane.app.modules.model_gateway.domain.connections import (
     CheckKind,
     ConnectionDefinition,
 )
-from tests.model_gateway.test_probe import CONNECTION, material, public_dns
+from tests.model_gateway.test_probe import CONNECTION, live_dispatch, material, public_dns
 
 
 def chunk(content: str | None = None, finish: str | None = None, **extra: object) -> dict[str, Any]:
@@ -69,7 +69,9 @@ def test_streaming_completion_and_actual_local_stop(tmp_path: Path) -> None:
         FileModelSecretPort(tmp_path), transport=httpx.MockTransport(send), resolver=public_dns
     )
     prepared = probe.prepare(ConnectionDefinition.model_validate(CONNECTION))
-    full = probe.send(prepared, "synthetic-model", CheckKind.STREAM_TEXT)
+    full = probe.send(
+        prepared, "synthetic-model", CheckKind.STREAM_TEXT, dispatch_guard=live_dispatch
+    )
     assert isinstance(full.observation, StreamObservation)
     assert full.state == "SUCCEEDED" and full.observation.completion_marker_observed
     assert stream.closed and len(calls) == 1
@@ -81,7 +83,9 @@ def test_streaming_completion_and_actual_local_stop(tmp_path: Path) -> None:
             event("[DONE]"),
         ]
     )
-    stopped = probe.send(prepared, "synthetic-model", CheckKind.STREAM_STOP)
+    stopped = probe.send(
+        prepared, "synthetic-model", CheckKind.STREAM_STOP, dispatch_guard=live_dispatch
+    )
     assert isinstance(stopped.observation, StreamObservation)
     assert stopped.state == "SUCCEEDED" and stopped.observation.local_stream_closed
     assert stopped.observation.provider_cancellation == "UNCONFIRMED"
@@ -107,7 +111,10 @@ def run_stream(
         FileModelSecretPort(tmp_path), transport=httpx.MockTransport(handler), resolver=public_dns
     )
     result = probe.send(
-        probe.prepare(ConnectionDefinition.model_validate(CONNECTION)), "synthetic-model", kind
+        probe.prepare(ConnectionDefinition.model_validate(CONNECTION)),
+        "synthetic-model",
+        kind,
+        dispatch_guard=live_dispatch,
     )
     assert len(calls) == 1
     return result

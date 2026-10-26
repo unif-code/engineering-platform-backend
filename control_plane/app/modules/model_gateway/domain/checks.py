@@ -1,9 +1,9 @@
 import re
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from control_plane.app.modules.model_gateway.domain import (
     ConnectionRef,
@@ -251,6 +251,24 @@ class ConnectionCheck(BaseModel):
     reported_model_id: str | None
     usage: ProbeUsage | None
     material_currentness: InputCurrentness
+
+    @model_validator(mode="after")
+    def consistent_execution_fence(self) -> Self:
+        fence = (self.execution_token, self.started_at, self.deadline_at)
+        if (self.attempt == 0 and any(value is not None for value in fence)) or (
+            self.attempt == 1
+            and (any(value is None for value in fence) or self.input.connection_ref is None)
+        ):
+            raise ValueError("invalid check execution fence")
+        if (
+            self.started_at is not None
+            and self.deadline_at is not None
+            and self.deadline_at <= self.started_at
+        ):
+            raise ValueError("invalid check execution deadline")
+        if (self.state in {CheckState.QUEUED, CheckState.BLOCKED}) != (self.attempt == 0):
+            raise ValueError("check state does not match its execution attempt")
+        return self
 
 
 class CheckBlocked(Exception):

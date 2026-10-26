@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -39,7 +40,15 @@ class CheckActorPort(Protocol):
 
 class ProbePort(Protocol):
     def prepare(self, connection: ConnectionDefinition) -> Any: ...
-    def send(self, prepared: Any, model_id: str, check_kind: CheckKind) -> ProbeOutcome: ...
+    # Return remaining lease seconds, or zero when the committed dispatch fence is lost.
+    def send(
+        self,
+        prepared: Any,
+        model_id: str,
+        check_kind: CheckKind,
+        *,
+        dispatch_guard: Callable[[], float],
+    ) -> ProbeOutcome: ...
     def material_version(self, connection: ConnectionDefinition) -> str: ...
 
 
