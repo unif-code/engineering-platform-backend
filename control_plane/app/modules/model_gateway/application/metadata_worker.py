@@ -183,8 +183,34 @@ def process_metadata_observation(
             )
             return False
     assert prepared is not None and source is not None
+
+    def dispatch_guard() -> float:
+        # Release the read transaction before DNS/HTTP; a recovered fence is never reacquired.
+        with deps.engine.connect() as db:
+            current = deps.repository_factory(db).observation(running.id)
+            if (
+                current is not None
+                and current.state is MetadataState.RUNNING
+                and current.revision == running.revision
+                and current.execution_token == running.execution_token
+                and current.deadline_at == running.deadline_at
+                and current.deadline_at is not None
+                and current.deadline_at > deps.common.now()
+            ):
+                return max(0.0, (current.deadline_at - deps.common.now()).total_seconds())
+            return 0.0
+
+    attempted = False
     try:
-        outcome = deps.adapter.observe(prepared, running.input.provider_model_id)
+        if dispatch_guard() > 0:
+            attempted = True
+            outcome = deps.adapter.observe(
+                prepared, running.input.provider_model_id, dispatch_guard=dispatch_guard
+            )
+        else:
+            outcome = MetadataOutcome(
+                state=MetadataState.UNKNOWN, reason=MetadataReason.EXECUTION_EXPIRED
+            )
     except Exception:
         outcome = MetadataOutcome(
             state=MetadataState.UNKNOWN, reason=MetadataReason.REQUEST_OUTCOME_UNKNOWN
@@ -206,14 +232,14 @@ def process_metadata_observation(
             or current.execution_token != running.execution_token
             or current.revision != running.revision
         ):
-            return True
+            return attempted
         if current.deadline_at is None or current.deadline_at <= deps.common.now():
             outcome = MetadataOutcome(
                 state=MetadataState.UNKNOWN, reason=MetadataReason.EXECUTION_EXPIRED
             )
             material = MetadataApplicability.UNVERIFIABLE
         _finish(repository, current, outcome, material, deps)
-    return True
+    return attempted
 
 
 def run_model_metadata_batch(

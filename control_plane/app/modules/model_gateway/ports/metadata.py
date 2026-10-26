@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -16,7 +17,10 @@ class MetadataSourceDirectoryPort(Protocol):
 
 class ModelMetadataPort(Protocol):
     def prepare(self, source: MetadataSourceDefinition) -> Any: ...
-    def observe(self, prepared: Any, model_id: str) -> MetadataOutcome: ...
+    # The guard returns current lease seconds remaining, or zero after losing the fence.
+    def observe(
+        self, prepared: Any, model_id: str, *, dispatch_guard: Callable[[], float]
+    ) -> MetadataOutcome: ...
     def material_version(self, source: MetadataSourceDefinition) -> str: ...
 
 

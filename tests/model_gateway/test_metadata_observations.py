@@ -1,3 +1,7 @@
+import asyncio
+import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
@@ -209,8 +213,8 @@ def test_expired_lease_is_unknown_and_late_completion_cannot_overwrite_or_resend
     identifier = accepted(h).json()["id"]
     original = h.worker.adapter.observe
 
-    def observe(prepared: Any, model_id: str) -> Any:
-        result = original(prepared, model_id)
+    def observe(prepared: Any, model_id: str, *, dispatch_guard: Callable[[], float]) -> Any:
+        result = original(prepared, model_id, dispatch_guard=dispatch_guard)
         h.now += timedelta(seconds=26)
         assert recover_expired_metadata_observations(dependencies=h.worker, limit=1) == 1
         return result
@@ -225,6 +229,156 @@ def test_expired_lease_is_unknown_and_late_completion_cannot_overwrite_or_resend
     assert h.store.jobs[identifier].reason is MetadataReason.EXECUTION_EXPIRED
     assert not process_metadata_observation(identifier, dependencies=h.worker)
     assert len(h.calls) == 1
+
+
+@pytest.mark.parametrize("after_claim", ["live", "expired", "recovered"])
+def test_dispatch_uses_a_live_committed_fence_before_starting_http(
+    metadata_http: Any,
+    after_claim: str,
+) -> None:
+    h = metadata_http
+    identifier = accepted(h).json()["id"]
+    original_begin = h.store.begin
+    intercepted = False
+
+    @contextmanager
+    def begin() -> Iterator[object]:
+        nonlocal intercepted
+        with original_begin() as db:
+            yield db
+        if not intercepted and h.store.jobs[identifier].state is MetadataState.RUNNING:
+            intercepted = True
+            if after_claim != "live":
+                h.now += timedelta(seconds=26)
+            if after_claim == "recovered":
+                assert recover_expired_metadata_observations(dependencies=h.worker, limit=1) == 1
+                assert h.store.jobs[identifier].state is MetadataState.UNKNOWN
+
+    h.store.begin = begin
+    attempted = process_metadata_observation(identifier, dependencies=h.worker)
+    assert intercepted
+    if after_claim == "live":
+        assert attempted and len(h.calls) == 1
+        assert h.store.jobs[identifier].state is MetadataState.REPORTED
+    else:
+        assert h.calls == []
+        assert not attempted
+        assert h.store.jobs[identifier].state is MetadataState.UNKNOWN
+        assert h.store.jobs[identifier].reason is MetadataReason.EXECUTION_EXPIRED
+    assert len(h.store.jobs) == 1
+    assert not process_metadata_observation(identifier, dependencies=h.worker)
+
+
+def test_recovery_during_dns_is_checked_again_at_the_real_get_boundary(metadata_http: Any) -> None:
+    h = metadata_http
+    identifier = accepted(h).json()["id"]
+    recovered_snapshot = None
+    sent: list[httpx.Request] = []
+
+    async def dns(hostname: str) -> tuple[str, ...]:
+        nonlocal recovered_snapshot
+        h.now += timedelta(seconds=26)
+        assert recover_expired_metadata_observations(dependencies=h.worker, limit=1) == 1
+        recovered_snapshot = h.store.jobs[identifier].model_dump_json()
+        return await public_dns(hostname)
+
+    def forbidden(_request: httpx.Request) -> httpx.Response:
+        sent.append(_request)
+        return response(RESPONSE)
+
+    adapter = HttpxModelMetadata(
+        FileModelSecretPort(h.material_root),
+        transport=httpx.MockTransport(forbidden),
+        resolver=dns,
+    )
+    process_metadata_observation(identifier, dependencies=replace(h.worker, adapter=adapter))
+    assert recovered_snapshot is not None
+    assert h.store.jobs[identifier].model_dump_json() == recovered_snapshot
+    assert len(h.store.audit) == 2 and h.calls == [] and sent == []
+
+
+@pytest.mark.parametrize("paused_seconds", [0, 10])
+def test_network_window_never_restarts_beyond_remaining_committed_lease(
+    metadata_http: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    paused_seconds: int,
+) -> None:
+    h = metadata_http
+    identifier = accepted(h).json()["id"]
+    original_begin = h.store.begin
+    paused = False
+
+    @contextmanager
+    def begin() -> Iterator[object]:
+        nonlocal paused
+        with original_begin() as db:
+            yield db
+        if not paused and h.store.jobs[identifier].state is MetadataState.RUNNING:
+            paused = True
+            h.now += timedelta(seconds=paused_seconds)
+
+    h.store.begin = begin
+    original_timeout = asyncio.timeout_at
+    windows: list[float] = []
+
+    def timeout_at(deadline: float | None) -> asyncio.Timeout:
+        assert deadline is not None
+        windows.append(deadline - asyncio.get_running_loop().time())
+        return original_timeout(deadline)
+
+    monkeypatch.setattr(asyncio, "timeout_at", timeout_at)
+    assert process_metadata_observation(identifier, dependencies=h.worker)
+    assert len(h.calls) == 1 and h.store.jobs[identifier].state is MetadataState.REPORTED
+    assert windows and 0 < windows[0] <= min(20, 25 - paused_seconds)
+    assert all(window <= windows[0] for window in windows[1:])
+
+
+@pytest.mark.parametrize("pause", [0.0, 24.5])
+def test_real_http_wait_is_cut_off_by_remaining_lease_not_a_fresh_network_budget(
+    metadata_http: Any,
+    pause: float,
+) -> None:
+    h = metadata_http
+    identifier = accepted(h).json()["id"]
+    epoch, origin = h.now, time.monotonic()
+    offset = 0.0
+    original_begin = h.store.begin
+    paused = False
+    requests: list[httpx.Request] = []
+    completed: list[bool] = []
+
+    def now() -> Any:
+        return epoch + timedelta(seconds=offset + time.monotonic() - origin)
+
+    @contextmanager
+    def begin() -> Iterator[object]:
+        nonlocal paused, offset
+        with original_begin() as db:
+            yield db
+        if not paused and h.store.jobs[identifier].state is MetadataState.RUNNING:
+            paused = True
+            offset = pause
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        await asyncio.sleep(1.0)
+        completed.append(True)
+        return response(RESPONSE)
+
+    h.store.begin = begin
+    adapter = HttpxModelMetadata(
+        FileModelSecretPort(h.material_root),
+        transport=httpx.MockTransport(handler),
+        resolver=public_dns,
+    )
+    deps = replace(h.worker, common=replace(h.worker.common, now=now), adapter=adapter)
+    process_metadata_observation(identifier, dependencies=deps)
+    assert paused and len(requests) == 1
+    if pause == 0:
+        assert completed == [True] and h.store.jobs[identifier].state is MetadataState.REPORTED
+    else:
+        assert completed == [] and h.store.jobs[identifier].state is MetadataState.UNKNOWN
+        assert h.store.jobs[identifier].reason is MetadataReason.EXECUTION_EXPIRED
 
 
 def test_audit_failure_rolls_back_admission_and_idempotency_in_same_transaction(

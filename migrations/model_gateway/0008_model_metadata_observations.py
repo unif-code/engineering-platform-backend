@@ -45,7 +45,8 @@ def upgrade() -> None:
             CHECK ((attempt=0 AND execution_token IS NULL
                     AND started_at IS NULL AND deadline_at IS NULL)
                 OR (attempt=1 AND execution_token IS NOT NULL
-                    AND started_at IS NOT NULL AND deadline_at>started_at)),
+                    AND started_at IS NOT NULL AND deadline_at IS NOT NULL
+                    AND deadline_at>started_at)),
             CHECK ((state IN ('QUEUED','BLOCKED') AND attempt=0)
                 OR (state IN ('RUNNING','REPORTED','NOT_FOUND','INDETERMINATE','FAILED','UNKNOWN')
                     AND attempt=1)),

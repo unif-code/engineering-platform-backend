@@ -42,6 +42,10 @@ class PreparedMetadata:
     material: ProviderSecretMaterial
 
 
+class _DispatchFenceLost(Exception):
+    """No Provider request may start after dispatch ownership is lost."""
+
+
 def parse_metadata(raw: bytes, model_id: str, inference_provider: str) -> MetadataOutcome:
     if len(raw) > METADATA_MAX_BYTES:
         return MetadataOutcome(state=MetadataState.FAILED, reason=MetadataReason.RESPONSE_TOO_LARGE)
@@ -171,17 +175,29 @@ class HttpxModelMetadata:
             raise MetadataBlocked(MetadataReason.MATERIAL_VERSION_CHANGED)
         return PreparedMetadata(source, material)
 
-    def observe(self, prepared: PreparedMetadata, model_id: str) -> MetadataOutcome:
+    def observe(
+        self, prepared: PreparedMetadata, model_id: str, *, dispatch_guard: Callable[[], float]
+    ) -> MetadataOutcome:
         started = time.monotonic()
-        result = asyncio.run(self._observe(prepared, model_id))
+        result = asyncio.run(self._observe(prepared, model_id, dispatch_guard))
         if prepared.material.value.get_secret_value() in result.model_dump_json():
             result = MetadataOutcome(
                 state=MetadataState.FAILED, reason=MetadataReason.INVALID_RESPONSE
             )
         return result.model_copy(update={"elapsed_ms": int((time.monotonic() - started) * 1000)})
 
-    async def _observe(self, prepared: PreparedMetadata, model_id: str) -> MetadataOutcome:
-        deadline = asyncio.get_running_loop().time() + METADATA_TIMEOUT_SECONDS
+    async def _observe(
+        self, prepared: PreparedMetadata, model_id: str, dispatch_guard: Callable[[], float]
+    ) -> MetadataOutcome:
+        loop = asyncio.get_running_loop()
+        # Anchor before the readback so its time cannot be added back to the lease.
+        checked_at = loop.time()
+        remaining = dispatch_guard()
+        if remaining <= 0:
+            return MetadataOutcome(
+                state=MetadataState.UNKNOWN, reason=MetadataReason.EXECUTION_EXPIRED
+            )
+        deadline = checked_at + min(METADATA_TIMEOUT_SECONDS, remaining)
         client: httpx.AsyncClient | None = None
         response: httpx.Response | None = None
         sent = False
@@ -190,7 +206,7 @@ class HttpxModelMetadata:
             state=MetadataState.UNKNOWN, reason=MetadataReason.REQUEST_OUTCOME_UNKNOWN
         )
         try:
-            async with asyncio.timeout_at(deadline):
+            async with asyncio.timeout_at(deadline) as budget:
                 hostname = prepared.source.hostname
                 address = await verified_public_address(hostname, self.resolver)
                 client = model_https_client(self.transport, METADATA_TIMEOUT_SECONDS)
@@ -213,6 +229,13 @@ class HttpxModelMetadata:
                     },
                     extensions={"sni_hostname": hostname},
                 )
+                # DNS and client preparation can outlive the worker's claim. Recheck at GET.
+                checked_at = loop.time()
+                remaining = dispatch_guard()
+                deadline = min(deadline, checked_at + max(0.0, remaining))
+                budget.reschedule(deadline)
+                if remaining <= 0 or loop.time() >= deadline:
+                    raise _DispatchFenceLost
                 sent = True
                 response = await client.send(request, stream=True)
                 if response.status_code != 200:
@@ -247,6 +270,10 @@ class HttpxModelMetadata:
                         result = parse_metadata(
                             bytes(raw), model_id, prepared.source.inference_provider
                         )
+        except _DispatchFenceLost:
+            result = MetadataOutcome(
+                state=MetadataState.UNKNOWN, reason=MetadataReason.EXECUTION_EXPIRED
+            )
         except CheckBlocked as error:
             result = MetadataOutcome(
                 state=MetadataState.FAILED, reason=MetadataReason(error.reason.value)

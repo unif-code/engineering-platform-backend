@@ -1,21 +1,22 @@
 """CI PostgreSQL only: default Session, real owner transactions and injected synthetic HTTP."""
 
 import json
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from dataclasses import replace
 from datetime import timedelta
 from io import StringIO
 from pathlib import Path
 from threading import Event
-from typing import Any
+from typing import Any, cast
 from unittest.mock import patch
 from uuid import uuid4
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import Connection, Engine, text
 from sqlalchemy.exc import DBAPIError
 
 import control_plane.app.bootstrap.app as bootstrap
@@ -229,6 +230,28 @@ def test_real_metadata_lease_recovery_does_not_send_and_preserves_original_recei
     key = "metadata-expired-original"
     path, receipt, body = accept_metadata(journey, deployment, key=key)
     now = bootstrap.model_gateway_http_runtime().dependencies.now()
+    for missing in ("token", "started", "deadline"):
+        values = {
+            "token": str(uuid4()),
+            "started": now,
+            "deadline": now + timedelta(seconds=25),
+            "id": receipt["id"],
+        }
+        values[missing] = None
+        with pytest.raises(DBAPIError) as caught:
+            with journey.database.engines["model_gateway_worker"].begin() as db:
+                db.execute(
+                    text("""
+                    UPDATE model_gateway.metadata_observation
+                    SET state='RUNNING',revision=revision+1,attempt=1,
+                        execution_token=:token,started_at=:started,deadline_at=:deadline
+                    WHERE id=:id
+                """),
+                    values,
+                )
+        assert getattr(caught.value.orig, "sqlstate", None) == "23514"
+        assert journey.admin.get(path + "/" + receipt["id"]).json()["state"] == "QUEUED"
+    # The same role and SQL fields must still admit a complete live fence.
     with journey.database.engines["model_gateway_worker"].begin() as db:
         db.execute(
             text("""
@@ -302,3 +325,58 @@ def test_real_metadata_admission_audit_failure_rolls_back_job_and_receipt(
             ).scalar_one()
             == 0
         )
+
+
+def test_real_claim_commit_recovery_fences_provider_dispatch(
+    journey: Journey,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metadata_configured(tmp_path, monkeypatch)
+    deployment = candidate(journey)
+    path, receipt, _ = accept_metadata(journey, deployment)
+    calls: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return response(RESPONSE)
+
+    original = metadata_worker(handler)
+    clock = {"now": original.common.now()}
+    dependencies = replace(original, common=replace(original.common, now=lambda: clock["now"]))
+    engine = original.engine
+    intercepted = False
+
+    class CommitHook:
+        def connect(self) -> Connection:
+            return engine.connect()
+
+        @contextmanager
+        def begin(self) -> Iterator[Connection]:
+            nonlocal intercepted
+            with engine.begin() as db:
+                yield db
+            if not intercepted:
+                with engine.connect() as db:
+                    state = db.execute(
+                        text("SELECT state FROM model_gateway.metadata_observation WHERE id=:id"),
+                        {"id": receipt["id"]},
+                    ).scalar_one()
+                if state == "RUNNING":
+                    intercepted = True
+                    clock["now"] += timedelta(seconds=26)
+                    assert (
+                        recover_expired_metadata_observations(
+                            dependencies=dependencies,
+                            limit=1,
+                        )
+                        == 1
+                    )
+
+    guarded = replace(dependencies, engine=cast(Engine, CommitHook()))
+    assert not process_metadata_observation(receipt["id"], dependencies=guarded)
+    assert intercepted and calls == []
+    result = journey.admin.get(path + "/" + receipt["id"])
+    assert result.status_code == 200 and result.json()["state"] == "UNKNOWN"
+    assert result.json()["reason"] == "EXECUTION_EXPIRED"
+    assert not process_metadata_observation(receipt["id"], dependencies=dependencies)

@@ -75,7 +75,9 @@ def test_one_official_get_reports_values_without_promoting_declared_capability(
         FileModelSecretPort(tmp_path), transport=httpx.MockTransport(handler), resolver=public_dns
     )
     outcome = adapter.observe(
-        adapter.prepare(MetadataSourceDefinition.model_validate(SOURCE)), "synthetic-model"
+        adapter.prepare(MetadataSourceDefinition.model_validate(SOURCE)),
+        "synthetic-model",
+        dispatch_guard=lambda: 25.0,
     )
     print(
         "METADATA37_ADAPTER",
@@ -213,8 +215,11 @@ def test_strict_response_uses_valid_control_and_exactly_one_get_per_observation(
         FileModelSecretPort(tmp_path), transport=httpx.MockTransport(handler), resolver=public_dns
     )
     prepared = adapter.prepare(MetadataSourceDefinition.model_validate(SOURCE))
-    assert adapter.observe(prepared, "synthetic-model").state is MetadataState.REPORTED
-    outcome = adapter.observe(prepared, "synthetic-model")
+    assert (
+        adapter.observe(prepared, "synthetic-model", dispatch_guard=lambda: 25.0).state
+        is MetadataState.REPORTED
+    )
+    outcome = adapter.observe(prepared, "synthetic-model", dispatch_guard=lambda: 25.0)
     assert len(calls) == 2 and all(x.method == "GET" for x in calls)
     assert outcome.state is expected
     if case in {"null", "missing"}:
@@ -244,7 +249,9 @@ def test_source_http_failure_is_an_observation_result_without_retry(
         FileModelSecretPort(tmp_path), transport=httpx.MockTransport(handler), resolver=public_dns
     )
     result = adapter.observe(
-        adapter.prepare(MetadataSourceDefinition.model_validate(SOURCE)), "synthetic-model"
+        adapter.prepare(MetadataSourceDefinition.model_validate(SOURCE)),
+        "synthetic-model",
+        dispatch_guard=lambda: 25.0,
     )
     assert result.state is MetadataState.FAILED and result.report is None
     assert len(calls) == 1 and result.response_sha256 is None
@@ -271,7 +278,9 @@ def test_dns_and_http_share_one_deadline(tmp_path: Path, monkeypatch: pytest.Mon
         FileModelSecretPort(tmp_path), transport=httpx.MockTransport(handler), resolver=dns
     )
     result = adapter.observe(
-        adapter.prepare(MetadataSourceDefinition.model_validate(SOURCE)), "synthetic-model"
+        adapter.prepare(MetadataSourceDefinition.model_validate(SOURCE)),
+        "synthetic-model",
+        dispatch_guard=lambda: 25.0,
     )
     assert calls == 1 and result.state is MetadataState.UNKNOWN and result.report is None
 
@@ -301,7 +310,9 @@ def test_cleanup_cannot_extend_deadline_or_publish_a_report(
         resolver=public_dns,
     )
     result = adapter.observe(
-        adapter.prepare(MetadataSourceDefinition.model_validate(SOURCE)), "synthetic-model"
+        adapter.prepare(MetadataSourceDefinition.model_validate(SOURCE)),
+        "synthetic-model",
+        dispatch_guard=lambda: 25.0,
     )
     assert result.state is MetadataState.UNKNOWN and result.report is None
 
@@ -314,7 +325,9 @@ def test_large_response_and_private_dns_never_produce_partial_metadata(tmp_path:
         resolver=public_dns,
     )
     result = adapter.observe(
-        adapter.prepare(MetadataSourceDefinition.model_validate(SOURCE)), "synthetic-model"
+        adapter.prepare(MetadataSourceDefinition.model_validate(SOURCE)),
+        "synthetic-model",
+        dispatch_guard=lambda: 25.0,
     )
     assert result.reason is MetadataReason.RESPONSE_TOO_LARGE and result.response_sha256 is None
 
@@ -330,7 +343,9 @@ def test_large_response_and_private_dns_never_produce_partial_metadata(tmp_path:
         resolver=private_dns,
     )
     result = adapter.observe(
-        adapter.prepare(MetadataSourceDefinition.model_validate(SOURCE)), "synthetic-model"
+        adapter.prepare(MetadataSourceDefinition.model_validate(SOURCE)),
+        "synthetic-model",
+        dispatch_guard=lambda: 25.0,
     )
     assert result.reason is MetadataReason.TARGET_NOT_ALLOWED
 

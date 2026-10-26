@@ -123,7 +123,7 @@ def test_fresh_upgrade_installs_requirement_and_all_visible_heads(
                 db.execute(text("SELECT version_num FROM alembic_version")).scalars()
             )
         assert expected_heads == {
-            "0007_model_material_sources",
+            "0008_model_metadata_observations",
             "0003_agent_run_recovery",
             "0010_audit_model_worker_grant",
             "0015_identity_draft_revisions",
@@ -135,7 +135,7 @@ def test_fresh_upgrade_installs_requirement_and_all_visible_heads(
             "0011_sc_delivery_join",
         }
         assert installed_heads == {
-            "0007_model_material_sources",
+            "0008_model_metadata_observations",
             "0003_agent_run_recovery",
             "0010_audit_model_worker_grant",
             "0015_identity_draft_revisions",
