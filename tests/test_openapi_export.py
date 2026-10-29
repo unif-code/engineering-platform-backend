@@ -26,8 +26,8 @@ def test_render_is_deterministic_and_versioned() -> None:
     first, second = render(), render()
     assert first == second
     assert f'"version": "{__version__}"' in first
-    assert json.loads(first)["info"]["version"] == "3.12.0"
-    assert json.loads(render_sandbox())["info"]["version"] == "3.12.0"
+    assert json.loads(first)["info"]["version"] == "4.0.0"
+    assert json.loads(render_sandbox())["info"]["version"] == "4.0.0"
 
 
 def test_metadata_source_schema_requires_an_independent_purpose_and_has_no_arbitrary_endpoint() -> (

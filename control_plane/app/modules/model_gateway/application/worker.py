@@ -246,7 +246,9 @@ def process_connection_check(check_id: str, *, dependencies: ModelCheckWorkerDep
         ):
             return attempted
         if current.deadline_at is None or current.deadline_at <= deps.common.now():
-            outcome = ProbeOutcome(state=CheckState.UNKNOWN, reason=CheckReason.EXECUTION_EXPIRED)
+            outcome = outcome.model_copy(
+                update={"state": CheckState.UNKNOWN, "reason": CheckReason.EXECUTION_EXPIRED}
+            )
             material = InputCurrentness.UNVERIFIABLE
         _finish(repository, current, outcome, material, deps)
     return attempted
