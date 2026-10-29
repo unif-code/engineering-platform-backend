@@ -12,8 +12,12 @@ from dataclasses import dataclass
 from threading import Thread
 
 import httpx
-from pydantic import TypeAdapter, ValidationError
+from pydantic import ValidationError
 
+from control_plane.app.modules.model_gateway.adapters.chat_identity import (
+    ChatIdentityMismatch,
+    completion_metadata,
+)
 from control_plane.app.modules.model_gateway.adapters.search_sources import (
     parse_search_response,
     search_failure,
@@ -22,17 +26,16 @@ from control_plane.app.modules.model_gateway.adapters.stream import (
     StreamProbe,
     StreamProtocolError,
 )
-from control_plane.app.modules.model_gateway.domain import ProviderModelId
+from control_plane.app.modules.model_gateway.adapters.tool_calls import parse_tool_call_response
 from control_plane.app.modules.model_gateway.domain.checks import (
     BasicTextObservation,
     CheckBlocked,
     CheckReason,
     CheckState,
     ProbeOutcome,
-    ProbeUsage,
     SearchSourceObservation,
     ThinkingObservation,
-    provider_request_id,
+    ToolCallObservation,
 )
 from control_plane.app.modules.model_gateway.domain.connections import (
     MAX_RESPONSE_BYTES,
@@ -126,19 +129,7 @@ def model_https_client(
 def parse_response(raw: bytes, requested_model: str) -> ProbeOutcome:
     try:
         value = json.loads(raw)
-        if not isinstance(value, dict) or value.get("object") != "chat.completion":
-            raise ValueError
-        reported = TypeAdapter(ProviderModelId).validate_python(value.get("model"))
-        request_id = provider_request_id(value.get("id"))
-        usage = None if value.get("usage") is None else ProbeUsage.model_validate(value["usage"])
-        if reported != requested_model:
-            return ProbeOutcome(
-                state=CheckState.FAILED,
-                reason=CheckReason.MODEL_IDENTITY_MISMATCH,
-                provider_request_id=request_id,
-                reported_model_id=reported,
-                usage=usage,
-            )
+        metadata = completion_metadata(value, requested_model)
         choices = value.get("choices")
         if not isinstance(choices, list) or len(choices) != 1 or not isinstance(choices[0], dict):
             raise ValueError
@@ -147,9 +138,7 @@ def parse_response(raw: bytes, requested_model: str) -> ProbeOutcome:
             return ProbeOutcome(
                 state=CheckState.FAILED,
                 reason=CheckReason.RESPONSE_TRUNCATED,
-                provider_request_id=request_id,
-                reported_model_id=reported,
-                usage=usage,
+                **metadata,
             )
         message = choice.get("message")
         if not isinstance(message, dict) or message.get("role") != "assistant":
@@ -158,9 +147,7 @@ def parse_response(raw: bytes, requested_model: str) -> ProbeOutcome:
             return ProbeOutcome(
                 state=CheckState.FAILED,
                 reason=CheckReason.RESPONSE_REFUSED,
-                provider_request_id=request_id,
-                reported_model_id=reported,
-                usage=usage,
+                **metadata,
             )
         content = message.get("content")
         if (
@@ -173,10 +160,10 @@ def parse_response(raw: bytes, requested_model: str) -> ProbeOutcome:
             raise ValueError
         return ProbeOutcome(
             state=CheckState.SUCCEEDED,
-            provider_request_id=request_id,
-            reported_model_id=reported,
-            usage=usage,
+            **metadata,
         )
+    except ChatIdentityMismatch as error:
+        return error.outcome
     except (ValueError, TypeError, ValidationError, UnicodeError, RecursionError):
         return ProbeOutcome(state=CheckState.FAILED, reason=CheckReason.INVALID_RESPONSE)
 
@@ -229,7 +216,7 @@ class HttpxModelProbe:
         start = time.monotonic()
         stream = (
             None
-            if check_kind in (CheckKind.BASIC_TEXT, CheckKind.SEARCH_SOURCES)
+            if check_kind in (CheckKind.BASIC_TEXT, CheckKind.SEARCH_SOURCES, CheckKind.TOOL_CALL)
             else StreamProbe(check_kind, model_id)
         )
         try:
@@ -304,7 +291,7 @@ class HttpxModelProbe:
                 return stream.outcome(CheckState.FAILED, error.reason)
         chunks = bytearray()
         raw_chunks = response.aiter_raw(chunk_size=4096)
-        if check_kind is CheckKind.SEARCH_SOURCES:
+        if check_kind in (CheckKind.SEARCH_SOURCES, CheckKind.TOOL_CALL):
             if not isinstance(response.stream, httpx.AsyncByteStream):
                 raise RuntimeError("async response stream required")
             # Keep EOF cleanup in _send's bounded finally. aiter_raw marks the response
@@ -315,6 +302,10 @@ class HttpxModelProbe:
             if len(chunks) > MAX_RESPONSE_BYTES:
                 if check_kind is CheckKind.SEARCH_SOURCES:
                     return search_failure(CheckReason.RESPONSE_TOO_LARGE, len(chunks))
+                if check_kind is CheckKind.TOOL_CALL:
+                    return ProbeOutcome(
+                        state=CheckState.FAILED, reason=CheckReason.RESPONSE_TOO_LARGE
+                    )
                 return ProbeOutcome(
                     state=CheckState.FAILED,
                     reason=CheckReason.RESPONSE_TOO_LARGE,
@@ -327,6 +318,8 @@ class HttpxModelProbe:
                 )
         if check_kind is CheckKind.SEARCH_SOURCES:
             return parse_search_response(bytes(chunks), model_id)
+        if check_kind is CheckKind.TOOL_CALL:
+            return parse_tool_call_response(bytes(chunks), model_id)
         result = parse_response(bytes(chunks), model_id)
         success = result.state is CheckState.SUCCEEDED
         return result.model_copy(
@@ -362,6 +355,7 @@ class HttpxModelProbe:
         client = model_https_client(self.transport, PROBE_TIMEOUT_SECONDS)
         response: httpx.Response | None = None
         close_failed = False
+        outcome = ProbeOutcome(state=CheckState.UNKNOWN, reason=CheckReason.REQUEST_OUTCOME_UNKNOWN)
         try:
             async with asyncio.timeout_at(deadline) as budget:
                 request = client.build_request(
@@ -394,6 +388,9 @@ class HttpxModelProbe:
                 outcome = await self._body(response, model_id, stream, check_kind)
                 if stream is not None:
                     stream.receiving_complete = True
+        except Exception:
+            if check_kind is not CheckKind.TOOL_CALL:
+                raise
         finally:
             # Cleanup shares the original deadline, including after a body timeout.
             for resource in (response, client):
@@ -407,15 +404,19 @@ class HttpxModelProbe:
             if stream is not None:
                 stream.local_closed = response is not None and not close_failed
                 stream.close_failed = close_failed
-            if close_failed:
+            if close_failed and check_kind is not CheckKind.TOOL_CALL:
                 raise ProbeCleanupError("local response cleanup unconfirmed") from None
+        if close_failed:
+            outcome = outcome.model_copy(
+                update={"state": CheckState.UNKNOWN, "reason": CheckReason.RESPONSE_CLOSE_FAILED}
+            )
         if stream is not None:
             outcome = outcome.model_copy(update={"observation": stream.observation()})
-        if isinstance(outcome.observation, SearchSourceObservation):
+        if isinstance(outcome.observation, SearchSourceObservation | ToolCallObservation):
             outcome = outcome.model_copy(
                 update={
                     "observation": outcome.observation.model_copy(
-                        update={"local_response_closed": True}
+                        update={"local_response_closed": not close_failed}
                     )
                 }
             )

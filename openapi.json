@@ -1565,7 +1565,8 @@
           "STREAM_TEXT",
           "STREAM_STOP",
           "THINKING",
-          "SEARCH_SOURCES"
+          "SEARCH_SOURCES",
+          "TOOL_CALL"
         ],
         "title": "CheckKind",
         "type": "string"
@@ -1609,7 +1610,9 @@
           "SEARCH_EVIDENCE_LIMIT",
           "UNSAFE_SEARCH_SOURCE",
           "UNEXPECTED_TOOL_OUTPUT",
-          "RESPONSE_CLOSE_FAILED"
+          "RESPONSE_CLOSE_FAILED",
+          "TOOL_CALL_MODEL_NOT_ALLOWED",
+          "TOOL_CALL_SIGNAL_MISSING"
         ],
         "title": "CheckReason",
         "type": "string"
@@ -1689,7 +1692,7 @@
         "type": "object"
       },
       "ConnectionCheckDto": {
-        "description": "SUCCEEDED has a kind-specific, limited meaning.\n\nBASIC_TEXT proves one complete basic text response. STREAM_TEXT proves valid text\nincrements, normal completion and the final completion marker. STREAM_STOP proves\ntext was observed and the local response stream/client were closed; Provider-side\ncancellation and stopped billing remain unconfirmed. THINKING proves nonblank dedicated\nreasoning, a complete answer and normal stream completion with local cleanup; it does not\nassess reasoning quality. THINKING_SIGNAL_MISSING means only that this complete response\ncontained no dedicated reasoning signal, not that the model lacks thinking support.\nSEARCH_SOURCES proves completed native search calls, structured sanitized source references\nand a complete answer with local cleanup. It does not prove source accuracy, answer-to-source\ncitation binding, remote search termination or billing limits. No kind activates a candidate.\n\nUNKNOWN may have executed and incurred Provider charges; never automatically resubmit.\ncurrentness is recomputed from the current candidate and non-secret connection/probe versions.",
+        "description": "SUCCEEDED has a kind-specific, limited meaning.\n\nBASIC_TEXT proves one complete basic text response. STREAM_TEXT proves valid text\nincrements, normal completion and the final completion marker. STREAM_STOP proves\ntext was observed and the local response stream/client were closed; Provider-side\ncancellation and stopped billing remain unconfirmed. THINKING proves nonblank dedicated\nreasoning, a complete answer and normal stream completion with local cleanup; it does not\nassess reasoning quality. THINKING_SIGNAL_MISSING means only that this complete response\ncontained no dedicated reasoning signal, not that the model lacks thinking support.\nSEARCH_SOURCES proves completed native search calls, structured sanitized source references\nand a complete answer with local cleanup. It does not prove source accuracy, answer-to-source\ncitation binding, remote search termination or billing limits. No kind activates a candidate.\nTOOL_CALL proves one matching fixed function proposal with the expected completion signal\nand local cleanup. It does not execute tools or prove general tool capability.\n\nUNKNOWN may have executed and incurred Provider charges; never automatically resubmit.\ncurrentness is recomputed from the current candidate and non-secret connection/probe versions.",
         "properties": {
           "attempt": {
             "title": "Attempt",
@@ -1763,7 +1766,8 @@
                     "SEARCH_SOURCES": "#/components/schemas/SearchSourceObservationDto",
                     "STREAM_STOP": "#/components/schemas/StreamObservationDto",
                     "STREAM_TEXT": "#/components/schemas/StreamObservationDto",
-                    "THINKING": "#/components/schemas/ThinkingObservationDto"
+                    "THINKING": "#/components/schemas/ThinkingObservationDto",
+                    "TOOL_CALL": "#/components/schemas/ToolCallObservationDto"
                   },
                   "propertyName": "kind"
                 },
@@ -1779,6 +1783,9 @@
                   },
                   {
                     "$ref": "#/components/schemas/SearchSourceObservationDto"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ToolCallObservationDto"
                   }
                 ]
               },
@@ -2446,7 +2453,7 @@
               "minLength": 36,
               "type": "string"
             },
-            "maxItems": 5,
+            "maxItems": 6,
             "title": "Checkids",
             "type": "array",
             "uniqueItems": true
@@ -9466,6 +9473,44 @@
         "title": "ThinkingObservationDto",
         "type": "object"
       },
+      "ToolCallObservationDto": {
+        "additionalProperties": false,
+        "description": "Only this fixed function proposal and local closure; no arguments or tool execution.\n\nA matching proposal alone is not success when completion or cleanup is unconfirmed.",
+        "properties": {
+          "consumedBytes": {
+            "maximum": 65537.0,
+            "minimum": 0.0,
+            "title": "Consumedbytes",
+            "type": "integer"
+          },
+          "kind": {
+            "const": "TOOL_CALL",
+            "title": "Kind",
+            "type": "string"
+          },
+          "localResponseClosed": {
+            "title": "Localresponseclosed",
+            "type": "boolean"
+          },
+          "matchingCallObserved": {
+            "title": "Matchingcallobserved",
+            "type": "boolean"
+          },
+          "toolCallCompletionObserved": {
+            "title": "Toolcallcompletionobserved",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "kind",
+          "consumedBytes",
+          "matchingCallObserved",
+          "toolCallCompletionObserved",
+          "localResponseClosed"
+        ],
+        "title": "ToolCallObservationDto",
+        "type": "object"
+      },
       "TotpEnrollmentDto": {
         "properties": {
           "provisioningUri": {
@@ -9550,8 +9595,8 @@
             "items": {
               "$ref": "#/components/schemas/DossierCheckCoverageDto"
             },
-            "maxItems": 5,
-            "minItems": 5,
+            "maxItems": 6,
+            "minItems": 6,
             "title": "Checkcoverage",
             "type": "array"
           },
@@ -9684,7 +9729,7 @@
             "items": {
               "$ref": "#/components/schemas/DossierCheckReferenceDto"
             },
-            "maxItems": 5,
+            "maxItems": 6,
             "title": "Checks",
             "type": "array"
           },
@@ -10280,7 +10325,7 @@
   "info": {
     "description": "内部研发平台 Control Plane API。\n\n全局约定：JSON 一律 camelCase；ID 一律 string；错误统一 application/problem+json（RFC 9457）；\n分页 cursor 型 {items, nextCursor}；写并发 If-Match/ETag；变更命令 Idempotency-Key——\n后三者自 V0.2 首个真实接口起强制执行。",
     "title": "engineering-platform-control-plane",
-    "version": "3.12.0"
+    "version": "4.0.0"
   },
   "openapi": "3.1.0",
   "paths": {

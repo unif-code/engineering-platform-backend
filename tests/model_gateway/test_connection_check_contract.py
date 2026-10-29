@@ -191,7 +191,21 @@ def test_responses_admission_preserves_original_fingerprints_and_is_a_model_subs
         CONNECTION | {"responsesSearchModelIds": ["synthetic-model"]}
     )
     # This is the original production algorithm, over the original non-secret fields only.
-    baseline = digest(original.model_dump(mode="json", exclude={"responses_search_model_ids"}))
+    baseline = digest(
+        original.model_dump(
+            mode="json",
+            include={
+                "reference",
+                "version",
+                "material_version",
+                "provider_kind",
+                "region",
+                "workspace_id",
+                "allowed_model_ids",
+                "secret_ref",
+            },
+        )
+    )
     for kind in (
         CheckKind.BASIC_TEXT,
         CheckKind.STREAM_TEXT,

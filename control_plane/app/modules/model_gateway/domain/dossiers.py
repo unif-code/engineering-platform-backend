@@ -138,7 +138,7 @@ class CreateValidationDossier(BaseModel):
     )
     materials: tuple[MaterialReference, ...] = Field(default=(), max_length=32)
     check_ids: tuple[DossierId, ...] = Field(
-        default=(), max_length=5, json_schema_extra={"uniqueItems": True}
+        default=(), max_length=6, json_schema_extra={"uniqueItems": True}
     )
 
     @model_validator(mode="after")
@@ -199,7 +199,7 @@ class ValidationDossier(BaseModel):
     created_by: str = Field(min_length=1)
     created_at: DossierTime
     materials: tuple[DeclaredMaterial, ...] = Field(max_length=32)
-    checks: tuple[CheckEvidenceReference, ...] = Field(max_length=5)
+    checks: tuple[CheckEvidenceReference, ...] = Field(max_length=6)
     snapshot_hash: Sha256
 
     @model_validator(mode="after")

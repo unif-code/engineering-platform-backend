@@ -130,6 +130,8 @@ class SqlAlchemyCheckRepository(SqlAlchemyDeploymentRepository):
                 provider_cancellation=:provider_cancellation,
                 observed_reasoning=:observed_reasoning,observed_reasoning_deltas=:observed_reasoning_deltas,
                 observed_reasoning_bytes=:observed_reasoning_bytes,
+                observed_matching_call=:observed_matching_call,
+                observed_tool_call_completion=:observed_tool_call_completion,
                 observed_search_calls=:observed_search_calls,observed_source_signal=:observed_source_signal,
                 provider_search_call_count=:provider_search_call_count,
                 search_sources=CAST(:search_sources AS JSONB),
@@ -163,12 +165,17 @@ _OBSERVATION_FIELDS = {
     "provider_search_call_count": "provider_search_call_count",
     "search_sources": "sources",
     "search_queries": "queries",
+    "observed_matching_call": "matching_call_observed",
+    "observed_tool_call_completion": "tool_call_completion_observed",
 }
 
 
 def _parameters(value: ConnectionCheck) -> dict[str, Any]:
     observation = {} if value.observation is None else value.observation.model_dump()
-    if value.check_kind is CheckKind.SEARCH_SOURCES and value.observation is not None:
+    if (
+        value.check_kind in (CheckKind.SEARCH_SOURCES, CheckKind.TOOL_CALL)
+        and value.observation is not None
+    ):
         observation["local_stream_closed"] = observation.pop("local_response_closed")
     parameters = value.model_dump(exclude={"observation"}) | {
         "input": value.input.model_dump_json(),
@@ -187,7 +194,7 @@ def _check(row: Any) -> ConnectionCheck:
     values = dict(row)
     values.pop("connection_ref")
     observation = {field: values.pop(column) for column, field in _OBSERVATION_FIELDS.items()}
-    if values["check_kind"] == "SEARCH_SOURCES":
+    if values["check_kind"] in {"SEARCH_SOURCES", "TOOL_CALL"}:
         observation["local_response_closed"] = observation.pop("local_stream_closed")
     values["observation"] = (
         {

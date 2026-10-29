@@ -31,6 +31,7 @@ class CheckKind(StrEnum):
     STREAM_STOP = "STREAM_STOP"
     THINKING = "THINKING"
     SEARCH_SOURCES = "SEARCH_SOURCES"
+    TOOL_CALL = "TOOL_CALL"
 
 
 PROBE_VERSIONS = {
@@ -39,11 +40,13 @@ PROBE_VERSIONS = {
     CheckKind.STREAM_STOP: "stream-stop-v1",
     CheckKind.THINKING: "thinking-v1",
     CheckKind.SEARCH_SOURCES: "search-sources-v1",
+    CheckKind.TOOL_CALL: "tool-call-v1",
 }
 MAX_STREAM_EVENT_BYTES = 16384
 MAX_STREAM_EVENTS = 256
 ADAPTER_VERSIONS = {kind: "bailian-compatible-v1" for kind in CheckKind} | {
     CheckKind.SEARCH_SOURCES: "bailian-responses-v1",
+    CheckKind.TOOL_CALL: "bailian-tool-call-v1",
 }
 SEARCH_REGIONS = frozenset({"cn-beijing", "ap-southeast-1"})
 MAX_SEARCH_CALLS = 8
@@ -57,6 +60,8 @@ MAX_COMPLETION_TOKENS = 64
 MAX_RESPONSE_BYTES = 65536
 PROBE_TIMEOUT_SECONDS = 20
 EXECUTION_LEASE_SECONDS = 25
+TOOL_CALL_NAME = "platform_probe"
+TOOL_CALL_MARKER = "ok"
 
 
 class ConnectionDefinition(BaseModel):
@@ -75,6 +80,7 @@ class ConnectionDefinition(BaseModel):
     )
 
     responses_search_model_ids: tuple[ProviderModelId, ...] = Field(default=(), max_length=100)
+    tool_call_model_ids: tuple[ProviderModelId, ...] = Field(default=(), max_length=100)
 
     @model_validator(mode="after")
     def search_models_are_approved(self) -> Self:
@@ -84,14 +90,26 @@ class ConnectionDefinition(BaseModel):
             raise ValueError("Responses search model IDs must be unique")
         return self
 
+    @model_validator(mode="after")
+    def tool_models_are_approved(self) -> Self:
+        if not set(self.tool_call_model_ids) <= set(self.allowed_model_ids):
+            raise ValueError("Tool-call models must be approved connection models")
+        if len(set(self.tool_call_model_ids)) != len(self.tool_call_model_ids):
+            raise ValueError("Tool-call model IDs must be unique")
+        return self
+
     @property
     def hostname(self) -> str:
         return f"{self.workspace_id}.{self.region}.maas.aliyuncs.com"
 
     def fingerprint_for(self, check_kind: CheckKind) -> str:
-        values = self.model_dump(mode="json", exclude={"responses_search_model_ids"})
+        values = self.model_dump(
+            mode="json", exclude={"responses_search_model_ids", "tool_call_model_ids"}
+        )
         if check_kind is CheckKind.SEARCH_SOURCES:
             values["responses_search_model_ids"] = sorted(self.responses_search_model_ids)
+        if check_kind is CheckKind.TOOL_CALL:
+            values["tool_call_model_ids"] = sorted(self.tool_call_model_ids)
         return digest(values)
 
 
@@ -138,6 +156,33 @@ def search_probe_body(model_id: str) -> dict[str, object]:
 def probe_body(model_id: str, check_kind: CheckKind) -> dict[str, object]:
     if check_kind is CheckKind.SEARCH_SOURCES:
         return search_probe_body(model_id)
+    if check_kind is CheckKind.TOOL_CALL:
+        return {
+            "model": model_id,
+            "messages": [{"role": "user", "content": "Call platform_probe with marker set to ok."}],
+            "stream": False,
+            "enable_thinking": False,
+            "parallel_tool_calls": False,
+            "max_completion_tokens": MAX_COMPLETION_TOKENS,
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": TOOL_CALL_NAME,
+                        "description": "Return the fixed probe marker.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "marker": {"type": "string", "enum": [TOOL_CALL_MARKER]}
+                            },
+                            "required": ["marker"],
+                            "additionalProperties": False,
+                        },
+                    },
+                }
+            ],
+            "tool_choice": {"type": "function", "function": {"name": TOOL_CALL_NAME}},
+        }
     body: dict[str, object] = {
         "model": model_id,
         "messages": [{"role": "user", "content": PROBE_TEXT}],

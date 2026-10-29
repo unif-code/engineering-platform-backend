@@ -27,6 +27,7 @@ from tests.model_gateway.test_probe import CONNECTION, material, public_dns, res
 from tests.model_gateway.test_search_sources_probe import search_response
 from tests.model_gateway.test_stream_probe import ControlledStream, chunk, event
 from tests.model_gateway.test_thinking_probe import thinking_chunk
+from tests.model_gateway.tool_call_support import tool_response
 
 
 class CheckStore(MetadataStore):
@@ -108,12 +109,28 @@ class CheckStore(MetadataStore):
             and value.deadline_at <= now
         ][:limit]
 
+    def list_checks(
+        self, identifier: str, *, before_at: datetime | None, before_id: str | None, limit: int
+    ) -> list[ConnectionCheck]:
+        rows = sorted(
+            (value for value in self.checks.values() if value.deployment_id == identifier),
+            key=lambda value: (value.requested_at, value.id),
+            reverse=True,
+        )
+        if before_at is not None and before_id is not None:
+            rows = [
+                value for value in rows if (value.requested_at, value.id) < (before_at, before_id)
+            ]
+        return rows[:limit]
+
 
 def successful_response(kind: CheckKind) -> httpx.Response:
     if kind is CheckKind.BASIC_TEXT:
         return response()
     if kind is CheckKind.SEARCH_SOURCES:
         return response(search_response())
+    if kind is CheckKind.TOOL_CALL:
+        return response(tool_response())
     if kind is CheckKind.THINKING:
         parts = [
             event(thinking_chunk("synthetic reasoning")),
@@ -138,8 +155,9 @@ def check_dispatch(
     material(tmp_path)
     h = metadata_state(None)
     h.store = CheckStore()
+    approved = {"toolCallModelIds": ["synthetic-model"]} if kind is CheckKind.TOOL_CALL else {}
     h.connection = ConnectionDefinition.model_validate(
-        CONNECTION | {"responsesSearchModelIds": ["synthetic-model"]}
+        CONNECTION | {"responsesSearchModelIds": ["synthetic-model"]} | approved
     )
     h.directory = SimpleNamespace(resolve=lambda _: ("TEST", h.connection))
     h.common = replace(h.common, audit=h.store)

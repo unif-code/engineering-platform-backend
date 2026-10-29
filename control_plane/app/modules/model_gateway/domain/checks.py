@@ -74,6 +74,8 @@ class CheckReason(StrEnum):
     UNSAFE_SEARCH_SOURCE = "UNSAFE_SEARCH_SOURCE"
     UNEXPECTED_TOOL_OUTPUT = "UNEXPECTED_TOOL_OUTPUT"
     RESPONSE_CLOSE_FAILED = "RESPONSE_CLOSE_FAILED"
+    TOOL_CALL_MODEL_NOT_ALLOWED = "TOOL_CALL_MODEL_NOT_ALLOWED"
+    TOOL_CALL_SIGNAL_MISSING = "TOOL_CALL_SIGNAL_MISSING"
 
 
 class InputCurrentness(StrEnum):
@@ -212,8 +214,21 @@ class SearchSourceObservation(BaseModel):
     queries: tuple[SearchQueryObservation, ...] = Field(max_length=MAX_SEARCH_CALLS)
 
 
+class ToolCallObservation(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    kind: Literal[CheckKind.TOOL_CALL]
+    consumed_bytes: int = Field(ge=0, le=65537)
+    matching_call_observed: bool
+    tool_call_completion_observed: bool
+    local_response_closed: bool
+
+
 ProbeObservation = Annotated[
-    BasicTextObservation | StreamObservation | ThinkingObservation | SearchSourceObservation,
+    BasicTextObservation
+    | StreamObservation
+    | ThinkingObservation
+    | SearchSourceObservation
+    | ToolCallObservation,
     Field(discriminator="kind"),
 ]
 
@@ -268,6 +283,15 @@ class ConnectionCheck(BaseModel):
             raise ValueError("invalid check execution deadline")
         if (self.state in {CheckState.QUEUED, CheckState.BLOCKED}) != (self.attempt == 0):
             raise ValueError("check state does not match its execution attempt")
+        if self.check_kind is CheckKind.TOOL_CALL and self.state is CheckState.SUCCEEDED:
+            if not isinstance(self.observation, ToolCallObservation) or not (
+                self.observation.matching_call_observed
+                and self.observation.tool_call_completion_observed
+                and self.observation.local_response_closed
+            ):
+                raise ValueError(
+                    "successful tool observation requires matching, completion and closure"
+                )
         return self
 
 

@@ -84,7 +84,7 @@ def test_dossier_default_session_snapshot_replay_projection_restart_and_roles(
     assert snapshot["materials"][0]["sourceReference"] == "https://example.org/model%20price"
     assert snapshot["checks"][0]["resultSummary"]["state"] == "SUCCEEDED"
     assert value["currentness"] == "CURRENT" and detail.headers["etag"].startswith('"dossier-')
-    assert len(value["materialCoverage"]) == 8 and len(value["checkCoverage"]) == 5
+    assert len(value["materialCoverage"]) == 8 and len(value["checkCoverage"]) == 6
     assert journey.admin.get(f"{BASE}/{deployment['id']}").json() == deployment
     assert len(calls) == 1
     _write(

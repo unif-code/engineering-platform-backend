@@ -81,7 +81,7 @@ def test_fresh_upgrade_installs_independent_heads_and_deterministic_seed(
                 )
             ).one()
         assert expected_heads == {
-            "0009_model_check_deadline",
+            "0010_model_tool_calls",
             "0003_agent_run_recovery",
             "0010_audit_model_worker_grant",
             "0015_identity_draft_revisions",
@@ -93,7 +93,7 @@ def test_fresh_upgrade_installs_independent_heads_and_deterministic_seed(
             "0011_sc_delivery_join",
         }
         assert installed_heads == {
-            "0009_model_check_deadline",
+            "0010_model_tool_calls",
             "0003_agent_run_recovery",
             "0010_audit_model_worker_grant",
             "0015_identity_draft_revisions",

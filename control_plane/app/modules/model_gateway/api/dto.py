@@ -23,6 +23,7 @@ from control_plane.app.modules.model_gateway.domain.checks import (
     SearchSourceReference,
     StreamObservation,
     ThinkingObservation,
+    ToolCallObservation,
 )
 from control_plane.app.modules.model_gateway.domain.connections import CheckKind
 from control_plane.app.modules.model_gateway.domain.dossiers import (
@@ -166,11 +167,19 @@ class SearchSourceObservationDto(SearchSourceObservation, CamelModel):
     queries: tuple[SearchQueryObservationDto, ...] = Field(max_length=8)
 
 
+class ToolCallObservationDto(ToolCallObservation, CamelModel):
+    """Only this fixed function proposal and local closure; no arguments or tool execution.
+
+    A matching proposal alone is not success when completion or cleanup is unconfirmed.
+    """
+
+
 CheckObservationDto = Annotated[
     BasicTextObservationDto
     | StreamObservationDto
     | ThinkingObservationDto
-    | SearchSourceObservationDto,
+    | SearchSourceObservationDto
+    | ToolCallObservationDto,
     Field(discriminator="kind"),
 ]
 
@@ -188,6 +197,8 @@ class ConnectionCheckDto(CamelModel):
     SEARCH_SOURCES proves completed native search calls, structured sanitized source references
     and a complete answer with local cleanup. It does not prove source accuracy, answer-to-source
     citation binding, remote search termination or billing limits. No kind activates a candidate.
+    TOOL_CALL proves one matching fixed function proposal with the expected completion signal
+    and local cleanup. It does not execute tools or prove general tool capability.
 
     UNKNOWN may have executed and incurred Provider charges; never automatically resubmit.
     currentness is recomputed from the current candidate and non-secret connection/probe versions.
@@ -273,7 +284,7 @@ class ValidationDossierSnapshotDto(ValidationDossier, CamelModel):
     """Immutable registration. snapshotHash identifies this dossier, not source authenticity."""
 
     materials: tuple[DeclaredDossierMaterialDto, ...] = Field(max_length=32)
-    checks: tuple[DossierCheckReferenceDto, ...] = Field(max_length=5)
+    checks: tuple[DossierCheckReferenceDto, ...] = Field(max_length=6)
 
 
 class DossierMaterialExpirationDto(MaterialExpiration, CamelModel):
@@ -297,7 +308,7 @@ class ValidationDossierDetailDto(ValidationDossierProjection, CamelModel):
     snapshot: ValidationDossierSnapshotDto
     material_statuses: tuple[DossierMaterialExpirationDto, ...] = Field(max_length=32)
     material_coverage: tuple[DossierMaterialCoverageDto, ...] = Field(min_length=8, max_length=8)
-    check_coverage: tuple[DossierCheckCoverageDto, ...] = Field(min_length=5, max_length=5)
+    check_coverage: tuple[DossierCheckCoverageDto, ...] = Field(min_length=6, max_length=6)
 
 
 class ValidationDossierReceiptDto(CamelModel):

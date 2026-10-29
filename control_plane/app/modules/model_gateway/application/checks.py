@@ -119,6 +119,11 @@ def validate_connection_admission(
             raise CheckBlocked(CheckReason.SEARCH_REGION_NOT_ALLOWED)
         if deployment.provider_model_id not in connection.responses_search_model_ids:
             raise CheckBlocked(CheckReason.SEARCH_MODEL_NOT_ALLOWED)
+    if (
+        kind is CheckKind.TOOL_CALL
+        and deployment.provider_model_id not in connection.tool_call_model_ids
+    ):
+        raise CheckBlocked(CheckReason.TOOL_CALL_MODEL_NOT_ALLOWED)
 
 
 class ModelConnectionChecks:

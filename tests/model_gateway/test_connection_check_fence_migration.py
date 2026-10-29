@@ -84,13 +84,13 @@ def test_upgrade_and_downgrade_preserve_valid_historical_rows(
                         {"id": identifier, "finished": now + timedelta(seconds=26)},
                     )
         original = stored_row(engine, identifier)
-        command.upgrade(config, "model_gateway@head")
+        command.upgrade(config, f"model_gateway@{NEW}")
         assert installed_heads(engine) == {NEW}
         assert stored_row(engine, identifier) == original
         command.downgrade(config, f"model_gateway@{OLD}")
         assert installed_heads(engine) == {OLD}
         assert stored_row(engine, identifier) == original
-        command.upgrade(config, "model_gateway@head")
+        command.upgrade(config, f"model_gateway@{NEW}")
         assert installed_heads(engine) == {NEW}
         assert stored_row(engine, identifier) == original
     finally:
@@ -114,7 +114,7 @@ def test_historical_null_deadline_stops_upgrade_without_repairing_or_deleting_ro
         original = stored_row(engine, identifier)
         assert installed_heads(engine) == {OLD}
         with pytest.raises(DBAPIError) as caught:
-            command.upgrade(config, "model_gateway@head")
+            command.upgrade(config, f"model_gateway@{NEW}")
         assert getattr(caught.value.orig, "sqlstate", None) == "23514"
         assert installed_heads(engine) == {OLD}
         assert stored_row(engine, identifier) == original
@@ -134,7 +134,7 @@ def test_worker_role_rejects_incomplete_fence_and_accepts_complete_control(
     fresh_source_control_migration_database_url: URL, tmp_path: Path
 ) -> None:
     config = _config(fresh_source_control_migration_database_url)
-    command.upgrade(config, "model_gateway@head")
+    command.upgrade(config, f"model_gateway@{NEW}")
     engine = create_engine(fresh_source_control_migration_database_url)
     try:
         identifier, now = seed(engine, tmp_path)

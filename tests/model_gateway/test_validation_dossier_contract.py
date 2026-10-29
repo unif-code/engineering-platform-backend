@@ -101,7 +101,7 @@ def test_default_app_publishes_three_dossier_operations_and_explicit_bounds() ->
     fields = schema["components"]["schemas"]["CreateValidationDossierRequestDto"]
     assert set(fields["properties"]) == {"materials", "checkIds"}
     assert fields["properties"]["materials"]["maxItems"] == 32
-    assert fields["properties"]["checkIds"]["maxItems"] == 5
+    assert fields["properties"]["checkIds"]["maxItems"] == 6
     assert fields["x-maxBodyBytes"] == 65536
     assert fields["additionalProperties"] is False
 
